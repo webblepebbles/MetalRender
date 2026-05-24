@@ -413,22 +413,22 @@ public class MetalRenderSettingsScreen extends Screen {
         || (config.biomeTransitionDetail != initialBiomeDetail)
         || (config.leafCullingMode != initialLeafCulling)
         || (config.enableSimpleLighting != initialSmoothLighting)
-      || (config.debugPinkBlockTint != initialDebugPinkBlockTint)
-      || (MetalRenderConfig.zone0ExactBlockPixels() != initialZone0ExactBlockPx)
-      || (MetalRenderConfig.zone0GreedyBlockPixels() != initialZone0GreedyBlockPx)
-      || (MetalRenderConfig.zone0ClusterBlockPixels() != initialZone0ClusterBlockPx);
+        || (config.debugPinkBlockTint != initialDebugPinkBlockTint)
+        || (MetalRenderConfig.zone0ExactBlockPixels() != initialZone0ExactBlockPx)
+        || (MetalRenderConfig.zone0GreedyBlockPixels() != initialZone0GreedyBlockPx)
+        || (MetalRenderConfig.zone0ClusterBlockPixels() != initialZone0ClusterBlockPx);
 
     boolean biomeChanged = config.biomeTransitionDetail != initialBiomeDetail;
     com.pebbles_boon.metalrender.util.MetalLogger.info(
-      "Settings closed: needsRebuild=%b (renderDist=%b biome=%b leaf=%b lighting=%b lod=%b)",
+        "Settings closed: needsRebuild=%b (renderDist=%b biome=%b leaf=%b lighting=%b lod=%b)",
         needsRebuild,
         pendingRenderDist != initialRenderDist,
         biomeChanged,
         config.leafCullingMode != initialLeafCulling,
-      config.enableSimpleLighting != initialSmoothLighting,
-      (MetalRenderConfig.zone0ExactBlockPixels() != initialZone0ExactBlockPx)
-        || (MetalRenderConfig.zone0GreedyBlockPixels() != initialZone0GreedyBlockPx)
-        || (MetalRenderConfig.zone0ClusterBlockPixels() != initialZone0ClusterBlockPx));
+        config.enableSimpleLighting != initialSmoothLighting,
+        (MetalRenderConfig.zone0ExactBlockPixels() != initialZone0ExactBlockPx)
+            || (MetalRenderConfig.zone0GreedyBlockPixels() != initialZone0GreedyBlockPx)
+            || (MetalRenderConfig.zone0ClusterBlockPixels() != initialZone0ClusterBlockPx));
     MetalRenderClient.requestDeferredApply(
         metalFlip,
         metalFlip,
@@ -565,34 +565,34 @@ public class MetalRenderSettingsScreen extends Screen {
     nfo("Mode", "Zone 0 active");
     nfo("Runtime", "Screen-space near-field LOD is active");
     nfo("View Basis", (int) getCurrentFovDegrees() + " FOV, " + (int) getCurrentScreenHeight()
-      + " px tall");
+        + " px tall");
     nfo("Range", "0-" + MetalRenderConfig.zone0RadiusChunks()
-      + " chunks near-field, " + MetalRenderConfig.zone0RadiusChunks() + "-"
-      + MetalRenderConfig.farFieldRadiusChunks() + " chunks far-field");
+        + " chunks near-field, " + MetalRenderConfig.zone0RadiusChunks() + "-"
+        + MetalRenderConfig.farFieldRadiusChunks() + " chunks far-field");
     sec("Zone 0");
     nfo("Sub-tier A", "Exact terrain to about " + exactChunks + " chunks");
     sld("Exact Cutoff", 6.0f, 24.0f, 0.5f, MetalRenderConfig.zone0ExactBlockPixels(),
-      MetalRenderConfig::setZone0ExactBlockPixels,
-      v -> Component.literal("> " + fmtPx(v) + " px"));
+        MetalRenderConfig::setZone0ExactBlockPixels,
+        v -> Component.literal("> " + fmtPx(v) + " px"));
     nfo("Sub-tier B", "Greedy textured spans from about " + exactChunks
-      + " to " + greedyChunks + " chunks");
+        + " to " + greedyChunks + " chunks");
     sld("Greedy Cutoff", 2.0f, 23.5f, 0.5f, MetalRenderConfig.zone0GreedyBlockPixels(),
-      MetalRenderConfig::setZone0GreedyBlockPixels,
-      v -> Component.literal("> " + fmtPx(v) + " px"));
+        MetalRenderConfig::setZone0GreedyBlockPixels,
+        v -> Component.literal("> " + fmtPx(v) + " px"));
     nfo("Sub-tier C", "Textured clusters from about " + greedyChunks
-      + " to " + clusterChunks + " chunks");
+        + " to " + clusterChunks + " chunks");
     sld("Cluster Cutoff", 0.5f, 23.25f, 0.25f, MetalRenderConfig.zone0ClusterBlockPixels(),
-      MetalRenderConfig::setZone0ClusterBlockPixels,
-      v -> Component.literal("> " + fmtPx(v) + " px"));
+        MetalRenderConfig::setZone0ClusterBlockPixels,
+        v -> Component.literal("> " + fmtPx(v) + " px"));
     nfo("Sub-tier D", "Near-envelope descriptors from about " + clusterChunks
-      + " to " + MetalRenderConfig.zone0RadiusChunks() + " chunks");
+        + " to " + MetalRenderConfig.zone0RadiusChunks() + " chunks");
     sec("Zone 1+");
     nfo("Range", MetalRenderConfig.zone0RadiusChunks() + "-"
         + MetalRenderConfig.farFieldRadiusChunks() + " chunks");
     nfo("Target", "Automatic fixed-budget far-field");
     nfo("Runtime", MetalRenderConfig.isFarFieldDescriptorRuntimeActive()
-      ? "Descriptor path active"
-      : "Descriptor path pending");
+        ? "Descriptor path active"
+        : "Descriptor path pending");
   }
 
   private void sec(String label) {

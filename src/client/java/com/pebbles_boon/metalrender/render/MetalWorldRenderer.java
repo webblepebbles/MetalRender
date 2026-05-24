@@ -898,7 +898,7 @@ public class MetalWorldRenderer {
       int dx = chunkX - playerChunkX;
       int dz = chunkZ - playerChunkZ;
       int chunkDist = Math.max(Math.abs(dx), Math.abs(dz));
-        int lodLevel = getDesiredLod(dx, dz);
+      int lodLevel = getDesiredLod(dx, dz);
       boolean bypassReadiness = lane == BuildLane.FIX
           || chunkDist <= IMPORTANT_REBUILD_CHUNK_RANGE
           || (loadingMode && chunkDist <= HOT_LOAD_REBUILD_RANGE);
