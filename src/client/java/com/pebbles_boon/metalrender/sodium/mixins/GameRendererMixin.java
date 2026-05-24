@@ -1,10 +1,10 @@
 package com.pebbles_boon.metalrender.sodium.mixins;
-import net.minecraft.client.render.GameRenderer;
+
+import com.mojang.blaze3d.buffers.GpuBufferSlice;
+import com.pebbles_boon.metalrender.MetalRenderClient;
+import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
+import net.minecraft.client.DeltaTracker;
 import org.spongepowered.asm.mixin.Mixin;
-<<<<<<< HEAD
-@Mixin(GameRenderer.class)
-public abstract class GameRendererMixin {}
-=======
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
@@ -21,4 +21,3 @@ public abstract class GameRendererMixin {
         worldRenderer.forceBlitNow();
     }
 }
->>>>>>> e028af4 (checkpoint, WIP)

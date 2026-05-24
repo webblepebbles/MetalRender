@@ -2,49 +2,65 @@ package com.pebbles_boon.metalrender.sodium.mixins;
 
 import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.StartupBlocker;
-import com.pebbles_boon.metalrender.performance.PerformanceController;
 import com.pebbles_boon.metalrender.gui.StartupBlockerOverlay;
+import com.pebbles_boon.metalrender.performance.PerformanceController;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
 import com.pebbles_boon.metalrender.util.MetalLogger;
-<<<<<<< HEAD
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.world.ClientWorld;
-=======
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.screens.Overlay;
+import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.main.GameConfig;
 import net.minecraft.client.multiplayer.ClientLevel;
->>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
 import org.spongepowered.asm.mixin.Mixin;
-import org.spongepowered.asm.mixin.Shadow;
 import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-@Mixin(MinecraftClient.class)
+@Mixin(Minecraft.class)
 public class MinecraftClientMixin {
   @Unique
-  private boolean metalrender$worldWasLoaded = false;
+  private boolean metalrender$levelWasLoaded = false;
   @Unique
   private int metalrender$debugCounter = 0;
   @Unique
   private boolean metalrender$forcingStartupBlocker;
 
   @Inject(method = "<init>", at = @At("TAIL"))
-  private void metalrender$showStartupBlocker(GameConfig config,
+  private void metalrender$showStartupBlocker(GameConfig gameConfig,
       CallbackInfo ci) {
     if (StartupBlocker.shouldBlockStartup()) {
       metalrender$forceStartupBlocker();
     }
   }
 
+  @Inject(method = "setScreen", at = @At("HEAD"), cancellable = true)
+  private void metalrender$keepStartupBlocker(Screen screen, CallbackInfo ci) {
+    if (!StartupBlocker.shouldBlockStartup()
+        || metalrender$forcingStartupBlocker) {
+      return;
+    }
+    metalrender$forceStartupBlocker();
+    ci.cancel();
+  }
+
+  @Inject(method = "setScreenAndRender", at = @At("HEAD"), cancellable = true)
+  private void metalrender$keepStartupBlockerVisible(Screen screen,
+      CallbackInfo ci) {
+    if (!StartupBlocker.shouldBlockStartup()
+        || metalrender$forcingStartupBlocker) {
+      return;
+    }
+    metalrender$forceStartupBlocker();
+    ci.cancel();
+  }
+
   @Inject(method = "setOverlay", at = @At("HEAD"), cancellable = true)
   private void metalrender$blockStartupOverlays(Overlay overlay,
       CallbackInfo ci) {
-    if (StartupBlocker.shouldBlockStartup() && !metalrender$forcingStartupBlocker
+    if (StartupBlocker.shouldBlockStartup()
+        && !metalrender$forcingStartupBlocker
         && !(overlay instanceof StartupBlockerOverlay)) {
-      metalrender$forceStartupBlocker();
       ci.cancel();
     }
   }
@@ -59,24 +75,26 @@ public class MinecraftClientMixin {
     }
   }
 
-  @Inject(method = "render", at = @At("HEAD"))
+  @Inject(method = "runTick", at = @At("HEAD"))
   private void metalrender$startFrame(boolean tick, CallbackInfo ci) {
+    if (StartupBlocker.shouldBlockStartup()) {
+      return;
+    }
     if (MetalRenderClient.isEnabled()) {
       PerformanceController.startFrame();
-      MinecraftClient client = (MinecraftClient) (Object) this;
-      ClientWorld world = client.world;
+      ClientLevel level = ((Minecraft) (Object) this).level;
       metalrender$debugCounter++;
       if (metalrender$debugCounter % 600 == 1) {
         MetalLogger.deepInfo(
-            "[MinecraftClientMixin] world=" +
-                (world != null ? "present" : "null") +
-                " worldWasLoaded=" + metalrender$worldWasLoaded + " wr=" +
+            "[MinecraftClientMixin] level=" +
+                (level != null ? "present" : "null") +
+                " levelWasLoaded=" + metalrender$levelWasLoaded + " wr=" +
                 (MetalRenderClient.getWorldRenderer() != null ? "present"
                     : "null"));
       }
-      if (world != null && !metalrender$worldWasLoaded) {
+      if (level != null && !metalrender$levelWasLoaded) {
         MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
-        MetalLogger.info("[MinecraftClientMixin] World detected! wr=" +
+        MetalLogger.info("[MinecraftClientMixin] Level detected! wr=" +
             (wr != null));
         if (wr != null) {
           try {
@@ -87,25 +105,28 @@ public class MinecraftClientMixin {
             MetalLogger.error("[MinecraftClientMixin] onWorldLoad() FAILED", e);
           }
         }
-        metalrender$worldWasLoaded = true;
-      } else if (world == null && metalrender$worldWasLoaded) {
+        metalrender$levelWasLoaded = true;
+      } else if (level == null && metalrender$levelWasLoaded) {
         MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
         if (wr != null) {
           wr.onWorldUnload();
         }
-        metalrender$worldWasLoaded = false;
+        metalrender$levelWasLoaded = false;
       }
-      if (world != null) {
+      if (level != null) {
         MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
-        if (wr != null && wr.shouldRenderWithMetal()) {
+        if (wr != null && wr.metalActive()) {
           wr.prepareMeshes();
         }
       }
     }
   }
 
-  @Inject(method = "render", at = @At("TAIL"))
+  @Inject(method = "runTick", at = @At("TAIL"))
   private void metalrender$endFrame(boolean tick, CallbackInfo ci) {
+    if (StartupBlocker.shouldBlockStartup()) {
+      return;
+    }
     if (MetalRenderClient.isEnabled()) {
       PerformanceController.endFrame();
     }

@@ -1,20 +1,21 @@
 package com.pebbles_boon.metalrender.command;
 
-import com.mojang.brigadier.arguments.IntegerArgumentType;
+import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.config.MetalRenderConfig;
 import com.pebbles_boon.metalrender.nativebridge.MetalHardwareChecker;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
 import com.pebbles_boon.metalrender.util.MetalLogger;
-import net.fabricmc.fabric.api.client.command.v2.ClientCommandManager;
+import net.minecraft.client.Minecraft;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
-import net.minecraft.text.Text;
-
-import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.literal;
-import static net.fabricmc.fabric.api.client.command.v2.ClientCommandManager.argument;
+import net.minecraft.network.chat.Component;
 
 public final class MetalRenderCommands {
+
+    private static LiteralArgumentBuilder<FabricClientCommandSource> literal(String name) {
+        return LiteralArgumentBuilder.literal(name);
+    }
 
     public static void register() {
         ClientCommandRegistrationCallback.EVENT.register((dispatcher, registryAccess) -> {
@@ -47,44 +48,17 @@ public final class MetalRenderCommands {
                                 return 1;
                             }))
 
-                            .then(literal("lod")
-                                    .then(literal("enable").executes(ctx -> {
-                                        MetalRenderConfig.setLodEnabled(true);
-                                        invalidateAllMeshes();
-                                        msg(ctx.getSource(), "§aLOD system enabled. Rebuilding all meshes...");
-                                        return 1;
-                                    }))
-                                    .then(literal("disable").executes(ctx -> {
-                                        MetalRenderConfig.setLodEnabled(false);
-                                        invalidateAllMeshes();
-                                        msg(ctx.getSource(), "§cLOD system disabled. Rebuilding all meshes at LOD0...");
-                                        return 1;
-                                    }))
-                                    .then(literal("reset").executes(ctx -> {
-                                        MetalRenderConfig.setLod1Distance(8);
-                                        MetalRenderConfig.setLod2Distance(16);
-                                        MetalRenderConfig.setLod3Distance(24);
-                                        MetalRenderConfig.setLod4Distance(32);
-                                        invalidateAllMeshes();
-                                        msg(ctx.getSource(),
-                                                "§eLOD distances reset to defaults (4/8/12/16). Rebuilding...");
-                                        return 1;
-                                    }))
-                                    .then(literal("threshold")
-                                            .then(argument("distance",
-                                                    IntegerArgumentType.integer(1, 100))
-                                                    .executes(ctx -> {
-                                                        int d = IntegerArgumentType.getInteger(ctx,
-                                                                "distance");
-                                                        MetalRenderConfig.setLod1Distance(d);
-                                                        invalidateAllMeshes();
-                                                        msg(ctx.getSource(),
-                                                                "§eLOD near threshold set to " + d
-                                                                        + " chunks. Rebuilding...");
-                                                        return 1;
-                                                    }))))
+                            .then(literal("lod").executes(ctx -> {
+                                msg(ctx.getSource(),
+                                        "§eLOD is currently disabled. Full-detail chunk meshes stay active.");
+                                return 1;
+                            }))
 
                             .then(literal("config")
+                                    .then(literal("open").executes(ctx -> {
+                                        openConfigScreen(ctx.getSource());
+                                        return 1;
+                                    }))
                                     .then(literal("save").executes(ctx -> {
                                         MetalRenderConfig cfg = MetalRenderClient.getConfig();
                                         if (cfg != null)
@@ -120,7 +94,10 @@ public final class MetalRenderCommands {
     }
 
     private static void msg(FabricClientCommandSource src, String text) {
-        src.sendFeedback(Text.literal(text));
+        Minecraft mc = Minecraft.getInstance();
+        if (mc != null && mc.player != null) {
+            mc.player.sendSystemMessage(Component.literal(text));
+        }
     }
 
     private static void sendHelp(FabricClientCommandSource src) {
@@ -130,11 +107,24 @@ public final class MetalRenderCommands {
         msg(src, "§e/metalrender cache clear §7- Clear cache & restart renderer");
         msg(src, "§e/metalrender reload §7- Reload world renderer");
         msg(src, "§e/metalrender restart §7- Full renderer restart");
-        msg(src, "§e/metalrender lod enable|disable §7- Toggle LOD system");
-        msg(src, "§e/metalrender lod threshold <n> §7- Set LOD near threshold");
-        msg(src, "§e/metalrender lod reset §7- Reset LOD to defaults");
+        msg(src, "§e/metalrender lod §7- Show LOD disabled status");
+        msg(src, "§e/metalrender config open §7- Open MetalRender settings screen");
         msg(src, "§e/metalrender config save|reload|reset §7- Config management");
         msg(src, "§e/metalrender performance reset §7- Reset perf settings");
+    }
+
+    private static void openConfigScreen(FabricClientCommandSource src) {
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc == null) {
+                msg(src, "§cMinecraft client unavailable.");
+                return;
+            }
+            MetalRenderClient.openSettingsScreen(mc);
+            msg(src, "§aOpening MetalRender settings...");
+        } catch (Exception e) {
+            msg(src, "§cFailed to open config screen: " + e.getMessage());
+        }
     }
 
     private static void sendStatus(FabricClientCommandSource src) {
@@ -146,11 +136,7 @@ public final class MetalRenderCommands {
         msg(src, "§7Enabled: " + (enabled ? "§aYes" : "§cNo"));
         msg(src, "§7Hardware: "
                 + (available ? "§a" + MetalHardwareChecker.getDeviceName() : "§cUnavailable"));
-        msg(src, "§7LOD: " + (MetalRenderConfig.lodEnabled() ? "§aEnabled" : "§cDisabled")
-                + " §7(L1=" + MetalRenderConfig.lod1Distance()
-                + " L2=" + MetalRenderConfig.lod2Distance()
-                + " L3=" + MetalRenderConfig.lod3Distance()
-                + " L4=" + MetalRenderConfig.lod4Distance() + ")");
+        msg(src, "§7LOD: §cDisabled §7(full-detail chunk meshes only)");
         msg(src, "§7Resolution scale: §f" + String.format("%.2fx", MetalRenderConfig.resolutionScale()));
         msg(src, "§7Frustum culling: "
                 + (MetalRenderConfig.aggressiveFrustumCulling() ? "§aAggressive" : "§eNormal"));
@@ -174,9 +160,9 @@ public final class MetalRenderCommands {
 
     private static void reloadWorld(FabricClientCommandSource src) {
         try {
-            net.minecraft.client.MinecraftClient mc = net.minecraft.client.MinecraftClient.getInstance();
-            if (mc != null && mc.worldRenderer != null) {
-                mc.worldRenderer.reload();
+            Minecraft mc = Minecraft.getInstance();
+            if (mc != null && mc.levelRenderer != null) {
+                mc.levelRenderer.allChanged();
             }
             MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
             if (wr != null) {
@@ -206,11 +192,11 @@ public final class MetalRenderCommands {
     }
 
     private static void resetConfig(FabricClientCommandSource src) {
-        MetalRenderConfig.setLodEnabled(true);
-        MetalRenderConfig.setLod1Distance(8);
-        MetalRenderConfig.setLod2Distance(16);
-        MetalRenderConfig.setLod3Distance(24);
-        MetalRenderConfig.setLod4Distance(32);
+        MetalRenderConfig.setLodEnabled(false);
+        MetalRenderConfig.setLod1Distance(4);
+        MetalRenderConfig.setLod2Distance(8);
+        MetalRenderConfig.setLod3Distance(12);
+        MetalRenderConfig.setLod4Distance(16);
         MetalRenderConfig.setResolutionScale(1.0f);
         MetalRenderConfig.setAggressiveFrustumCulling(false);
         MetalRenderConfig.setOcclusionCulling(false);

@@ -18,8 +18,8 @@
     "metalrender.mixins.json"
   ],
   "depends": {
-    "fabricloader": ">=0.17.1",
-    "minecraft": ">=1.21.11",
-    "fabric": "*"
+    "fabricloader": ">=0.19.2",
+    "minecraft": ">=26.1",
+    "fabric-api": "*"
   }
 }

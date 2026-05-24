@@ -3,7 +3,7 @@ package com.pebbles_boon.metalrender;
 import java.util.Locale;
 
 public final class StartupBlocker {
-    public static final boolean ALWAYS_SHOW = false;//test flag, set true when test
+    public static final boolean ALWAYS_SHOW = false;
     private static final boolean WINDOWS = System.getProperty("os.name", "")
             .toLowerCase(Locale.ROOT)
             .contains("win");

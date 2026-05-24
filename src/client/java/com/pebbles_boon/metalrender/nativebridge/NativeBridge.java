@@ -1,18 +1,20 @@
 package com.pebbles_boon.metalrender.nativebridge;
 
 public final class NativeBridge {
-        private static final boolean WINDOWS = System.getProperty("os.name", "")
-                        .toLowerCase(java.util.Locale.ROOT)
-                        .contains("win");
         private static volatile boolean libLoaded;
+        static {
+                try {
+                        System.loadLibrary("metalrender");
+                        libLoaded = true;
+                } catch (Throwable t) {
+                        libLoaded = false;
+                }
+        }
 
         private NativeBridge() {
         }
 
         public static void loadLibrary() {
-                if (WINDOWS || libLoaded) {
-                        return;
-                }
                 if (!libLoaded) {
                         System.loadLibrary("metalrender");
                         libLoaded = true;
@@ -48,6 +50,8 @@ public final class NativeBridge {
         public static native boolean nSupportsIndirect();
 
         public static native boolean nSupportsMeshShaders();
+
+        public static native void nSetCurrentThreadQoS(int qosClass);
 
         public static native long nCreateBuffer(long deviceHandle, int sizeBytes,
                         int storageMode);
@@ -198,11 +202,6 @@ public final class NativeBridge {
 
         public static native void nGetGPUCullStats(int[] outStats);
 
-        public static native int nGetThermalState();
-
-        public static native int nGetThermalLODReduction();
-
-
         public static native void nSetRenderDistance(int distanceBlocks);
 
         public static native long nGetAvailableMemory();
@@ -221,30 +220,26 @@ public final class NativeBridge {
         public static native int nDrawAllVisibleChunks(long frameContext,
                         long indexBuffer);
 
-
-
-
-
-
-
         public static native int nBatchPackFaces(long outBufferAddr, int outOffset,
                         java.nio.ByteBuffer faceData, int faceCount);
 
-
         public static native void nWatchdogReset();
-
 
         public static native void nFlushFrames();
 
-
         public static native void nClearAllChunkRegistrations();
-
 
         public static native void nFlushDeferredDeletions();
 
-
         public static native int nMegaDefragment();
 
+        public static native boolean nIsMegaBufferActive();
+
+        public static native void nDrawDeferredWaterPass(long frameContext);
+
+        public static native boolean nAreArgumentBuffersActive();
+
+        public static native boolean nAreMemorylessTargetsActive();
 
         public static native void nSetFeatureFlags(
                         boolean enableIndirectCommandBuffers,
@@ -252,7 +247,6 @@ public final class NativeBridge {
                         boolean enableArgumentBuffers,
                         boolean enableProgrammableBlending,
                         boolean enableMemorylessTargets);
-
 
         public static native void nDrawOITPass(long frameContext);
 }

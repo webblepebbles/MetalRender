@@ -2,38 +2,38 @@ package com.pebbles_boon.metalrender.gui;
 
 import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
-import net.fabricmc.fabric.api.client.rendering.v1.HudRenderCallback;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.font.TextRenderer;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.render.RenderTickCounter;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElement;
+import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
+import net.minecraft.client.DeltaTracker;
+import net.minecraft.client.Minecraft;
+import net.minecraft.resources.Identifier;
 
 @SuppressWarnings("deprecation")
-public final class MetalHudOverlay implements HudRenderCallback {
+public final class MetalHudOverlay implements HudElement {
   private static final int COLOR = 0xFFFF00FF;
   private static final String LABEL = "MetalRender ACTIVE";
   private static final int LOADING_COLOR = 0xFFFFAA00;
   private static final int LOADING_BG_COLOR = 0x80000000;
+  private static final Identifier HUD_ID = Identifier.fromNamespaceAndPath("metalrender", "hud_overlay");
 
   private String cachedLoadingText;
   private int cachedLoadingTextWidth;
   private int lastPending = -1, lastMeshes = -1;
 
   @Override
-  public void onHudRender(DrawContext context, RenderTickCounter tickCounter) {
+  public void extractRenderState(net.minecraft.client.gui.GuiGraphicsExtractor context, DeltaTracker tickCounter) {
     if (!MetalRenderClient.isEnabled() ||
         MetalRenderClient.getWorldRenderer() == null ||
         !MetalRenderClient.getWorldRenderer().isReady()) {
       return;
     }
-    MinecraftClient mc = MinecraftClient.getInstance();
+    Minecraft mc = Minecraft.getInstance();
     if (mc == null)
       return;
-    TextRenderer textRenderer = mc.textRenderer;
-    if (textRenderer == null)
+    var font = mc.font;
+    if (font == null)
       return;
-    context.drawTextWithShadow(textRenderer, LABEL, 10, 10, COLOR);
-
+    context.text(font, LABEL, 10, 10, COLOR, true);
 
     try {
       MetalWorldRenderer wr = MetalWorldRenderer.getInstance();
@@ -42,16 +42,16 @@ public final class MetalHudOverlay implements HudRenderCallback {
         int meshes = wr.getLoadingModeMeshCount();
         if (pending != lastPending || meshes != lastMeshes) {
           cachedLoadingText = "Loading: " + pending + " pending / " + meshes + " built";
-          cachedLoadingTextWidth = textRenderer.getWidth(cachedLoadingText);
+          cachedLoadingTextWidth = font.width(cachedLoadingText);
           lastPending = pending;
           lastMeshes = meshes;
         }
         int textWidth = cachedLoadingTextWidth;
-        int screenWidth = mc.getWindow().getScaledWidth();
+        int screenWidth = mc.getWindow().getGuiScaledWidth();
         int lx = screenWidth - textWidth - 6;
         int ly = 4;
         context.fill(lx - 3, ly - 1, lx + textWidth + 3, ly + 10, LOADING_BG_COLOR);
-        context.drawTextWithShadow(textRenderer, cachedLoadingText, lx, ly, LOADING_COLOR);
+        context.text(font, cachedLoadingText, lx, ly, LOADING_COLOR, true);
       }
     } catch (Exception e) {
 
@@ -59,6 +59,6 @@ public final class MetalHudOverlay implements HudRenderCallback {
   }
 
   public static void register() {
-    HudRenderCallback.EVENT.register(new MetalHudOverlay());
+    HudElementRegistry.addLast(HUD_ID, new MetalHudOverlay());
   }
 }

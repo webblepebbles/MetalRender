@@ -1,12 +1,12 @@
 package com.pebbles_boon.metalrender.gui.components;
 
 import java.util.function.Consumer;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.widget.SliderWidget;
-import net.minecraft.text.Text;
+import java.util.function.Function;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.AbstractSliderButton;
+import net.minecraft.network.chat.Component;
 
-
-public class MetalOptionSlider extends SliderWidget {
+public class MetalOptionSlider extends AbstractSliderButton {
 
   private static final int C_TRACK = 0xFF48484A;
   private static final int C_FILL = 0xFF007AFF;
@@ -17,15 +17,17 @@ public class MetalOptionSlider extends SliderWidget {
   private final float maxValue;
   private final float step;
   private final Consumer<Float> onChange;
+  private final Function<Float, Component> labelFormatter;
 
-  public MetalOptionSlider(int x, int y, int width, int height, Text text,
+  public MetalOptionSlider(int x, int y, int width, int height, Component text,
       float min, float max, float step, float currentValue,
-      Consumer<Float> onChange) {
+      Consumer<Float> onChange, Function<Float, Component> labelFormatter) {
     super(x, y, width, height, text, normalize(currentValue, min, max));
     this.minValue = min;
     this.maxValue = max;
     this.step = step;
     this.onChange = onChange;
+    this.labelFormatter = labelFormatter;
     updateMessage();
   }
 
@@ -45,10 +47,14 @@ public class MetalOptionSlider extends SliderWidget {
   @Override
   protected void updateMessage() {
     float v = getRealValue();
+    if (labelFormatter != null) {
+      setMessage(labelFormatter.apply(v));
+      return;
+    }
     if (step >= 1.0f) {
-      setMessage(Text.literal(String.valueOf((int) v)));
+      setMessage(Component.literal(String.valueOf((int) v)));
     } else {
-      setMessage(Text.literal(String.format("%.2f", v)));
+      setMessage(Component.literal(String.format("%.2f", v)));
     }
   }
 
@@ -58,22 +64,18 @@ public class MetalOptionSlider extends SliderWidget {
       onChange.accept(getRealValue());
   }
 
-
   @Override
-  public void renderWidget(DrawContext ctx, int mx, int my, float delta) {
+  public void extractWidgetRenderState(GuiGraphicsExtractor ctx, int mx, int my, float delta) {
     int x = getX(), y = getY(), w = getWidth(), h = getHeight();
-
 
     int trackY = y + h / 2 - 2;
     int trackH = 4;
     ctx.fill(x, trackY, x + w, trackY + trackH, C_TRACK);
 
-
     int fillW = (int) (this.value * w);
     if (fillW > 0) {
       ctx.fill(x, trackY, x + fillW, trackY + trackH, C_FILL);
     }
-
 
     int kw = 8, kh = h;
     int kx = x + fillW - kw / 2;

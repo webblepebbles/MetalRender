@@ -1,8 +1,8 @@
 package com.pebbles_boon.metalrender.entity;
 
+import com.mojang.blaze3d.vertex.VertexConsumer;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import net.minecraft.client.render.VertexConsumer;
 
 public class MetalVertexConsumer implements VertexConsumer {
   private static final int VERTEX_STRIDE = 32;
@@ -34,7 +34,7 @@ public class MetalVertexConsumer implements VertexConsumer {
   }
 
   @Override
-  public VertexConsumer vertex(float x, float y, float z) {
+  public VertexConsumer addVertex(float x, float y, float z) {
     this.posX = x;
     this.posY = y;
     this.posZ = z;
@@ -42,39 +42,39 @@ public class MetalVertexConsumer implements VertexConsumer {
   }
 
   @Override
-  public VertexConsumer color(int red, int green, int blue, int alpha) {
+  public VertexConsumer setColor(int red, int green, int blue, int alpha) {
     this.colorARGB = (alpha << 24) | (red << 16) | (green << 8) | blue;
     return this;
   }
 
   @Override
-  public VertexConsumer color(int argb) {
+  public VertexConsumer setColor(int argb) {
     this.colorARGB = argb;
     return this;
   }
 
   @Override
-  public VertexConsumer texture(float u, float v) {
+  public VertexConsumer setUv(float u, float v) {
     this.texU = u;
     this.texV = v;
     return this;
   }
 
   @Override
-  public VertexConsumer overlay(int u, int v) {
+  public VertexConsumer setUv1(int u, int v) {
     this.overlayU = u;
     this.overlayV = v;
     return this;
   }
 
   @Override
-  public VertexConsumer light(int u, int v) {
+  public VertexConsumer setUv2(int u, int v) {
     this.lightPacked = (v << 16) | u;
     return this;
   }
 
   @Override
-  public VertexConsumer normal(float x, float y, float z) {
+  public VertexConsumer setNormal(float x, float y, float z) {
     this.normalX = x;
     this.normalY = y;
     this.normalZ = z;
@@ -83,11 +83,10 @@ public class MetalVertexConsumer implements VertexConsumer {
   }
 
   @Override
-  public VertexConsumer lineWidth(float width) {
+  public VertexConsumer setLineWidth(float width) {
     return this;
   }
 
-  @Override
   public void vertex(float x, float y, float z, int color, float u, float v,
       int overlay, int light, float nx, float ny, float nz) {
     this.posX = x;
@@ -192,20 +191,12 @@ public class MetalVertexConsumer implements VertexConsumer {
     buffer.put((byte) b);
     buffer.put((byte) a);
 
-
-
-
-
     buffer.put((byte) (int) (nx * 127.0f));
     buffer.put((byte) (int) (ny * 127.0f));
     buffer.put((byte) (int) (nz * 127.0f));
     buffer.put((byte) 0);
     buffer.putShort((short) (ovlU & 0xFFFF));
     buffer.putShort((short) (ovlV & 0xFFFF));
-
-
-
-
 
     int blockL = (lit & 0xFFFF);
     int skyL = ((lit >> 16) & 0xFFFF);
@@ -223,4 +214,5 @@ public class MetalVertexConsumer implements VertexConsumer {
   public static int getVertexStride() {
     return VERTEX_STRIDE;
   }
+
 }

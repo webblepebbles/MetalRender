@@ -4,22 +4,18 @@ import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.config.MetalRenderConfig;
 import com.pebbles_boon.metalrender.gui.components.MetalOptionSlider;
 import com.pebbles_boon.metalrender.nativebridge.MetalHardwareChecker;
-import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
-import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
 import java.util.ArrayList;
 import java.util.List;
-import net.minecraft.client.MinecraftClient;
-import net.minecraft.client.gui.Click;
-import net.minecraft.client.gui.DrawContext;
-import net.minecraft.client.gui.screen.Screen;
-import net.minecraft.client.gui.widget.ButtonWidget;
-import net.minecraft.client.option.GameOptions;
-import net.minecraft.client.option.SimpleOption;
-import net.minecraft.text.Text;
-
+import net.minecraft.client.Minecraft;
+import net.minecraft.client.OptionInstance;
+import net.minecraft.client.Options;
+import net.minecraft.client.gui.GuiGraphicsExtractor;
+import net.minecraft.client.gui.components.Button;
+import net.minecraft.client.gui.screens.Screen;
+import net.minecraft.client.input.MouseButtonEvent;
+import net.minecraft.network.chat.Component;
 
 public class MetalRenderSettingsScreen extends Screen {
-
 
   private static final int C_PANEL = 0xFF1E1E20;
   private static final int C_HEADER = 0xFF161618;
@@ -38,7 +34,6 @@ public class MetalRenderSettingsScreen extends Screen {
   private static final int C_PILL_OFF = 0xFF48484A;
   private static final int C_SCROLLTHUMB = 0xFF636366;
 
-
   private static final int PANEL_W = 700;
   private static final int PANEL_H = 460;
   private static final int HDR_H = 38;
@@ -52,11 +47,12 @@ public class MetalRenderSettingsScreen extends Screen {
   private static final int PILL_H = 20;
   private static final int SLIDER_W = 120;
   private static final int SLIDER_H = 12;
+  private static final int FPS_LIMIT_MAX = 240;
+  private static final int FPS_LIMIT_UNLIMITED = 241;
 
   private static final String[] TABS = {
       "Video", "MetalRender", "Quality", "Performance", "Advanced", "LOD"
   };
-
 
   private final Screen parent;
   private MetalRenderConfig config;
@@ -66,10 +62,8 @@ public class MetalRenderSettingsScreen extends Screen {
   private boolean dragging = false;
   private int dragOriginY, dragOriginOff;
 
-
   private int px, py, pw, ph;
   private int cx, cy, cw, ch;
-
 
   private int pendingRenderDist;
   private int pendingSimDist;
@@ -85,20 +79,16 @@ public class MetalRenderSettingsScreen extends Screen {
   private boolean pendingLodEnabled;
   private boolean pendingDeepDebugNextRun;
 
-
-
-
-
   private int initialRenderDist;
   private int initialLod1, initialLod2, initialLod3, initialLod4;
   private boolean initialLodEnabled;
   private int initialBiomeDetail;
   private int initialLeafCulling;
+  private boolean initialMetalOn;
   private boolean initialSmoothLighting;
-
+  private boolean initialDebugPinkBlockTint;
 
   private final List<Row> rows = new ArrayList<>();
-
 
   private enum RT {
     SECTION, TOGGLE, CYCLE, INFO, VANILLA, SLIDER
@@ -109,7 +99,7 @@ public class MetalRenderSettingsScreen extends Screen {
     final String label;
     String value;
     Runnable action;
-    SimpleOption<?> vanillaOpt;
+    OptionInstance<?> vanillaOpt;
     MetalOptionSlider slider;
     int renderY = 0;
 
@@ -127,33 +117,25 @@ public class MetalRenderSettingsScreen extends Screen {
     }
   }
 
-
-
-
-
   public MetalRenderSettingsScreen(Screen parent) {
-    super(Text.literal("MetalRender Settings"));
+    super(Component.literal("MetalRender Settings"));
     this.parent = parent;
   }
-
-
-
-
 
   @Override
   protected void init() {
     config = MetalRenderClient.getConfig();
     if (config == null)
       config = MetalRenderConfig.load();
-    GameOptions o = MinecraftClient.getInstance().options;
-    pendingRenderDist = o.getViewDistance().getValue();
-    pendingSimDist = o.getSimulationDistance().getValue();
-    pendingMaxFps = o.getMaxFps().getValue();
-    pendingGuiScale = o.getGuiScale().getValue();
-    pendingBrightness = o.getGamma().getValue();
-    pendingFov = o.getFov().getValue();
-    pendingDistortion = o.getDistortionEffectScale().getValue();
-    pendingFovEffects = o.getFovEffectScale().getValue();
+    Options o = Minecraft.getInstance().options;
+    pendingRenderDist = o.renderDistance().get();
+    pendingSimDist = o.simulationDistance().get();
+    pendingMaxFps = fromVanillaFpsLimit(o.framerateLimit().get());
+    pendingGuiScale = o.guiScale().get();
+    pendingBrightness = o.gamma().get();
+    pendingFov = o.fov().get();
+    pendingDistortion = o.screenEffectScale().get();
+    pendingFovEffects = o.fovEffectScale().get();
     pendingTargetFps = config.targetFrameRate;
     pendingMaxMemMb = config.maxMemoryMB;
     pendingLod1 = MetalRenderConfig.lod1Distance();
@@ -163,7 +145,6 @@ public class MetalRenderSettingsScreen extends Screen {
     pendingLodEnabled = MetalRenderConfig.lodEnabled();
     pendingDeepDebugNextRun = MetalRenderConfig.isOneRunDeepDebugRequested();
 
-
     initialRenderDist = pendingRenderDist;
     initialLod1 = pendingLod1;
     initialLod2 = pendingLod2;
@@ -172,7 +153,9 @@ public class MetalRenderSettingsScreen extends Screen {
     initialLodEnabled = pendingLodEnabled;
     initialBiomeDetail = config.biomeTransitionDetail;
     initialLeafCulling = config.leafCullingMode;
+    initialMetalOn = config.enableMetalRendering;
     initialSmoothLighting = config.enableSimpleLighting;
+    initialDebugPinkBlockTint = config.debugPinkBlockTint;
     layout();
     rebuild();
   }
@@ -188,12 +171,9 @@ public class MetalRenderSettingsScreen extends Screen {
     ch = ph - HDR_H - TAB_H - FOOT_H;
   }
 
-
-
-
-
   @Override
-  public void render(DrawContext ctx, int mx, int my, float delta) {
+  public void extractRenderState(GuiGraphicsExtractor ctx, int mx, int my, float delta) {
+    var font = getFont();
 
     ctx.fill(0, 0, width, height, 0xAA000000);
 
@@ -202,11 +182,11 @@ public class MetalRenderSettingsScreen extends Screen {
     fr(ctx, px, py, pw, ph, C_PANEL);
 
     fr(ctx, px, py, pw, HDR_H, C_HEADER);
-    ctx.drawTextWithShadow(textRenderer,
-        Text.literal("MetalRender Settings"),
+    ctx.text(font,
+        Component.literal("MetalRender Settings"),
         px + 12, py + (HDR_H - 9) / 2, C_TEXT_PRI);
-    int vx = px + 12 + textRenderer.getWidth("MetalRender Settings") + 6;
-    ctx.drawText(textRenderer, Text.literal("v0.1.7"),
+    int vx = px + 12 + font.width("MetalRender Settings") + 6;
+    ctx.text(font, Component.literal("v0.1.7"),
         vx, py + (HDR_H - 9) / 2, C_TEXT_SEC, false);
 
     renderTabs(ctx, mx, my);
@@ -223,14 +203,15 @@ public class MetalRenderSettingsScreen extends Screen {
     String gpu = MetalHardwareChecker.getDeviceName();
     if (gpu == null || gpu.isEmpty())
       gpu = "Unknown GPU";
-    if (textRenderer.getWidth(gpu) > pw / 2 - 20)
+    if (font.width(gpu) > pw / 2 - 20)
       gpu = gpu.substring(0, Math.min(gpu.length(), 30)) + "\u2026";
-    ctx.drawText(textRenderer, Text.literal(gpu),
+    ctx.text(font, Component.literal(gpu),
         px + 12, fy + (FOOT_H - 9) / 2, C_TEXT_SEC, false);
-    super.render(ctx, mx, my, delta);
+    super.extractRenderState(ctx, mx, my, delta);
   }
 
-  private void renderTabs(DrawContext ctx, int mx, int my) {
+  private void renderTabs(GuiGraphicsExtractor ctx, int mx, int my) {
+    var font = getFont();
     int ty = py + HDR_H;
     fr(ctx, px, ty, pw, TAB_H, C_TAB_BAR);
     int tw = pw / TABS.length;
@@ -241,13 +222,13 @@ public class MetalRenderSettingsScreen extends Screen {
       int bg = sel ? C_TAB_ACTIVE : (hov ? C_TAB_HOVER : C_TAB_BAR);
       fr(ctx, tx + 2, ty + 2, tw - 4, TAB_H - 4, bg);
       int tc = (sel || hov) ? C_TEXT_PRI : C_TEXT_SEC;
-      ctx.drawCenteredTextWithShadow(textRenderer,
-          Text.literal(TABS[i]), tx + tw / 2, ty + (TAB_H - 9) / 2, tc);
+      ctx.centeredText(font,
+          Component.literal(TABS[i]), tx + tw / 2, ty + (TAB_H - 9) / 2, tc);
     }
     fr(ctx, px, ty + TAB_H - 1, pw, 1, C_DIVIDER);
   }
 
-  private void renderRows(DrawContext ctx, int mx, int my) {
+  private void renderRows(GuiGraphicsExtractor ctx, int mx, int my) {
     int totalH = totalH();
     maxScroll = Math.max(0, totalH - ch);
     scrollOffset = cl(scrollOffset, 0, maxScroll);
@@ -260,9 +241,10 @@ public class MetalRenderSettingsScreen extends Screen {
     }
   }
 
-  private void drawRow(DrawContext ctx, Row r, int y, int mx, int my) {
+  private void drawRow(GuiGraphicsExtractor ctx, Row r, int y, int mx, int my) {
+    var font = getFont();
     if (r.type == RT.SECTION) {
-      ctx.drawText(textRenderer, Text.literal(r.label.toUpperCase()),
+      ctx.text(font, Component.literal(r.label.toUpperCase()),
           cx + 4, y + (SEC_H - 9) / 2 + 4, C_TEXT_SEC, false);
       return;
     }
@@ -273,7 +255,7 @@ public class MetalRenderSettingsScreen extends Screen {
 
     if (r.type == RT.TOGGLE && "Enabled".equals(r.value))
       fr(ctx, cx, y, 3, CARD_H, C_TAB_ACTIVE);
-    ctx.drawText(textRenderer, Text.literal(r.label),
+    ctx.text(font, Component.literal(r.label),
         cx + 10, y + (CARD_H - 9) / 2, C_TEXT_PRI, false);
     int rx = cx + cw - 8;
     switch (r.type) {
@@ -282,10 +264,10 @@ public class MetalRenderSettingsScreen extends Screen {
         drawPill(ctx, rx - PILL_W, y + (CARD_H - PILL_H) / 2, on);
       }
       case CYCLE -> {
-        int vw = textRenderer.getWidth(r.value) + 12;
+        int vw = font.width(r.value) + 12;
         fr(ctx, rx - vw, y + 8, vw, CARD_H - 16, C_TAB_ACTIVE);
-        ctx.drawCenteredTextWithShadow(textRenderer,
-            Text.literal(r.value), rx - vw / 2, y + (CARD_H - 9) / 2, C_TEXT_PRI);
+        ctx.centeredText(font,
+            Component.literal(r.value), rx - vw / 2, y + (CARD_H - 9) / 2, C_TEXT_PRI);
       }
       case INFO -> {
         String v = r.value == null ? "" : r.value;
@@ -296,20 +278,20 @@ public class MetalRenderSettingsScreen extends Screen {
           col = C_VAL_OFF;
         else if (!v.isEmpty())
           col = C_TEXT_ACCENT;
-        ctx.drawText(textRenderer, Text.literal(v),
-            rx - textRenderer.getWidth(v), y + (CARD_H - 9) / 2, col, false);
+        ctx.text(font, Component.literal(v),
+            rx - font.width(v), y + (CARD_H - 9) / 2, col, false);
       }
       case VANILLA -> {
         String v = r.value == null ? "" : r.value;
         int col = "ON".equals(v) ? C_VAL_ON : ("OFF".equals(v) ? C_VAL_OFF : C_TEXT_ACCENT);
-        ctx.drawText(textRenderer, Text.literal(v),
-            rx - textRenderer.getWidth(v), y + (CARD_H - 9) / 2, col, false);
+        ctx.text(font, Component.literal(v),
+            rx - font.width(v), y + (CARD_H - 9) / 2, col, false);
       }
       case SLIDER -> {
         if (r.slider != null) {
           String sv = r.slider.getMessage().getString();
-          ctx.drawText(textRenderer, Text.literal(sv),
-              rx - SLIDER_W - 6 - textRenderer.getWidth(sv),
+          ctx.text(font, Component.literal(sv),
+              rx - SLIDER_W - 6 - font.width(sv),
               y + (CARD_H - 9) / 2, C_TEXT_ACCENT, false);
         }
       }
@@ -319,8 +301,7 @@ public class MetalRenderSettingsScreen extends Screen {
     fr(ctx, cx + 8, y + CARD_H - 1, cw - 16, 1, C_DIVIDER);
   }
 
-
-  private void drawPill(DrawContext ctx, int x, int y, boolean on) {
+  private void drawPill(GuiGraphicsExtractor ctx, int x, int y, boolean on) {
     int bg = on ? C_PILL_ON : C_PILL_OFF;
     ctx.fill(x + 2, y, x + PILL_W - 2, y + PILL_H, bg);
     ctx.fill(x, y + 2, x + PILL_W, y + PILL_H - 2, bg);
@@ -328,7 +309,7 @@ public class MetalRenderSettingsScreen extends Screen {
     ctx.fill(kx + 1, y + 2, kx + PILL_H - 2, y + PILL_H - 2, 0xFFFFFFFF);
   }
 
-  private void renderScrollbar(DrawContext ctx) {
+  private void renderScrollbar(GuiGraphicsExtractor ctx) {
     if (maxScroll <= 0)
       return;
     int sbX = px + pw - 4;
@@ -352,12 +333,8 @@ public class MetalRenderSettingsScreen extends Screen {
     }
   }
 
-
-
-
-
   @Override
-  public boolean mouseClicked(Click click, boolean bl) {
+  public boolean mouseClicked(MouseButtonEvent click, boolean bl) {
     double mx = click.x(), my = click.y();
 
     int ty = py + HDR_H;
@@ -407,7 +384,7 @@ public class MetalRenderSettingsScreen extends Screen {
   }
 
   @Override
-  public boolean mouseDragged(net.minecraft.client.gui.Click click, double dx, double dy) {
+  public boolean mouseDragged(MouseButtonEvent click, double dx, double dy) {
     if (dragging && maxScroll > 0) {
       double my = click.y();
       int tot = totalH();
@@ -420,7 +397,7 @@ public class MetalRenderSettingsScreen extends Screen {
   }
 
   @Override
-  public boolean mouseReleased(net.minecraft.client.gui.Click click) {
+  public boolean mouseReleased(MouseButtonEvent click) {
     dragging = false;
     return super.mouseReleased(click);
   }
@@ -435,13 +412,11 @@ public class MetalRenderSettingsScreen extends Screen {
   }
 
   @Override
-  public void close() {
+  public void onClose() {
     applyPending();
     config.save();
 
-
-
-
+    boolean metalFlip = config.enableMetalRendering != initialMetalOn;
     boolean needsRebuild = (pendingRenderDist != initialRenderDist)
         || (pendingLod1 != initialLod1)
         || (pendingLod2 != initialLod2)
@@ -450,8 +425,8 @@ public class MetalRenderSettingsScreen extends Screen {
         || (pendingLodEnabled != initialLodEnabled)
         || (config.biomeTransitionDetail != initialBiomeDetail)
         || (config.leafCullingMode != initialLeafCulling)
-        || (config.enableSimpleLighting != initialSmoothLighting);
-
+        || (config.enableSimpleLighting != initialSmoothLighting)
+        || (config.debugPinkBlockTint != initialDebugPinkBlockTint);
 
     boolean biomeChanged = config.biomeTransitionDetail != initialBiomeDetail;
     com.pebbles_boon.metalrender.util.MetalLogger.info(
@@ -463,34 +438,17 @@ public class MetalRenderSettingsScreen extends Screen {
         biomeChanged,
         config.leafCullingMode != initialLeafCulling,
         config.enableSimpleLighting != initialSmoothLighting);
-    if (needsRebuild || biomeChanged) {
+    MetalRenderClient.requestDeferredApply(
+        metalFlip,
+        metalFlip,
+        !metalFlip && (needsRebuild || biomeChanged));
 
-      if (NativeBridge.isLibLoaded()) {
-        NativeBridge.nFlushFrames();
-      }
-
-
-      MetalWorldRenderer wr = MetalWorldRenderer.getInstance();
-      if (wr != null) {
-        wr.onConfigScreenClosed();
-      }
-    }
-    if (client != null)
-      client.setScreen(parent);
+    Minecraft mc = Minecraft.getInstance();
+    if (mc != null)
+      mc.setScreen(parent);
   }
 
   private void applyPending() {
-<<<<<<< HEAD
-    GameOptions o = MinecraftClient.getInstance().options;
-    o.getViewDistance().setValue(pendingRenderDist);
-    o.getSimulationDistance().setValue(pendingSimDist);
-    o.getMaxFps().setValue(pendingMaxFps);
-    o.getGuiScale().setValue(pendingGuiScale);
-    o.getGamma().setValue(pendingBrightness);
-    o.getFov().setValue(pendingFov);
-    o.getDistortionEffectScale().setValue(pendingDistortion);
-    o.getFovEffectScale().setValue(pendingFovEffects);
-=======
     Options o = Minecraft.getInstance().options;
     o.renderDistance().set(pendingRenderDist);
     if (config.prioritizeFpsOverTps) {
@@ -504,7 +462,6 @@ public class MetalRenderSettingsScreen extends Screen {
     o.screenEffectScale().set(pendingDistortion);
     o.fovEffectScale().set(pendingFovEffects);
     o.save();
->>>>>>> e028af4 (checkpoint, WIP)
     config.targetFrameRate = pendingTargetFps;
     config.maxMemoryMB = pendingMaxMemMb;
     MetalRenderConfig.setOneRunDeepDebugRequested(pendingDeepDebugNextRun);
@@ -513,32 +470,15 @@ public class MetalRenderSettingsScreen extends Screen {
     MetalRenderConfig.setLod2Distance(pendingLod2);
     MetalRenderConfig.setLod3Distance(pendingLod3);
     MetalRenderConfig.setLod4Distance(pendingLod4);
-
-    if (NativeBridge.isLibLoaded()) {
-      NativeBridge.nSetFeatureFlags(
-          config.enableIndirectCommandBuffers,
-          config.enableMeshShaders,
-          config.enableArgumentBuffers,
-          config.enableProgrammableBlending,
-          config.enableMemorylessTargets);
-    }
-
-    MetalWorldRenderer wr = MetalWorldRenderer.getInstance();
-    if (wr != null) {
-      wr.applyFeatureConfig(config);
-    }
+    MetalRenderConfig.setDebugPinkBlockTint(config.debugPinkBlockTint);
   }
 
-
-
-
-
   private void rebuild() {
-    clearChildren();
+    clearWidgets();
     rows.clear();
     int bw = 64, bh = 20;
-    addDrawableChild(ButtonWidget.builder(Text.literal("Done"), b -> close())
-        .dimensions(px + pw - bw - 10, py + (HDR_H - bh) / 2, bw, bh).build());
+    addRenderableWidget(Button.builder(Component.literal("Done"), b -> onClose())
+        .bounds(px + pw - bw - 10, py + (HDR_H - bh) / 2, bw, bh).build());
     switch (selectedTab) {
       case 0 -> buildVideo();
       case 1 -> buildMetal();
@@ -549,17 +489,17 @@ public class MetalRenderSettingsScreen extends Screen {
     }
     for (Row r : rows)
       if (r.type == RT.SLIDER && r.slider != null)
-        addDrawableChild(r.slider);
+        addRenderableWidget(r.slider);
   }
 
-
-
   private void buildVideo() {
-    GameOptions o = MinecraftClient.getInstance().options;
+    Options o = Minecraft.getInstance().options;
     sec("Display");
-    vanilla("Fullscreen", o.getFullscreen());
-    vanilla("VSync", o.getEnableVsync());
-    sld("Max FPS", 10, 260, 10, pendingMaxFps, v -> pendingMaxFps = (int) (float) v);
+    vanilla("Fullscreen", o.fullscreen());
+    vanilla("VSync", o.enableVsync());
+    sld("Max FPS", 1, FPS_LIMIT_UNLIMITED, 1, pendingMaxFps,
+        v -> pendingMaxFps = (int) (float) v,
+        MetalRenderSettingsScreen::formatFpsLimit);
     sld("GUI Scale", 0, 6, 1, pendingGuiScale, v -> pendingGuiScale = (int) (float) v);
     sec("World");
     sld("Render Distance", 2, 32, 1, pendingRenderDist, v -> pendingRenderDist = (int) (float) v);
@@ -570,15 +510,16 @@ public class MetalRenderSettingsScreen extends Screen {
     sld("Field of View", 30f, 110f, 1f, pendingFov, v -> pendingFov = (int) (float) v);
     sld("Distortion Effects", 0f, 1f, 0.05f, (float) pendingDistortion, v -> pendingDistortion = v);
     sld("FOV Effects", 0f, 1f, 0.05f, (float) pendingFovEffects, v -> pendingFovEffects = v);
-    vanilla("View Bobbing", o.getBobView());
-    vanilla("Entity Shadows", o.getEntityShadows());
-    vanilla("Graphics", o.getPreset());
+    vanilla("View Bobbing", o.bobView());
+    vanilla("Entity Shadows", o.entityShadows());
+    vanilla("Graphics", o.graphicsPreset());
   }
 
   private void buildMetal() {
     sec("Renderer");
     tog("Metal Rendering", config.enableMetalRendering, v -> config.enableMetalRendering = v);
     tog("Smooth Lighting", config.enableSimpleLighting, v -> config.enableSimpleLighting = v);
+    tog("Debug: Pink Block Tint", config.debugPinkBlockTint, v -> config.debugPinkBlockTint = v);
     if (MetalRenderConfig.isDeepDebugActive()) {
       nfo("Deep Debug Status", "Active this run");
     } else {
@@ -588,7 +529,7 @@ public class MetalRenderSettingsScreen extends Screen {
     sec("Hardware");
     nfo("GPU", MetalHardwareChecker.getDeviceName());
     nfo("Metal", MetalRenderClient.isMetalAvailable() ? "Supported" : "Not Available");
-    nfo("Apple Silicon", MetalHardwareChecker.isAppleSilicon() ? "Yes" : "No");
+    nfo("Apple Silicon", MetalHardwareChecker.appleSilicon() ? "Yes" : "No");
     nfo("Sodium", MetalRenderClient.isSodiumLoaded() ? "Installed" : "Not Installed");
     nfo("Mesh Shaders", MetalHardwareChecker.supportsMeshShaders() ? "Supported" : "Not Available");
   }
@@ -597,10 +538,8 @@ public class MetalRenderSettingsScreen extends Screen {
     sec("Rendering Style");
     cyc("Leaves Mode", config.leafCullingMode == 0 ? "Fast" : "Fancy",
         () -> config.leafCullingMode = config.leafCullingMode == 0 ? 1 : 0);
-    tog("Zone 2 LOD", config.enableZone2Lod, v -> config.enableZone2Lod = v);
+    nfo("LOD Status", "Disabled");
     sec("Biome Blending");
-
-
 
     sld("Biome Blend", 0, 10, 1, config.biomeTransitionDetail,
         v -> config.biomeTransitionDetail = (int) (float) v);
@@ -608,14 +547,11 @@ public class MetalRenderSettingsScreen extends Screen {
 
   private void buildPerformance() {
     sec("Frame Pacing");
-    sld("Target FPS", 30, 240, 30, pendingTargetFps, v -> pendingTargetFps = (int) (float) v);
+    sld("Target FPS", 30, 5000, 30, pendingTargetFps, v -> pendingTargetFps = (int) (float) v);
     tog("Triple Buffering", config.enableTripleBuffering, v -> config.enableTripleBuffering = v);
-<<<<<<< HEAD
-=======
     tog("Burst Thread Mode", config.enableBurstThreadMode, v -> config.enableBurstThreadMode = v);
     tog("Sacrifice TPS for FPS", config.prioritizeFpsOverTps, v -> config.prioritizeFpsOverTps = v);
     nfo("FPS Priority Mode", config.prioritizeFpsOverTps ? "Simulation Distance <= 5" : "Off");
->>>>>>> e028af4 (checkpoint, WIP)
     sec("Memory");
     sld("Max GPU Memory (MB)", 512, 4096, 512, pendingMaxMemMb, v -> pendingMaxMemMb = (int) (float) v);
     tog("Memory Fallback", config.enableMemoryPressureFallback, v -> config.enableMemoryPressureFallback = v);
@@ -631,45 +567,16 @@ public class MetalRenderSettingsScreen extends Screen {
     tog("Argument Buffers", config.enableArgumentBuffers, v -> config.enableArgumentBuffers = v);
     tog("Indirect CMD Buffers", config.enableIndirectCommandBuffers, v -> config.enableIndirectCommandBuffers = v);
     tog("Mesh Shaders", config.enableMeshShaders, v -> config.enableMeshShaders = v);
+    tog("Programmable Blending", config.enableProgrammableBlending, v -> config.enableProgrammableBlending = v);
     tog("Memoryless Targets", config.enableMemorylessTargets, v -> config.enableMemorylessTargets = v);
   }
 
   private void buildLod() {
     sec("Level of Detail");
-    tog("LOD System", pendingLodEnabled, v -> {
-      pendingLodEnabled = v;
-      MetalRenderConfig.setLodEnabled(pendingLodEnabled);
-    });
-    nfo("LOD 0", "Full detail near player");
-    sec("Distances (chunks)");
-
-
-
-
-    sld("LOD 1", 1, 32, 1, pendingLod1, v -> {
-      pendingLod1 = (int) (float) v;
-      MetalRenderConfig.setLod1Distance(pendingLod1);
-    });
-    sld("LOD 2", 2, 32, 1, pendingLod2, v -> {
-      pendingLod2 = (int) (float) v;
-      MetalRenderConfig.setLod2Distance(pendingLod2);
-    });
-    sld("LOD 3", 3, 32, 1, pendingLod3, v -> {
-      pendingLod3 = (int) (float) v;
-      MetalRenderConfig.setLod3Distance(pendingLod3);
-    });
-    sld("LOD 4", 4, 32, 1, pendingLod4, v -> {
-      pendingLod4 = (int) (float) v;
-      MetalRenderConfig.setLod4Distance(pendingLod4);
-    });
-    sec("Descriptions");
-    nfo("LOD 1", "Skip non-full blocks");
-    nfo("LOD 2", "Skip decorations and fences");
-    nfo("LOD 3", "Skip slabs, stairs, trapdoors");
-    nfo("LOD 4", "Full cubes only");
+    nfo("Status", "Temporarily disabled");
+    nfo("Reason", "LOD artifacts are removed by forcing full-detail chunk meshes");
+    nfo("Chunk Loading", "Burst mode and backlog submission stay active without LOD");
   }
-
-
 
   private void sec(String label) {
     rows.add(new Row(RT.SECTION, label));
@@ -700,7 +607,7 @@ public class MetalRenderSettingsScreen extends Screen {
     rows.add(r);
   }
 
-  private void vanilla(String label, SimpleOption<?> opt) {
+  private void vanilla(String label, OptionInstance<?> opt) {
     Row r = new Row(RT.VANILLA, label);
     r.value = fmtV(opt);
     r.vanillaOpt = opt;
@@ -709,13 +616,39 @@ public class MetalRenderSettingsScreen extends Screen {
 
   private void sld(String label, float min, float max, float step,
       float cur, java.util.function.Consumer<Float> cb) {
+    sld(label, min, max, step, cur, cb, null);
+  }
+
+  private void sld(String label, float min, float max, float step,
+      float cur, java.util.function.Consumer<Float> cb,
+      java.util.function.Function<Float, Component> formatter) {
     Row r = new Row(RT.SLIDER, label);
     r.slider = new MetalOptionSlider(0, 0, SLIDER_W, SLIDER_H,
-        Text.literal(""), min, max, step, cur, cb);
+        Component.literal(""), min, max, step, cur, cb, formatter);
     rows.add(r);
   }
 
+  private static int fromVanillaFpsLimit(int fpsLimit) {
+    if (fpsLimit >= 260) {
+      return FPS_LIMIT_UNLIMITED;
+    }
+    return cl(fpsLimit, 1, FPS_LIMIT_MAX);
+  }
 
+  private static int toVanillaFpsLimit(int sliderValue) {
+    if (sliderValue > FPS_LIMIT_MAX) {
+      return 260;
+    }
+    return cl(sliderValue, 1, FPS_LIMIT_MAX);
+  }
+
+  private static Component formatFpsLimit(float value) {
+    int fpsLimit = Math.round(value);
+    if (fpsLimit > FPS_LIMIT_MAX) {
+      return Component.translatable("options.framerateLimit.max");
+    }
+    return Component.translatable("options.framerate", fpsLimit);
+  }
 
   private int totalH() {
     int h = 0;
@@ -724,8 +657,8 @@ public class MetalRenderSettingsScreen extends Screen {
     return h;
   }
 
-  private String fmtV(SimpleOption<?> opt) {
-    Object v = opt.getValue();
+  private String fmtV(OptionInstance<?> opt) {
+    Object v = opt.get();
     if (v instanceof Boolean b)
       return b ? "ON" : "OFF";
     if (v instanceof Integer i)
@@ -739,17 +672,15 @@ public class MetalRenderSettingsScreen extends Screen {
   }
 
   @SuppressWarnings({ "unchecked", "rawtypes" })
-  private void cycleVanilla(SimpleOption opt) {
-    Object v = opt.getValue();
+  private void cycleVanilla(OptionInstance opt) {
+    Object v = opt.get();
     if (v instanceof Boolean b)
-      opt.setValue(!b);
+      opt.set(!b);
   }
 
-
-  private static void fr(DrawContext ctx, int x, int y, int w, int h, int col) {
+  private static void fr(GuiGraphicsExtractor ctx, int x, int y, int w, int h, int col) {
     ctx.fill(x, y, x + w, y + h, col);
   }
-
 
   private static int cl(int v, int lo, int hi) {
     return Math.max(lo, Math.min(hi, v));

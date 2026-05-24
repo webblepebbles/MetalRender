@@ -1,5 +1,5 @@
 plugins {
-    id 'fabric-loom' version '1.15-SNAPSHOT'
+    id 'net.fabricmc.fabric-loom' version '1.15-SNAPSHOT'
     id 'maven-publish'
 }
 
@@ -7,7 +7,7 @@ group = "com.metalrender"
 version = "v0.1.7"
 
 java {
-    toolchain.languageVersion = JavaLanguageVersion.of(21)
+    toolchain.languageVersion = JavaLanguageVersion.of(25)
 }
 repositories {
 
@@ -26,16 +26,15 @@ repositories {
         }
 }
 dependencies {
-    minecraft "com.mojang:minecraft:1.21.11"
-    mappings "net.fabricmc:yarn:1.21.11+build.3:v2"
-    modImplementation "net.fabricmc:fabric-loader:0.18.4"
-    modImplementation "net.fabricmc.fabric-api:fabric-api:0.139.4+1.21.11"
-    modImplementation "org.lwjgl:lwjgl:3.3.3"
-    modImplementation "org.lwjgl:lwjgl-glfw:3.3.3"
-    modImplementation "org.lwjgl:lwjgl:3.3.3:natives-macos"
-    modImplementation "org.lwjgl:lwjgl-glfw:3.3.3:natives-macos"
-    modImplementation 'org.joml:joml:1.10.5'
-    modCompileOnly "maven.modrinth:sodium:mc1.21.11-0.8.0-fabric"
+    minecraft "com.mojang:minecraft:26.1"
+    implementation "net.fabricmc:fabric-loader:0.19.2"
+    implementation "net.fabricmc.fabric-api:fabric-api:0.149.0+26.1.2"
+    implementation "org.lwjgl:lwjgl:3.3.3"
+    implementation "org.lwjgl:lwjgl-glfw:3.3.3"
+    implementation "org.lwjgl:lwjgl:3.3.3:natives-macos"
+    implementation "org.lwjgl:lwjgl-glfw:3.3.3:natives-macos"
+    implementation 'org.joml:joml:1.10.5'
+    compileOnly "maven.modrinth:sodium:mc26.1.1-0.8.9-fabric"
 }
 
 loom {
@@ -68,7 +67,7 @@ loom {
 }
 tasks.withType(JavaCompile).configureEach {
     options.encoding = "UTF-8"
-    options.release = 21
+    options.release = 25
     options.compilerArgs += ['--enable-preview']
 }
     jar {

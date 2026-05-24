@@ -2,25 +2,19 @@ package com.pebbles_boon.metalrender.sodium.mixins;
 
 import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
-import net.minecraft.client.gl.GpuSampler;
-import net.minecraft.client.render.BlockRenderLayerGroup;
-import net.minecraft.client.render.SectionRenderState;
+import com.pebbles_boon.metalrender.util.MetalLogger;
+import com.mojang.blaze3d.textures.GpuSampler;
+import net.minecraft.client.renderer.chunk.ChunkSectionLayerGroup;
+import net.minecraft.client.renderer.chunk.ChunkSectionsToRender;
 import org.spongepowered.asm.mixin.Mixin;
+import org.spongepowered.asm.mixin.Unique;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
+import org.spongepowered.asm.mixin.injection.Redirect;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-@Mixin(SectionRenderState.class)
+@Mixin(targets = "net.minecraft.client.renderer.LevelRenderer", remap = false)
 public class WorldRendererTerrainMixin {
-<<<<<<< HEAD
-  @Inject(method = "renderSection", at = @At("HEAD"), cancellable = true, require = 0)
-  private void metalrender$skipVanillaTerrain(BlockRenderLayerGroup layerGroup,
-      GpuSampler sampler, CallbackInfo ci) {
-    if (MetalRenderClient.isEnabled()) {
-      MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
-      if (wr != null && wr.shouldRenderWithMetal()) {
-        ci.cancel();
-=======
   @Unique
   private int metalrender$skippedTerrainGroups = 0;
   @Unique
@@ -53,8 +47,30 @@ public class WorldRendererTerrainMixin {
       if (metalrender$skippedTerrainGroups <= 3 || metalrender$skippedTerrainGroups % 1000 == 0) {
         MetalLogger.info("[WorldRendererTerrainMixin] Skipped vanilla terrain group #%d (%s)",
             metalrender$skippedTerrainGroups, String.valueOf(group));
->>>>>>> 62d2482 (optimisation for high-rend scenes with tons of chunks. also fixed chunk loading speeds)
       }
+      return;
+    }
+    sections.renderGroup(group, sampler);
+  }
+
+  @Redirect(method = "lambda$addMainPass$0", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/chunk/ChunkSectionsToRender;renderGroup(Lnet/minecraft/client/renderer/chunk/ChunkSectionLayerGroup;Lcom/mojang/blaze3d/textures/GpuSampler;)V", ordinal = 1), require = 0)
+  private void metalrender$skipTranslucentTerrainGroup(ChunkSectionsToRender sections,
+      ChunkSectionLayerGroup group, GpuSampler sampler) {
+    if (metalrender$shouldSkipVanillaTerrain()) {
+      metalrender$skippedTerrainGroups++;
+      if (metalrender$skippedTerrainGroups <= 3 || metalrender$skippedTerrainGroups % 1000 == 0) {
+        MetalLogger.info("[WorldRendererTerrainMixin] Skipped vanilla terrain group #%d (%s)",
+            metalrender$skippedTerrainGroups, String.valueOf(group));
+      }
+      return;
+    }
+    sections.renderGroup(group, sampler);
+  }
+
+  @Inject(method = "lambda$addMainPass$0", at = @At("HEAD"), require = 0)
+  private void metalrender$terrainHookHeartbeat(CallbackInfo ci) {
+    if (metalrender$shouldSkipVanillaTerrain() && metalrender$skippedTerrainGroups == 0) {
+      MetalLogger.info("[WorldRendererTerrainMixin] Terrain redirect hook active");
     }
   }
 }

@@ -4,6 +4,7 @@ public final class MetalRenderConfig {
   public boolean enableMetalRendering = true;
   public boolean enableSimpleLighting = true;
   public boolean enableDebugOverlay = false;
+  public boolean debugPinkBlockTint = false;
   public int zone1Radius = 16;
   public int zone2Radius = 64;
   public float lodTransitionDistance = 0.8f;
@@ -11,17 +12,13 @@ public final class MetalRenderConfig {
   public boolean enableZone2Lod = true;
   public int leafCullingMode = 0;
   public int targetFrameRate = 60;
+  public boolean prioritizeFpsOverTps = false;
   public int maxMemoryMB = 2048;
   public boolean enableTripleBuffering = true;
   public boolean enableMemoryPressureFallback = true;
-<<<<<<< HEAD
-=======
   public boolean enableBurstThreadMode = false;
-  public boolean prioritizeFpsOverTps = false;
->>>>>>> e028af4 (checkpoint, WIP)
   public boolean enableMeshShaders = true;
   public boolean enableArgumentBuffers = false;
-
 
   public boolean enableProgrammableBlending = false;
   public boolean enableIndirectCommandBuffers = false;
@@ -39,7 +36,7 @@ public final class MetalRenderConfig {
   private static volatile boolean occlusionCulling = false;
   private static volatile float resolutionScale = 1.0f;
   private static volatile boolean deepDebugActive = false;
-
+  private static volatile boolean debugPinkBlockTintEnabled = false;
 
   private static java.nio.file.Path configFile() {
     return net.fabricmc.loader.api.FabricLoader.getInstance()
@@ -63,7 +60,6 @@ public final class MetalRenderConfig {
     }
   }
 
-
   public static MetalRenderConfig load() {
     activateOneRunDeepDebugIfRequested();
     MetalRenderConfig cfg = new MetalRenderConfig();
@@ -80,6 +76,8 @@ public final class MetalRenderConfig {
           cfg.enableSimpleLighting = obj.get("enableSimpleLighting").getAsBoolean();
         if (obj.has("enableDebugOverlay"))
           cfg.enableDebugOverlay = obj.get("enableDebugOverlay").getAsBoolean();
+        if (obj.has("debugPinkBlockTint"))
+          cfg.debugPinkBlockTint = obj.get("debugPinkBlockTint").getAsBoolean();
         if (obj.has("zone1Radius"))
           cfg.zone1Radius = obj.get("zone1Radius").getAsInt();
         if (obj.has("zone2Radius"))
@@ -94,19 +92,16 @@ public final class MetalRenderConfig {
           cfg.leafCullingMode = obj.get("leafCullingMode").getAsInt();
         if (obj.has("targetFrameRate"))
           cfg.targetFrameRate = obj.get("targetFrameRate").getAsInt();
+        if (obj.has("prioritizeFpsOverTps"))
+          cfg.prioritizeFpsOverTps = obj.get("prioritizeFpsOverTps").getAsBoolean();
         if (obj.has("maxMemoryMB"))
           cfg.maxMemoryMB = obj.get("maxMemoryMB").getAsInt();
         if (obj.has("enableTripleBuffering"))
           cfg.enableTripleBuffering = obj.get("enableTripleBuffering").getAsBoolean();
         if (obj.has("enableMemoryPressureFallback"))
           cfg.enableMemoryPressureFallback = obj.get("enableMemoryPressureFallback").getAsBoolean();
-<<<<<<< HEAD
-=======
         if (obj.has("enableBurstThreadMode"))
           cfg.enableBurstThreadMode = obj.get("enableBurstThreadMode").getAsBoolean();
-        if (obj.has("prioritizeFpsOverTps"))
-          cfg.prioritizeFpsOverTps = obj.get("prioritizeFpsOverTps").getAsBoolean();
->>>>>>> e028af4 (checkpoint, WIP)
         if (obj.has("enableMeshShaders"))
           cfg.enableMeshShaders = obj.get("enableMeshShaders").getAsBoolean();
         if (obj.has("enableArgumentBuffers"))
@@ -138,9 +133,8 @@ public final class MetalRenderConfig {
 
     }
 
-
-
     applyStableQualityFallback(cfg);
+    setDebugPinkBlockTint(cfg.debugPinkBlockTint);
 
     cfg.loadFeatureFlags();
     loadFromSystemProperties();
@@ -151,16 +145,10 @@ public final class MetalRenderConfig {
   }
 
   private static void applyStableQualityFallback(MetalRenderConfig cfg) {
-    cfg.enableIndirectCommandBuffers = false;
-    cfg.enableMeshShaders = false;
-    cfg.enableArgumentBuffers = false;
-    cfg.enableProgrammableBlending = false;
-    cfg.enableMemorylessTargets = false;
     aggressiveFrustumCulling = false;
     occlusionCulling = false;
     resolutionScale = 1.0f;
   }
-
 
   public void save() {
 
@@ -177,6 +165,7 @@ public final class MetalRenderConfig {
       obj.addProperty("enableMetalRendering", enableMetalRendering);
       obj.addProperty("enableSimpleLighting", enableSimpleLighting);
       obj.addProperty("enableDebugOverlay", enableDebugOverlay);
+      obj.addProperty("debugPinkBlockTint", debugPinkBlockTint);
       obj.addProperty("zone1Radius", zone1Radius);
       obj.addProperty("zone2Radius", zone2Radius);
       obj.addProperty("lodTransitionDistance", lodTransitionDistance);
@@ -184,14 +173,11 @@ public final class MetalRenderConfig {
       obj.addProperty("enableZone2Lod", enableZone2Lod);
       obj.addProperty("leafCullingMode", leafCullingMode);
       obj.addProperty("targetFrameRate", targetFrameRate);
+      obj.addProperty("prioritizeFpsOverTps", prioritizeFpsOverTps);
       obj.addProperty("maxMemoryMB", maxMemoryMB);
       obj.addProperty("enableTripleBuffering", enableTripleBuffering);
       obj.addProperty("enableMemoryPressureFallback", enableMemoryPressureFallback);
-<<<<<<< HEAD
-=======
       obj.addProperty("enableBurstThreadMode", enableBurstThreadMode);
-      obj.addProperty("prioritizeFpsOverTps", prioritizeFpsOverTps);
->>>>>>> e028af4 (checkpoint, WIP)
       obj.addProperty("enableMeshShaders", enableMeshShaders);
       obj.addProperty("enableArgumentBuffers", enableArgumentBuffers);
       obj.addProperty("enableProgrammableBlending", enableProgrammableBlending);
@@ -247,6 +233,10 @@ public final class MetalRenderConfig {
     return deepDebugActive;
   }
 
+  public static boolean debugPinkBlockTint() {
+    return debugPinkBlockTintEnabled;
+  }
+
   public static boolean isOneRunDeepDebugRequested() {
     try {
       return java.nio.file.Files.exists(deepDebugFlagFile());
@@ -295,6 +285,10 @@ public final class MetalRenderConfig {
 
   public static void setResolutionScale(float v) {
     resolutionScale = clamp(v, 0.20f, 1.5f);
+  }
+
+  public static void setDebugPinkBlockTint(boolean v) {
+    debugPinkBlockTintEnabled = v;
   }
 
   public static boolean lodEnabled() {
@@ -361,12 +355,11 @@ public final class MetalRenderConfig {
     resolutionScale = getFloat("metalrender.render.resolutionScale", resolutionScale);
   }
 
-
   public void loadFeatureFlags() {
     enableIndirectCommandBuffers = getBool("metalrender.feature.icb", enableIndirectCommandBuffers);
     enableMeshShaders = getBool("metalrender.feature.mesh", enableMeshShaders);
     enableArgumentBuffers = getBool("metalrender.feature.argbuf", enableArgumentBuffers);
-    enableProgrammableBlending = false;
+    enableProgrammableBlending = getBool("metalrender.feature.oit", enableProgrammableBlending);
     enableMemorylessTargets = getBool("metalrender.feature.memoryless", enableMemorylessTargets);
   }
 

@@ -18,6 +18,7 @@ extern uint32_t g_gpuSubChunkCount;
 extern id<MTLBuffer> g_tripleBuffers[];
 extern int g_currentBufferIndex;
 extern bool g_meshShadersActive;
+extern uint32_t g_meshPipelineCount;
 extern uint32_t g_drawCallCount;
 static const int kTripleBufferCount = 3;
 static inline void meshDbg(const char *fmt, ...) {
@@ -90,11 +91,8 @@ buildMeshPipeline(id<MTLDevice> device, id<MTLLibrary> library,
                                    meshFuncName, fragmentFuncName];
     desc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
 
-
-
     desc.colorAttachments[0].blendingEnabled = NO;
     desc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
-
 
     desc.maxTotalThreadsPerObjectThreadgroup = 1;
     desc.maxTotalThreadsPerMeshThreadgroup = 256;
@@ -273,6 +271,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_destroyMeshPipe
             (unsigned long long)pipelineHandle);
     g_meshPipelines.erase(it);
   }
+  g_meshPipelineCount = (uint32_t)g_meshPipelines.size();
   if (g_meshPipelines.empty()) {
     g_meshShadersActive = false;
   }
@@ -349,9 +348,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_createTerrainMe
               error ? [[error localizedDescription] UTF8String] : "unknown");
     }
   }
-  g_meshShadersActive = (handles[0] != 0);
-
-
+  g_meshPipelineCount = (uint32_t)g_meshPipelines.size();
+  g_meshShadersActive = g_meshPipelineCount > 0;
 
   if (handles[0] != 0)
     g_pipelineMeshOpaque = g_meshPipelines[(uint64_t)handles[0]].pipeline;

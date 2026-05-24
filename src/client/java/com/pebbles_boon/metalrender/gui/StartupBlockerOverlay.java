@@ -32,7 +32,7 @@ public class StartupBlockerOverlay extends Overlay {
     private static final float BOTTOM_TEXT_HEIGHT_FRACTION = 0.04f;
     private static final float FOOTNOTE_HEIGHT_FRACTION = 0.024f;
     private static final float IMAGE_WIDTH_FRACTION = 1f;
-        private static final float IMAGE_HEIGHT_FRACTION = 0.76f;
+    private static final float IMAGE_HEIGHT_FRACTION = 0.76f;
     private static boolean loggedRender;
 
     @Override

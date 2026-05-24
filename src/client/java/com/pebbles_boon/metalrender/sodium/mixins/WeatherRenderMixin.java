@@ -6,18 +6,16 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
-import net.minecraft.client.render.WorldRenderer;
 
-
-@Mixin(WorldRenderer.class)
+@Mixin(targets = "net.minecraft.client.renderer.WeatherEffectRenderer", remap = false)
 public class WeatherRenderMixin {
 
-    @Inject(method = "renderWeather", at = @At("HEAD"), cancellable = true, require = 0)
+    @Inject(method = "render", at = @At("HEAD"), cancellable = true, require = 0)
     private void metalrender$cancelWeather(CallbackInfo ci) {
         if (!MetalRenderClient.isEnabled())
             return;
         MetalWorldRenderer worldRenderer = MetalRenderClient.getWorldRenderer();
-        if (worldRenderer != null && worldRenderer.shouldRenderWithMetal()) {
+        if (worldRenderer != null && worldRenderer.metalActive()) {
             ci.cancel();
         }
     }

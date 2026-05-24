@@ -1,52 +1,46 @@
 package com.pebbles_boon.metalrender.sodium.mixins.accessor;
 
-import net.minecraft.client.particle.BillboardParticle;
-import net.minecraft.client.texture.Sprite;
+import net.minecraft.client.particle.SingleQuadParticle;
+import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 import org.spongepowered.asm.mixin.gen.Invoker;
 
-@Mixin(BillboardParticle.class)
+@Mixin(SingleQuadParticle.class)
 public interface BillboardParticleAccessor {
-  @Accessor("scale")
+  @Accessor("quadSize")
   float metalrender$getScale();
 
-  @Accessor("red")
+  @Accessor("rCol")
   float metalrender$getRed();
 
-  @Accessor("green")
+  @Accessor("gCol")
   float metalrender$getGreen();
 
-  @Accessor("blue")
+  @Accessor("bCol")
   float metalrender$getBlue();
 
   @Accessor("alpha")
   float metalrender$getAlpha();
 
-  @Accessor("zRotation")
+  @Accessor("roll")
   float metalrender$getZRotation();
 
-  @Accessor("lastZRotation")
+  @Accessor("oRoll")
   float metalrender$getLastZRotation();
 
   @Accessor("sprite")
-  Sprite metalrender$getSprite();
+  TextureAtlasSprite metalrender$getSprite();
 
-
-
-
-
-
-
-  @Invoker("getMinU")
+  @Invoker("getU0")
   float metalrender$invokeGetMinU();
 
-  @Invoker("getMaxU")
+  @Invoker("getU1")
   float metalrender$invokeGetMaxU();
 
-  @Invoker("getMinV")
+  @Invoker("getV0")
   float metalrender$invokeGetMinV();
 
-  @Invoker("getMaxV")
+  @Invoker("getV1")
   float metalrender$invokeGetMaxV();
 }

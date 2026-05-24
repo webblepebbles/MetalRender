@@ -77,7 +77,6 @@ public final class MetalRenderer implements RenderBackend {
   public void beginFrame(float[] viewProj) {
   }
 
-
   private final float[] reusableMatrixArr = new float[16];
 
   public void setProjectionMatrix(Matrix4f proj) {
@@ -106,6 +105,10 @@ public final class MetalRenderer implements RenderBackend {
 
   public long getCurrentFrameContext() {
     return handle != 0 ? NativeBridge.nGetCurrentFrameContext(handle) : 0;
+  }
+
+  public long frameCtx() {
+    return getCurrentFrameContext();
   }
 
   public int getGLTextureId() {
