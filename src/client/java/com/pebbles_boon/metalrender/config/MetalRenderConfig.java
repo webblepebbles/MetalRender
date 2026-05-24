@@ -23,11 +23,16 @@ public final class MetalRenderConfig {
   public boolean enableProgrammableBlending = false;
   public boolean enableIndirectCommandBuffers = false;
   public boolean enableMemorylessTargets = false;
-  private static volatile int lod1Distance = 8;
-  private static volatile int lod2Distance = 16;
-  private static volatile int lod3Distance = 24;
-  private static volatile int lod4Distance = 32;
-  private static volatile boolean lodEnabled = true;
+  private static final int DEFAULT_ZONE0_RADIUS_CHUNKS = 32;
+  private static final int DEFAULT_FAR_FIELD_RADIUS_CHUNKS = 256;
+  private static final float DEFAULT_ZONE0_EXACT_BLOCK_PIXELS = 12.0f;
+  private static final float DEFAULT_ZONE0_GREEDY_BLOCK_PIXELS = 4.0f;
+  private static final float DEFAULT_ZONE0_CLUSTER_BLOCK_PIXELS = 1.5f;
+  private static volatile int zone0RadiusChunks = DEFAULT_ZONE0_RADIUS_CHUNKS;
+  private static volatile int farFieldRadiusChunks = DEFAULT_FAR_FIELD_RADIUS_CHUNKS;
+  private static volatile float zone0ExactBlockPixels = DEFAULT_ZONE0_EXACT_BLOCK_PIXELS;
+  private static volatile float zone0GreedyBlockPixels = DEFAULT_ZONE0_GREEDY_BLOCK_PIXELS;
+  private static volatile float zone0ClusterBlockPixels = DEFAULT_ZONE0_CLUSTER_BLOCK_PIXELS;
   private static volatile boolean mirrorUploads = false;
   private static volatile boolean swapOpaque = false;
   private static volatile boolean swapCutout = false;
@@ -112,16 +117,20 @@ public final class MetalRenderConfig {
         if (obj.has("enableMemorylessTargets"))
           cfg.enableMemorylessTargets = obj.get("enableMemorylessTargets").getAsBoolean();
 
-        if (obj.has("savedLod1Distance"))
-          lod1Distance = obj.get("savedLod1Distance").getAsInt();
-        if (obj.has("savedLod2Distance"))
-          lod2Distance = obj.get("savedLod2Distance").getAsInt();
-        if (obj.has("savedLod3Distance"))
-          lod3Distance = obj.get("savedLod3Distance").getAsInt();
-        if (obj.has("savedLod4Distance"))
-          lod4Distance = obj.get("savedLod4Distance").getAsInt();
-        if (obj.has("savedLodEnabled"))
-          lodEnabled = obj.get("savedLodEnabled").getAsBoolean();
+        if (obj.has("lodZone0RadiusChunks")) {
+          zone0RadiusChunks = obj.get("lodZone0RadiusChunks").getAsInt();
+        } else if (obj.has("savedLod4Distance")) {
+          zone0RadiusChunks = Math.max(DEFAULT_ZONE0_RADIUS_CHUNKS,
+              obj.get("savedLod4Distance").getAsInt());
+        }
+        if (obj.has("lodFarFieldRadiusChunks"))
+          farFieldRadiusChunks = obj.get("lodFarFieldRadiusChunks").getAsInt();
+        if (obj.has("lodZone0ExactPixels"))
+          zone0ExactBlockPixels = obj.get("lodZone0ExactPixels").getAsFloat();
+        if (obj.has("lodZone0GreedyPixels"))
+          zone0GreedyBlockPixels = obj.get("lodZone0GreedyPixels").getAsFloat();
+        if (obj.has("lodZone0ClusterPixels"))
+          zone0ClusterBlockPixels = obj.get("lodZone0ClusterPixels").getAsFloat();
         if (obj.has("savedResolutionScale"))
           resolutionScale = clamp(obj.get("savedResolutionScale").getAsFloat(), 0.20f, 1.5f);
         if (obj.has("savedAggressiveFrustumCulling"))
@@ -132,6 +141,8 @@ public final class MetalRenderConfig {
     } catch (Exception e) {
 
     }
+
+    normalizeLodGroundwork();
 
     applyStableQualityFallback(cfg);
     setDebugPinkBlockTint(cfg.debugPinkBlockTint);
@@ -184,11 +195,11 @@ public final class MetalRenderConfig {
       obj.addProperty("enableIndirectCommandBuffers", enableIndirectCommandBuffers);
       obj.addProperty("enableMemorylessTargets", enableMemorylessTargets);
 
-      obj.addProperty("savedLod1Distance", lod1Distance);
-      obj.addProperty("savedLod2Distance", lod2Distance);
-      obj.addProperty("savedLod3Distance", lod3Distance);
-      obj.addProperty("savedLod4Distance", lod4Distance);
-      obj.addProperty("savedLodEnabled", lodEnabled);
+      obj.addProperty("lodZone0RadiusChunks", zone0RadiusChunks);
+      obj.addProperty("lodFarFieldRadiusChunks", farFieldRadiusChunks);
+      obj.addProperty("lodZone0ExactPixels", zone0ExactBlockPixels);
+      obj.addProperty("lodZone0GreedyPixels", zone0GreedyBlockPixels);
+      obj.addProperty("lodZone0ClusterPixels", zone0ClusterBlockPixels);
       obj.addProperty("savedResolutionScale", resolutionScale);
       obj.addProperty("savedAggressiveFrustumCulling", aggressiveFrustumCulling);
       obj.addProperty("savedOcclusionCulling", occlusionCulling);
@@ -291,58 +302,90 @@ public final class MetalRenderConfig {
     debugPinkBlockTintEnabled = v;
   }
 
-  public static boolean lodEnabled() {
-    return lodEnabled;
+  public static int zone0RadiusChunks() {
+    return zone0RadiusChunks;
   }
 
-  public static void setLodEnabled(boolean v) {
-    lodEnabled = v;
+  public static void setZone0RadiusChunks(int v) {
+    zone0RadiusChunks = DEFAULT_ZONE0_RADIUS_CHUNKS;
+    normalizeLodGroundwork();
   }
 
-  public static int lod1Distance() {
-    return lod1Distance;
+  public static int farFieldRadiusChunks() {
+    return farFieldRadiusChunks;
   }
 
-  public static void setLod1Distance(int v) {
-    lod1Distance = Math.max(1, v);
+  public static void setFarFieldRadiusChunks(int v) {
+    farFieldRadiusChunks = DEFAULT_FAR_FIELD_RADIUS_CHUNKS;
+    normalizeLodGroundwork();
   }
 
-  public static int lod2Distance() {
-    return lod2Distance;
+  public static float zone0ExactBlockPixels() {
+    return zone0ExactBlockPixels;
   }
 
-  public static void setLod2Distance(int v) {
-    lod2Distance = Math.max(lod1Distance + 1, v);
+  public static void setZone0ExactBlockPixels(float v) {
+    zone0ExactBlockPixels = v;
+    normalizeLodGroundwork();
   }
 
-  public static int lod3Distance() {
-    return lod3Distance;
+  public static float zone0GreedyBlockPixels() {
+    return zone0GreedyBlockPixels;
   }
 
-  public static void setLod3Distance(int v) {
-    lod3Distance = Math.max(lod2Distance + 1, v);
+  public static void setZone0GreedyBlockPixels(float v) {
+    zone0GreedyBlockPixels = v;
+    normalizeLodGroundwork();
   }
 
-  public static int lod4Distance() {
-    return lod4Distance;
+  public static float zone0ClusterBlockPixels() {
+    return zone0ClusterBlockPixels;
   }
 
-  public static void setLod4Distance(int v) {
-    lod4Distance = Math.max(lod3Distance + 1, v);
+  public static void setZone0ClusterBlockPixels(float v) {
+    zone0ClusterBlockPixels = v;
+    normalizeLodGroundwork();
+  }
+
+  public static boolean isZone0LodRuntimeActive() {
+    return true;
+  }
+
+  public static boolean isFarFieldDescriptorRuntimeActive() {
+    return false;
   }
 
   public static int getLodLevel(int chunkDistance) {
-    if (!lodEnabled)
+    return getLodLevel((double) chunkDistance);
+  }
+
+  public static int getLodLevel(double chunkDistance) {
+    if (!isZone0LodRuntimeActive() || chunkDistance <= 0) {
       return 0;
-    if (chunkDistance >= lod4Distance)
-      return 4;
-    if (chunkDistance >= lod3Distance)
-      return 3;
-    if (chunkDistance >= lod2Distance)
-      return 2;
-    if (chunkDistance >= lod1Distance)
+    }
+    float projectedBlockPixels = estimateBlockFacePixels(chunkDistance);
+    if (projectedBlockPixels > zone0ExactBlockPixels) {
+      return 0;
+    }
+    if (projectedBlockPixels > zone0GreedyBlockPixels) {
       return 1;
-    return 0;
+    }
+    if (projectedBlockPixels > zone0ClusterBlockPixels) {
+      return 2;
+    }
+    if (chunkDistance <= zone0RadiusChunks) {
+      return 3;
+    }
+    return 4;
+  }
+
+  public static void resetLodGroundworkDefaults() {
+    zone0RadiusChunks = DEFAULT_ZONE0_RADIUS_CHUNKS;
+    farFieldRadiusChunks = DEFAULT_FAR_FIELD_RADIUS_CHUNKS;
+    zone0ExactBlockPixels = DEFAULT_ZONE0_EXACT_BLOCK_PIXELS;
+    zone0GreedyBlockPixels = DEFAULT_ZONE0_GREEDY_BLOCK_PIXELS;
+    zone0ClusterBlockPixels = DEFAULT_ZONE0_CLUSTER_BLOCK_PIXELS;
+    normalizeLodGroundwork();
   }
 
   public static void loadFromSystemProperties() {
@@ -379,6 +422,37 @@ public final class MetalRenderConfig {
     } catch (NumberFormatException ex) {
       return def;
     }
+  }
+
+  private static void normalizeLodGroundwork() {
+    zone0RadiusChunks = DEFAULT_ZONE0_RADIUS_CHUNKS;
+    farFieldRadiusChunks = DEFAULT_FAR_FIELD_RADIUS_CHUNKS;
+    zone0ExactBlockPixels = clamp(zone0ExactBlockPixels, 6.0f, 24.0f);
+    zone0GreedyBlockPixels = clamp(zone0GreedyBlockPixels, 2.0f,
+        zone0ExactBlockPixels - 0.5f);
+    zone0ClusterBlockPixels = clamp(zone0ClusterBlockPixels, 0.5f,
+        zone0GreedyBlockPixels - 0.25f);
+  }
+
+  private static float estimateBlockFacePixels(double chunkDistance) {
+    net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+    double screenHeight = 1080.0;
+    double fovDegrees = 70.0;
+    if (mc != null) {
+      if (mc.getWindow() != null) {
+        screenHeight = Math.max(1.0, mc.getWindow().getHeight());
+      }
+      if (mc.options != null) {
+        fovDegrees = mc.options.fov().get();
+      }
+    }
+    double clampedFovRadians = Math.toRadians(clamp((float) fovDegrees, 30.0f, 110.0f));
+    double distanceBlocks = Math.max(1.0, chunkDistance * 16.0);
+    double denominator = 2.0 * Math.tan(clampedFovRadians * 0.5) * distanceBlocks;
+    if (denominator <= 0.0) {
+      return DEFAULT_ZONE0_EXACT_BLOCK_PIXELS;
+    }
+    return (float) (screenHeight / denominator);
   }
 
   private static float clamp(float v, float lo, float hi) {

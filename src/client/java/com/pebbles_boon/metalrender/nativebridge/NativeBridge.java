@@ -35,10 +35,6 @@ public final class NativeBridge {
         public static native void nBeginFrame(long handle, float[] proj, float[] view,
                         float fogStart, float fogEnd);
 
-        public static native void nDrawTerrain(long handle, int layerId);
-
-        public static native void nDrawOverlay(long handle, int layerId);
-
         public static native void nOnWorldLoaded(long handle);
 
         public static native void nOnWorldUnloaded(long handle);

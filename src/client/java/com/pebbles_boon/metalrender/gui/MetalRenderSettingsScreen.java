@@ -75,18 +75,17 @@ public class MetalRenderSettingsScreen extends Screen {
   private double pendingFovEffects;
   private int pendingTargetFps;
   private int pendingMaxMemMb;
-  private int pendingLod1, pendingLod2, pendingLod3, pendingLod4;
-  private boolean pendingLodEnabled;
   private boolean pendingDeepDebugNextRun;
 
   private int initialRenderDist;
-  private int initialLod1, initialLod2, initialLod3, initialLod4;
-  private boolean initialLodEnabled;
   private int initialBiomeDetail;
   private int initialLeafCulling;
   private boolean initialMetalOn;
   private boolean initialSmoothLighting;
   private boolean initialDebugPinkBlockTint;
+  private float initialZone0ExactBlockPx;
+  private float initialZone0GreedyBlockPx;
+  private float initialZone0ClusterBlockPx;
 
   private final List<Row> rows = new ArrayList<>();
 
@@ -138,24 +137,17 @@ public class MetalRenderSettingsScreen extends Screen {
     pendingFovEffects = o.fovEffectScale().get();
     pendingTargetFps = config.targetFrameRate;
     pendingMaxMemMb = config.maxMemoryMB;
-    pendingLod1 = MetalRenderConfig.lod1Distance();
-    pendingLod2 = MetalRenderConfig.lod2Distance();
-    pendingLod3 = MetalRenderConfig.lod3Distance();
-    pendingLod4 = MetalRenderConfig.lod4Distance();
-    pendingLodEnabled = MetalRenderConfig.lodEnabled();
     pendingDeepDebugNextRun = MetalRenderConfig.isOneRunDeepDebugRequested();
 
     initialRenderDist = pendingRenderDist;
-    initialLod1 = pendingLod1;
-    initialLod2 = pendingLod2;
-    initialLod3 = pendingLod3;
-    initialLod4 = pendingLod4;
-    initialLodEnabled = pendingLodEnabled;
     initialBiomeDetail = config.biomeTransitionDetail;
     initialLeafCulling = config.leafCullingMode;
     initialMetalOn = config.enableMetalRendering;
     initialSmoothLighting = config.enableSimpleLighting;
     initialDebugPinkBlockTint = config.debugPinkBlockTint;
+    initialZone0ExactBlockPx = MetalRenderConfig.zone0ExactBlockPixels();
+    initialZone0GreedyBlockPx = MetalRenderConfig.zone0GreedyBlockPixels();
+    initialZone0ClusterBlockPx = MetalRenderConfig.zone0ClusterBlockPixels();
     layout();
     rebuild();
   }
@@ -418,26 +410,25 @@ public class MetalRenderSettingsScreen extends Screen {
 
     boolean metalFlip = config.enableMetalRendering != initialMetalOn;
     boolean needsRebuild = (pendingRenderDist != initialRenderDist)
-        || (pendingLod1 != initialLod1)
-        || (pendingLod2 != initialLod2)
-        || (pendingLod3 != initialLod3)
-        || (pendingLod4 != initialLod4)
-        || (pendingLodEnabled != initialLodEnabled)
         || (config.biomeTransitionDetail != initialBiomeDetail)
         || (config.leafCullingMode != initialLeafCulling)
         || (config.enableSimpleLighting != initialSmoothLighting)
-        || (config.debugPinkBlockTint != initialDebugPinkBlockTint);
+      || (config.debugPinkBlockTint != initialDebugPinkBlockTint)
+      || (MetalRenderConfig.zone0ExactBlockPixels() != initialZone0ExactBlockPx)
+      || (MetalRenderConfig.zone0GreedyBlockPixels() != initialZone0GreedyBlockPx)
+      || (MetalRenderConfig.zone0ClusterBlockPixels() != initialZone0ClusterBlockPx);
 
     boolean biomeChanged = config.biomeTransitionDetail != initialBiomeDetail;
     com.pebbles_boon.metalrender.util.MetalLogger.info(
-        "Settings closed: needsRebuild=%b (renderDist=%b lod=%b biome=%b leaf=%b lighting=%b)",
+      "Settings closed: needsRebuild=%b (renderDist=%b biome=%b leaf=%b lighting=%b lod=%b)",
         needsRebuild,
         pendingRenderDist != initialRenderDist,
-        pendingLod1 != initialLod1 || pendingLod2 != initialLod2 || pendingLod3 != initialLod3
-            || pendingLod4 != initialLod4 || pendingLodEnabled != initialLodEnabled,
         biomeChanged,
         config.leafCullingMode != initialLeafCulling,
-        config.enableSimpleLighting != initialSmoothLighting);
+      config.enableSimpleLighting != initialSmoothLighting,
+      (MetalRenderConfig.zone0ExactBlockPixels() != initialZone0ExactBlockPx)
+        || (MetalRenderConfig.zone0GreedyBlockPixels() != initialZone0GreedyBlockPx)
+        || (MetalRenderConfig.zone0ClusterBlockPixels() != initialZone0ClusterBlockPx));
     MetalRenderClient.requestDeferredApply(
         metalFlip,
         metalFlip,
@@ -465,11 +456,6 @@ public class MetalRenderSettingsScreen extends Screen {
     config.targetFrameRate = pendingTargetFps;
     config.maxMemoryMB = pendingMaxMemMb;
     MetalRenderConfig.setOneRunDeepDebugRequested(pendingDeepDebugNextRun);
-    MetalRenderConfig.setLodEnabled(pendingLodEnabled);
-    MetalRenderConfig.setLod1Distance(pendingLod1);
-    MetalRenderConfig.setLod2Distance(pendingLod2);
-    MetalRenderConfig.setLod3Distance(pendingLod3);
-    MetalRenderConfig.setLod4Distance(pendingLod4);
     MetalRenderConfig.setDebugPinkBlockTint(config.debugPinkBlockTint);
   }
 
@@ -538,7 +524,7 @@ public class MetalRenderSettingsScreen extends Screen {
     sec("Rendering Style");
     cyc("Leaves Mode", config.leafCullingMode == 0 ? "Fast" : "Fancy",
         () -> config.leafCullingMode = config.leafCullingMode == 0 ? 1 : 0);
-    nfo("LOD Status", "Disabled");
+    nfo("LOD Status", "Zone 0 active");
     sec("Biome Blending");
 
     sld("Biome Blend", 0, 10, 1, config.biomeTransitionDetail,
@@ -572,10 +558,41 @@ public class MetalRenderSettingsScreen extends Screen {
   }
 
   private void buildLod() {
-    sec("Level of Detail");
-    nfo("Status", "Temporarily disabled");
-    nfo("Reason", "LOD artifacts are removed by forcing full-detail chunk meshes");
-    nfo("Chunk Loading", "Burst mode and backlog submission stay active without LOD");
+    int exactChunks = approxChunkDistance(MetalRenderConfig.zone0ExactBlockPixels());
+    int greedyChunks = approxChunkDistance(MetalRenderConfig.zone0GreedyBlockPixels());
+    int clusterChunks = approxChunkDistance(MetalRenderConfig.zone0ClusterBlockPixels());
+    sec("Current Runtime");
+    nfo("Mode", "Zone 0 active");
+    nfo("Runtime", "Screen-space near-field LOD is active");
+    nfo("View Basis", (int) getCurrentFovDegrees() + " FOV, " + (int) getCurrentScreenHeight()
+      + " px tall");
+    nfo("Range", "0-" + MetalRenderConfig.zone0RadiusChunks()
+      + " chunks near-field, " + MetalRenderConfig.zone0RadiusChunks() + "-"
+      + MetalRenderConfig.farFieldRadiusChunks() + " chunks far-field");
+    sec("Zone 0");
+    nfo("Sub-tier A", "Exact terrain to about " + exactChunks + " chunks");
+    sld("Exact Cutoff", 6.0f, 24.0f, 0.5f, MetalRenderConfig.zone0ExactBlockPixels(),
+      MetalRenderConfig::setZone0ExactBlockPixels,
+      v -> Component.literal("> " + fmtPx(v) + " px"));
+    nfo("Sub-tier B", "Greedy textured spans from about " + exactChunks
+      + " to " + greedyChunks + " chunks");
+    sld("Greedy Cutoff", 2.0f, 23.5f, 0.5f, MetalRenderConfig.zone0GreedyBlockPixels(),
+      MetalRenderConfig::setZone0GreedyBlockPixels,
+      v -> Component.literal("> " + fmtPx(v) + " px"));
+    nfo("Sub-tier C", "Textured clusters from about " + greedyChunks
+      + " to " + clusterChunks + " chunks");
+    sld("Cluster Cutoff", 0.5f, 23.25f, 0.25f, MetalRenderConfig.zone0ClusterBlockPixels(),
+      MetalRenderConfig::setZone0ClusterBlockPixels,
+      v -> Component.literal("> " + fmtPx(v) + " px"));
+    nfo("Sub-tier D", "Near-envelope descriptors from about " + clusterChunks
+      + " to " + MetalRenderConfig.zone0RadiusChunks() + " chunks");
+    sec("Zone 1+");
+    nfo("Range", MetalRenderConfig.zone0RadiusChunks() + "-"
+        + MetalRenderConfig.farFieldRadiusChunks() + " chunks");
+    nfo("Target", "Automatic fixed-budget far-field");
+    nfo("Runtime", MetalRenderConfig.isFarFieldDescriptorRuntimeActive()
+      ? "Descriptor path active"
+      : "Descriptor path pending");
   }
 
   private void sec(String label) {
@@ -648,6 +665,34 @@ public class MetalRenderSettingsScreen extends Screen {
       return Component.translatable("options.framerateLimit.max");
     }
     return Component.translatable("options.framerate", fpsLimit);
+  }
+
+  private static String fmtPx(float value) {
+    return String.format(java.util.Locale.ROOT, "%.1f", value);
+  }
+
+  private static double getCurrentScreenHeight() {
+    Minecraft mc = Minecraft.getInstance();
+    if (mc != null && mc.getWindow() != null) {
+      return Math.max(1.0, mc.getWindow().getHeight());
+    }
+    return 1080.0;
+  }
+
+  private static double getCurrentFovDegrees() {
+    Minecraft mc = Minecraft.getInstance();
+    if (mc != null && mc.options != null) {
+      return mc.options.fov().get();
+    }
+    return 70.0;
+  }
+
+  private static int approxChunkDistance(float px) {
+    double clampedPx = Math.max(0.25, px);
+    double fovRadians = Math.toRadians(cl((int) Math.round(getCurrentFovDegrees()), 30, 110));
+    double distanceBlocks = getCurrentScreenHeight()
+        / (2.0 * Math.tan(fovRadians * 0.5) * clampedPx);
+    return Math.max(1, (int) Math.round(distanceBlocks / 16.0));
   }
 
   private int totalH() {

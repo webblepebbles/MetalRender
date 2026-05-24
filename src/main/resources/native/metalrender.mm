@@ -357,7 +357,6 @@ static int g_configuredRenderDistBlocks = 512;
 static bool g_useMemorylessTargets = false;
 static bool g_useProgrammableBlending = false;
 static bool g_useArgumentBuffers = false;
-static bool g_enableTerrainMeshShaderPath = false;
 enum TerrainPathKind {
   TERRAIN_PATH_INHOUSE_VERTEX = 0,
   TERRAIN_PATH_ICB_GPU_DRIVEN = 1,
@@ -1777,12 +1776,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nBeginFrame(
   ensure_offscreen();
 }
 extern "C" JNIEXPORT void JNICALL
-Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawTerrain(
-    JNIEnv *, jclass, jlong handle, jint layerId) {}
-extern "C" JNIEXPORT void JNICALL
-Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawOverlay(
-    JNIEnv *, jclass, jlong handle, jint layerId) {}
-extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nOnWorldLoaded(
     JNIEnv *, jclass, jlong handle) {}
 extern "C" JNIEXPORT void JNICALL
@@ -2965,7 +2958,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         slowTerrainFrame) {
       s_advancedTerrainPathCooldown = 180;
     } else if (s_advancedTerrainPathCooldown > 0) {
-      int recoveryStep = (!heavyTerrainScene && g_avgFrameTimeMs < 13.5f) ? 4 : 1;
+      int recoveryStep =
+          (!heavyTerrainScene && g_avgFrameTimeMs < 13.5f) ? 4 : 1;
       s_advancedTerrainPathCooldown =
           std::max(0, s_advancedTerrainPathCooldown - recoveryStep);
     }
@@ -2984,10 +2978,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
 
     g_lastTerrainPath = TERRAIN_PATH_INHOUSE_VERTEX;
 
-    if (g_enableTerrainMeshShaderPath && !g_useProgrammableBlending &&
-        allowAdvancedTerrainPath &&
-      g_meshShadersActive && g_pipelineMeshOpaque &&
-        megaCount > 0 &&
+    if (!g_useProgrammableBlending && allowAdvancedTerrainPath &&
+        g_meshShadersActive && g_pipelineMeshOpaque && megaCount > 0 &&
         g_megaVB && g_blockAtlas && g_tripleBuffers[g_renderSlot] &&
         g_tripleBuffers[g_renderSlot].length >= sizeof(CameraUniformsCPU)) {
 
@@ -3332,11 +3324,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       }
       icbCandidateCount++;
     }
-    bool canICB =
-      (allowAdvancedTerrainPath && g_gpuDrivenEnabled &&
-       g_useArgumentBuffers && icbCandidateCount > 0 &&
-       g_pipelineInhouseICB && g_fragArgBuf && g_fragArgEncoder &&
-       g_blockAtlas && g_lightmap);
+    bool canICB = (allowAdvancedTerrainPath && g_gpuDrivenEnabled &&
+                   g_useArgumentBuffers && icbCandidateCount > 0 &&
+                   g_pipelineInhouseICB && g_fragArgBuf && g_fragArgEncoder &&
+                   g_blockAtlas && g_lightmap);
     bool useOpaqueICB = canICB && g_pipelineInhouseICBOpaque &&
                         g_fragArgBufOpaque && g_fragArgEncoderOpaque;
     bool useOpaque = g_pipelineInhouseOpaque != nil;
@@ -3858,8 +3849,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
     if (g_frameCount % 300 == 0) {
       NSLog(@"[MetalRender] Frame %d — ActivePath: %@  ICB=%@  MeshShaders=%@  "
             @"OIT=%@  ArgBuf=%@  draws=%d",
-            g_frameCount,
-            terrain_path_name(g_lastTerrainPath),
+            g_frameCount, terrain_path_name(g_lastTerrainPath),
             g_gpuDrivenEnabled ? @"ON" : @"OFF",
             g_meshShadersActive ? @"ON" : @"OFF",
             g_useProgrammableBlending ? @"ON" : @"OFF",
