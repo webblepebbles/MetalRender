@@ -33,7 +33,6 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 - Will still load on other GPUs but won't offer any additional benefits or changes
 - Shaders are not yet supported. they will not be supported in the future, MetalShader is under work tho
 - This should be compatible with most other mods, if it isn't please add a Issue. See non-compatible mods below
-- MarioMastr helped me a ton by making a fork that addressed some MAJOR issues in native code! Thank them too!
 
 ---
 
