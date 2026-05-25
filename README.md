@@ -50,8 +50,7 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 
 - Can I run MetalRender on non-Apple Silicon hardware?
 
-  Yes you can! But there just might be a crash, best case scenario it just doesn't offer any benefits. I'm working to add other optimisation features that don't need
-  Apple Silicon to run so that even Intel/AMD/Nvidia people can enjoy MetalRender. You can expect that maybe next year, I'm busy with school and everything!
+no. what did you think
 
 - Where can I put suggestions?
 
