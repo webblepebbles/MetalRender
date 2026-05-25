@@ -11,19 +11,19 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 
 | Dependency    | Necessity                      | Where to get                                                            |
 | ------------- | ------------------------------ | ----------------------------------------------------------------------- |
-| Sodium        | Necessary                      | [Modrinth](https://modrinth.com/mod/sodium)                             |
+| Sodium        | Necessary (do not install for build versions)| [Modrinth](https://modrinth.com/mod/sodium)                             |
 | Fabric        | Necessary                      | [Fabric's official page](https://fabricmc.net/use/installer/)           |
 | Fabric API    | Necessary                      | [Modrinth](https://modrinth.com/mod/fabric-api)                         |
 | シュクリム      | Necessary for survival         | Find it yourself                                                        |
-| Java JVM 21   | Necessary                      | [Oracle](https://www.oracle.com/au/java/technologies/downloads/#java21) |
-| ModMenu       | Necessary for versions v0.1.6+ | [Modrinth](https://modrinth.com/mod/modmenu)                            |
+| Java JVM 25   | Necessary                      | [Oracle](https://www.oracle.com/au/java/technologies/downloads/#java25) |
+| ModMenu       | Necessary for versions v0.1.6+ but not build versions | [Modrinth](https://modrinth.com/mod/modmenu)                            |
 
 ## Features
 
 - Uses **Metal** for rendering on macOS
-- Works with **Fabric Loader** and **Sodium**
+- Works with **Fabric Loader** ~~and **Sodium**~~ (Does not support sodium anymore)
 - Checks your hardware before starting
-- Turns off safely if Metal is not supported
+- Turns off nicely if Windows
 
 ---
 
@@ -31,9 +31,8 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 
 - Only works on Metal (macOS)
 - Will still load on other GPUs but won't offer any additional benefits or changes
-- Shaders are not yet supported, they might be added in the future
-- This should be compatible with most other mods, if it isn't please add a Issue
-- MarioMastr helped me a ton by making a fork that addressed some MAJOR issues in native code! Thank them too!
+- Shaders are not yet supported. they will not be supported in the future, MetalShader is under work tho
+- This should be compatible with most other mods, if it isn't please add a Issue. See non-compatible mods below
 
 ---
 
@@ -62,6 +61,15 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 - Does it work with xxx launcher?
 
   As long as your launcher doesn't mess with display libraries, GLFW or EGL (like Prism does), it would work. It has been verified to NOT work on Prism launcher. The Offical Mojang launcher works.
+
+## Incompatiblilties
+
+The following mods are known not to work with MetalRender:
+- Sodium (build versions)
+- VulkanMod (build versions)
+- C2ME (new build versions have built-in C2ME-like features)
+- Iris (build versions)
+- Sulkan (i dont like it)
 
 ---
 
