@@ -524,7 +524,8 @@ public class MetalRenderSettingsScreen extends Screen {
     sec("Rendering Style");
     cyc("Leaves Mode", config.leafCullingMode == 0 ? "Fast" : "Fancy",
         () -> config.leafCullingMode = config.leafCullingMode == 0 ? 1 : 0);
-    nfo("LOD Status", "Zone 0 active");
+    nfo("LOD Status", "Enabled");
+    nfo("LOD Mode", "Zone 0 + automatic far-field");
     sec("Biome Blending");
 
     sld("Biome Blend", 0, 10, 1, config.biomeTransitionDetail,
@@ -562,7 +563,8 @@ public class MetalRenderSettingsScreen extends Screen {
     int greedyChunks = approxChunkDistance(MetalRenderConfig.zone0GreedyBlockPixels());
     int clusterChunks = approxChunkDistance(MetalRenderConfig.zone0ClusterBlockPixels());
     sec("Current Runtime");
-    nfo("Mode", "Zone 0 active");
+    nfo("LOD", "Enabled");
+    nfo("Mode", "Zone 0 + automatic far-field");
     nfo("Runtime", "Screen-space near-field LOD is active");
     nfo("View Basis", (int) getCurrentFovDegrees() + " FOV, " + (int) getCurrentScreenHeight()
         + " px tall");
@@ -590,9 +592,10 @@ public class MetalRenderSettingsScreen extends Screen {
     nfo("Range", MetalRenderConfig.zone0RadiusChunks() + "-"
         + MetalRenderConfig.farFieldRadiusChunks() + " chunks");
     nfo("Target", "Automatic fixed-budget far-field");
-    nfo("Runtime", MetalRenderConfig.isFarFieldDescriptorRuntimeActive()
-        ? "Descriptor path active"
-        : "Descriptor path pending");
+    nfo("Runtime", "Automatic far-field is active");
+    nfo("Path", MetalRenderConfig.isFarFieldDescriptorRuntimeActive()
+        ? "Descriptor envelopes"
+        : "Current coarse near-envelope path");
   }
 
   private void sec(String label) {

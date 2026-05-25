@@ -34,9 +34,11 @@ import org.joml.Vector3f;
 
 @SuppressWarnings("unused")
 public class MetalWorldRenderer {
-  private static final int DEFAULT_MAX_MESHES = 65536;
+  private static final int DEFAULT_MAX_MESHES = 131072;
   private static final int PINNED_RENDER_DISTANCE = 32;
-  private static final int PINNED_MAX_MESHES = 131072;
+  private static final int PINNED_MAX_MESHES = 262144;
+  private static final int FAR_KEEP_MARGIN_CHUNKS = 8;
+  private static final int MAX_FAR_PROXY_SUBMITS = 24;
   private static final long CHUNK_BUILD_BUDGET_NS = 4_500_000L;
   private static final int MIN_CHUNK_BUILDS_PER_FRAME = 10;
   private static final long CHUNK_UPLOAD_BUDGET_NS = 2_000_000L;
@@ -390,7 +392,7 @@ public class MetalWorldRenderer {
     renderer.setCameraPosition(camera.position().x, camera.position().y,
         camera.position().z);
     if (NativeBridge.isLibLoaded()) {
-      NativeBridge.nSetRenderDistance(Minecraft.getInstance().options.getEffectiveRenderDistance() * 16);
+      NativeBridge.nSetRenderDistance(getFarRadiusChunks() * 16);
     }
     if (texturesReady) {
       long blockAtlas = textureManager.getBlockAtlasTexture();
@@ -883,6 +885,8 @@ public class MetalWorldRenderer {
       int playerChunkZ) {
     java.util.ArrayList<Long> sorted = sortedBuildLanes.get(lane);
     java.util.LinkedHashSet<Long> pending = pendingBuildLanes.get(lane);
+    boolean startupSolidFill = loadingMode
+        && loadingModeMeshCount < STARTUP_SOLID_FILL_MESH_THRESHOLD;
     int index = 0;
     while (index < sorted.size()) {
       long key = sorted.get(index);
@@ -901,7 +905,8 @@ public class MetalWorldRenderer {
       int lodLevel = getDesiredLod(dx, dz);
       boolean bypassReadiness = lane == BuildLane.FIX
           || chunkDist <= IMPORTANT_REBUILD_CHUNK_RANGE
-          || (loadingMode && chunkDist <= HOT_LOAD_REBUILD_RANGE);
+          || (loadingMode
+              && (chunkDist <= HOT_LOAD_REBUILD_RANGE || startupSolidFill));
       if (!bypassReadiness && !isSectionBuildReady(world, chunkX, chunkY,
           chunkZ)) {
         index++;
@@ -1111,14 +1116,19 @@ public class MetalWorldRenderer {
   private void scanRingsInRange(ClientLevel world, int playerChunkX,
       int playerChunkZ, int playerSectionY, int startRing, int endRing) {
     for (int ring = startRing; ring <= endRing; ring++) {
+      if (ring == 0) {
+        queueChunkSectionsIfMissing(world, playerChunkX, playerChunkZ,
+            playerSectionY, 0);
+        continue;
+      }
       for (int dx = -ring; dx <= ring; dx++) {
-        for (int dz = -ring; dz <= ring; dz++) {
-          if (ring > 0 && Math.abs(dx) < ring && Math.abs(dz) < ring)
-            continue;
-          int cx = playerChunkX + dx;
-          int cz = playerChunkZ + dz;
-          queueChunkSectionsIfMissing(world, cx, cz, playerSectionY,
-              Math.max(Math.abs(dx), Math.abs(dz)));
+        int dz = ring - Math.abs(dx);
+        int cx = playerChunkX + dx;
+        int cz = playerChunkZ + dz;
+        queueChunkSectionsIfMissing(world, cx, cz, playerSectionY, ring);
+        if (dz != 0) {
+          queueChunkSectionsIfMissing(world, cx, playerChunkZ - dz,
+              playerSectionY, ring);
         }
       }
     }
@@ -1136,23 +1146,25 @@ public class MetalWorldRenderer {
     float minForwardDotSq = TURN_PRIORITY_SCAN_COS_THRESHOLD * TURN_PRIORITY_SCAN_COS_THRESHOLD;
     for (int ring = startRing; ring <= endRing; ring++) {
       for (int dx = -ring; dx <= ring; dx++) {
-        for (int dz = -ring; dz <= ring; dz++) {
-          if (ring > 0 && Math.abs(dx) < ring && Math.abs(dz) < ring) {
+        int dz = ring - Math.abs(dx);
+        for (int sign = -1; sign <= 1; sign += 2) {
+          if (dz == 0 && sign > 0) {
             continue;
           }
-          if (dx == 0 && dz == 0) {
+          int offZ = dz * sign;
+          if (dx == 0 && offZ == 0) {
             continue;
           }
-          float forwardDot = dx * cachedForwardX + dz * cachedForwardZ;
+          float forwardDot = dx * cachedForwardX + offZ * cachedForwardZ;
           if (forwardDot <= 0.0f) {
             continue;
           }
-          float distSq = (dx * dx) + (dz * dz);
+          float distSq = (dx * dx) + (offZ * offZ);
           if (forwardDot * forwardDot < distSq * minForwardDotSq) {
             continue;
           }
           queueChunkSectionsIfMissing(world, playerChunkX + dx,
-              playerChunkZ + dz, playerSectionY, ring);
+              playerChunkZ + offZ, playerSectionY, ring);
         }
       }
     }
@@ -1283,12 +1295,29 @@ public class MetalWorldRenderer {
     int maxRingAvail = 0;
     for (int ring = 0; ring <= renderDist; ring++) {
       int ringAvail = 0;
+      if (ring == 0) {
+        total++;
+        if (world.getChunkSource().getChunkNow(playerChunkX, playerChunkZ) != null) {
+          available++;
+          ringAvail++;
+        }
+        if (ringAvail > 0) {
+          maxRingAvail = ring;
+        }
+        continue;
+      }
       for (int dx = -ring; dx <= ring; dx++) {
-        for (int dz = -ring; dz <= ring; dz++) {
-          if (ring > 0 && Math.abs(dx) < ring && Math.abs(dz) < ring)
-            continue;
+        int dz = ring - Math.abs(dx);
+        total++;
+        if (world.getChunkSource().getChunkNow(playerChunkX + dx,
+            playerChunkZ + dz) != null) {
+          available++;
+          ringAvail++;
+        }
+        if (dz != 0) {
           total++;
-          if (world.getChunkSource().getChunkNow(playerChunkX + dx, playerChunkZ + dz) != null) {
+          if (world.getChunkSource().getChunkNow(playerChunkX + dx,
+              playerChunkZ - dz) != null) {
             available++;
             ringAvail++;
           }
@@ -1672,17 +1701,29 @@ public class MetalWorldRenderer {
       org.joml.Vector3f camPos) {
     if (mc.player == null)
       return;
-    int renderDist = mc.options.renderDistance().get();
-    int extraMarginChunks = shouldPinLoadedMeshes(mc) ? 8 : 2;
-    float maxDist = (renderDist + extraMarginChunks) * 16.0f;
-    float maxDistSq = maxDist * maxDist;
+    int zone0 = Math.max(1, MetalRenderConfig.zone0RadiusChunks());
+    int far = getFarRadiusChunks();
+    float proxyDist = zone0 * 16.0f;
+    float keepDist = (far + FAR_KEEP_MARGIN_CHUNKS) * 16.0f;
+    float proxyDistSq = proxyDist * proxyDist;
+    float keepDistSq = keepDist * keepDist;
+    int submitted = 0;
     var iter = chunkMesher.getAllMeshes().iterator();
     while (iter.hasNext()) {
       CustomChunkMesher.ChunkMeshData mesh = iter.next();
       float dx = mesh.chunkX * 16.0f + 8.0f - camPos.x;
       float dz = mesh.chunkZ * 16.0f + 8.0f - camPos.z;
-      if (dx * dx + dz * dz > maxDistSq) {
-        chunkMesher.removeMesh(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
+      float distSq = dx * dx + dz * dz;
+      if (distSq > keepDistSq) {
+        chunkMesher.removeMesh(mesh.chunkX, mesh.chunkY, mesh.chunkZ, false);
+        continue;
+      }
+      if (mesh.lodLevel < 4 && distSq > proxyDistSq
+          && submitted < MAX_FAR_PROXY_SUBMITS
+          && chunkMesher.getFarFieldDigest(mesh.chunkX, mesh.chunkY,
+              mesh.chunkZ) != null) {
+        chunkMesher.buildMeshFromDigest(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
+        submitted++;
       }
     }
   }
@@ -1692,7 +1733,8 @@ public class MetalWorldRenderer {
   }
 
   private boolean shouldPinLoadedMeshes(Minecraft mc) {
-    return mc != null && mc.options.renderDistance().get() >= PINNED_RENDER_DISTANCE;
+    return getFarRadiusChunks() > MetalRenderConfig.zone0RadiusChunks()
+        || (mc != null && mc.options.renderDistance().get() >= PINNED_RENDER_DISTANCE);
   }
 
   public static String getBlitTimingMode() {
@@ -1902,7 +1944,7 @@ public class MetalWorldRenderer {
           && !chunkMesher.hasMesh(chunkX, worldY, chunkZ)) {
         chunkMesher.buildMeshFromWorld(chunkX, worldY, chunkZ, 0, true);
       } else {
-        enqueueSectionBuild(chunkX, worldY, chunkZ);
+        enqueueSectionBuild(chunkX, worldY, chunkZ, false);
       }
       refreshLoadedNeighborSection(chunkX - 1, worldY, chunkZ);
       refreshLoadedNeighborSection(chunkX + 1, worldY, chunkZ);
@@ -1967,10 +2009,7 @@ public class MetalWorldRenderer {
       if (!chunkMesher.hasMesh(chunkX, worldY, chunkZ)
           && isSectionBuildReady(mc.level, chunkX, worldY, chunkZ)) {
         chunkMesher.noteSectionAvailable(chunkX, worldY, chunkZ);
-        if (!shouldRejectQueueForDistance(chunkDistance)
-            && addPendingBuild(packChunkKey(chunkX, worldY, chunkZ),
-                classifyBuildLane(chunkX, chunkZ, false))) {
-        }
+        enqueueSectionBuild(chunkX, worldY, chunkZ, false);
       }
     }
   }
@@ -2043,8 +2082,20 @@ public class MetalWorldRenderer {
   }
 
   private void enqueueSectionBuild(int chunkX, int worldY, int chunkZ) {
+    enqueueSectionBuild(chunkX, worldY, chunkZ, true);
+  }
+
+  private void enqueueSectionBuild(int chunkX, int worldY, int chunkZ, boolean limitShape) {
     if (chunkMesher.hasMesh(chunkX, worldY, chunkZ)) {
       return;
+    }
+    Minecraft mc = Minecraft.getInstance();
+    if (limitShape && mc != null && mc.player != null) {
+      int dx = chunkX - mc.player.chunkPosition().x();
+      int dz = chunkZ - mc.player.chunkPosition().z();
+      if (Math.abs(dx) + Math.abs(dz) > Math.max(1, mc.options.renderDistance().get())) {
+        return;
+      }
     }
     int chunkDistance = getChunkDistanceFromPlayer(chunkX, chunkZ);
     if (shouldRejectQueueForDistance(chunkDistance)) {
@@ -2052,6 +2103,11 @@ public class MetalWorldRenderer {
     }
     addPendingBuild(packChunkKey(chunkX, worldY, chunkZ),
         classifyBuildLane(chunkX, chunkZ, false));
+  }
+
+  private int getFarRadiusChunks() {
+    return Math.max(MetalRenderConfig.zone0RadiusChunks(),
+        MetalRenderConfig.farFieldRadiusChunks());
   }
 
   private int getChunkDistanceFromPlayer(int chunkX, int chunkZ) {

@@ -107,6 +107,7 @@ public class CustomChunkMesher {
   private static final int DETAIL_TIER_SCALE_EXTREME = 8;
   private static final int MAX_TRACKED_VISIBLE_SECTIONS = 8192;
   private static final int MAX_TRACKED_BLOCK_UPDATES = 4096;
+  private static final int FAR_PROXY_LOD = 4;
   private volatile boolean aggressiveApproximateLighting;
   private final java.util.concurrent.atomic.AtomicLong visibleSectionLatencyAccNs = new java.util.concurrent.atomic.AtomicLong(
       0L);
@@ -3899,6 +3900,230 @@ public class CustomChunkMesher {
     buildMeshFromWorld(chunkX, chunkY, chunkZ, lodLevel, false, false, true);
   }
 
+  public void buildMeshFromDigest(int chunkX, int chunkY, int chunkZ) {
+    if (!initialized) {
+      return;
+    }
+    long key = packChunkKey(chunkX, chunkY, chunkZ);
+    FarFieldDigest digest = getFarFieldDigest(chunkX, chunkY, chunkZ);
+    if (digest == null || digest.solidBlockCount <= 0) {
+      return;
+    }
+    ChunkMeshData current = getMesh(chunkX, chunkY, chunkZ);
+    if (current != null && current.lodLevel >= FAR_PROXY_LOD) {
+      return;
+    }
+    synchronized (pendingKeys) {
+      if (!pendingKeys.add(key)) {
+        return;
+      }
+    }
+    final long genAtSubmit;
+    synchronized (dirtyGeneration) {
+      genAtSubmit = dirtyGeneration.get(key);
+    }
+    builderPool.submit(() -> {
+      long genNow;
+      synchronized (dirtyGeneration) {
+        genNow = dirtyGeneration.get(key);
+      }
+      if (genNow != genAtSubmit) {
+        synchronized (pendingKeys) {
+          pendingKeys.remove(key);
+        }
+        return;
+      }
+      try {
+        if (!emitDigestProxyMesh(digest, key, genAtSubmit)) {
+          synchronized (pendingKeys) {
+            pendingKeys.remove(key);
+          }
+        }
+      } catch (Exception e) {
+        synchronized (pendingKeys) {
+          pendingKeys.remove(key);
+        }
+        MetalLogger.error("Digest mesh build error for [%d,%d,%d]: %s",
+            chunkX, chunkY, chunkZ, e.getMessage());
+      }
+    });
+  }
+
+  private boolean emitDigestProxyMesh(FarFieldDigest digest, long key,
+      long genAtSubmit) {
+    ByteBuffer vertexBuffer = VERTEX_BUF_POOL.get();
+    vertexBuffer.clear();
+    Minecraft mc = Minecraft.getInstance();
+    BlockStateModelSet blockModels = null;
+    if (mc != null && mc.getModelManager() != null) {
+      blockModels = mc.getModelManager().getBlockStateModelSet();
+    }
+    BlockState state = digest.dominantStateId != 0
+        ? Block.stateById(digest.dominantStateId)
+        : Blocks.STONE.defaultBlockState();
+    if (state == null || state.isAir()) {
+      state = Blocks.STONE.defaultBlockState();
+    }
+    TextureAtlasSprite sprite = null;
+    if (blockModels != null) {
+      try {
+        BlockStateModel model = blockModels.get(state);
+        if (model != null) {
+          sprite = model.particleMaterial().sprite();
+        }
+      } catch (Exception ignored) {
+      }
+    }
+    int color = getBlockColor(state);
+    byte tintType = getBiomeTintType(state.getBlock());
+    if (tintType != TINT_NONE && mc != null && mc.level != null) {
+      int[] biomeColors = getSectionBiomeColors(mc.level, digest.chunkX,
+          digest.chunkY, digest.chunkZ, 1);
+      if (tintType < biomeColors.length) {
+        color = biomeColors[tintType];
+      }
+    }
+    byte tintR = (byte) ((color >> 16) & 0xFF);
+    byte tintG = (byte) ((color >> 8) & 0xFF);
+    byte tintB = (byte) (color & 0xFF);
+    byte alpha = (byte) 255;
+    byte packedLight = (byte) ((digest.maxBlockLight & 0xF)
+        | ((digest.maxSkyLight & 0xF) << 4));
+    FarFieldDigest xNeg = getFarFieldDigest(digest.chunkX - 1, digest.chunkY,
+        digest.chunkZ);
+    FarFieldDigest xPos = getFarFieldDigest(digest.chunkX + 1, digest.chunkY,
+        digest.chunkZ);
+    FarFieldDigest zNeg = getFarFieldDigest(digest.chunkX, digest.chunkY,
+        digest.chunkZ - 1);
+    FarFieldDigest zPos = getFarFieldDigest(digest.chunkX, digest.chunkY,
+        digest.chunkZ + 1);
+    FarFieldDigest yPos = getFarFieldDigest(digest.chunkX, digest.chunkY + 1,
+        digest.chunkZ);
+    int quadCount = 0;
+    for (int z = 0; z < SECTION_SIZE; z++) {
+      for (int x = 0; x < SECTION_SIZE; x++) {
+        int bottom = getDigestBottom(digest, x, z);
+        int top = getDigestTop(digest, x, z);
+        if (bottom < 0 || top < bottom) {
+          continue;
+        }
+        int topEnd = top + 1;
+        if (!(top == SECTION_SIZE - 1 && getDigestBottom(yPos, x, z) == 0)) {
+          quadCount += emitFaceRect(vertexBuffer, x, top, z, x + 1, topEnd,
+              z + 1, 1, sprite, packedLight, tintR, tintG, tintB, alpha);
+        }
+        int westBottom = x > 0 ? getDigestBottom(digest, x - 1, z)
+            : getDigestBottom(xNeg, SECTION_SIZE - 1, z);
+        int westTop = x > 0 ? getDigestTop(digest, x - 1, z)
+            : getDigestTop(xNeg, SECTION_SIZE - 1, z);
+        quadCount += emitDigestSide(vertexBuffer, x, z, bottom, topEnd,
+            westBottom, westTop, 4, sprite, packedLight, tintR, tintG,
+            tintB, alpha);
+        int eastBottom = x + 1 < SECTION_SIZE ? getDigestBottom(digest, x + 1, z)
+            : getDigestBottom(xPos, 0, z);
+        int eastTop = x + 1 < SECTION_SIZE ? getDigestTop(digest, x + 1, z)
+            : getDigestTop(xPos, 0, z);
+        quadCount += emitDigestSide(vertexBuffer, x, z, bottom, topEnd,
+            eastBottom, eastTop, 5, sprite, packedLight, tintR, tintG,
+            tintB, alpha);
+        int northBottom = z > 0 ? getDigestBottom(digest, x, z - 1)
+            : getDigestBottom(zNeg, x, SECTION_SIZE - 1);
+        int northTop = z > 0 ? getDigestTop(digest, x, z - 1)
+            : getDigestTop(zNeg, x, SECTION_SIZE - 1);
+        quadCount += emitDigestSide(vertexBuffer, x, z, bottom, topEnd,
+            northBottom, northTop, 2, sprite, packedLight, tintR, tintG,
+            tintB, alpha);
+        int southBottom = z + 1 < SECTION_SIZE ? getDigestBottom(digest, x, z + 1)
+            : getDigestBottom(zPos, x, 0);
+        int southTop = z + 1 < SECTION_SIZE ? getDigestTop(digest, x, z + 1)
+            : getDigestTop(zPos, x, 0);
+        quadCount += emitDigestSide(vertexBuffer, x, z, bottom, topEnd,
+            southBottom, southTop, 3, sprite, packedLight, tintR, tintG,
+            tintB, alpha);
+      }
+    }
+    if (quadCount <= 0 || !isCurrent(key, genAtSubmit)) {
+      return false;
+    }
+    vertexBuffer.flip();
+    queueUpload(new UploadJob(
+        key,
+        genAtSubmit,
+        false,
+        digest.chunkX,
+        digest.chunkY,
+        digest.chunkZ,
+        FAR_PROXY_LOD,
+        quadCount,
+        quadCount,
+        0,
+        0,
+        0,
+        copyUploadData(vertexBuffer, quadCount * 4 * VERTEX_STRIDE),
+        digest));
+    return true;
+  }
+
+  private static int getDigestBottom(FarFieldDigest digest, int x, int z) {
+    if (digest == null) {
+      return -1;
+    }
+    return digest.columnBottomHeights[z * SECTION_SIZE + x];
+  }
+
+  private static int getDigestTop(FarFieldDigest digest, int x, int z) {
+    if (digest == null) {
+      return -1;
+    }
+    return digest.columnTopHeights[z * SECTION_SIZE + x];
+  }
+
+  private static int emitDigestSide(ByteBuffer buf, int x, int z, int y0,
+      int y1, int otherBottom, int otherTop, int normalIndex,
+      TextureAtlasSprite sprite, byte packedLight, byte r, byte g, byte b,
+      byte alpha) {
+    if (y1 <= y0) {
+      return 0;
+    }
+    if (otherBottom < 0 || otherTop < otherBottom) {
+      return emitDigestSpan(buf, x, z, y0, y1, normalIndex, sprite,
+          packedLight, r, g, b, alpha);
+    }
+    int count = 0;
+    if (y0 < otherBottom) {
+      count += emitDigestSpan(buf, x, z, y0, Math.min(y1, otherBottom),
+          normalIndex, sprite, packedLight, r, g, b, alpha);
+    }
+    int otherEnd = otherTop + 1;
+    if (otherEnd < y1) {
+      int start = Math.max(y0, otherEnd);
+      if (start < y1) {
+        count += emitDigestSpan(buf, x, z, start, y1, normalIndex, sprite,
+            packedLight, r, g, b, alpha);
+      }
+    }
+    return count;
+  }
+
+  private static int emitDigestSpan(ByteBuffer buf, int x, int z, int y0,
+      int y1, int normalIndex, TextureAtlasSprite sprite, byte packedLight,
+      byte r, byte g, byte b, byte alpha) {
+    if (y1 <= y0) {
+      return 0;
+    }
+    return switch (normalIndex) {
+      case 4 -> emitFaceRect(buf, x, y0, z, x, y1, z + 1, 4, sprite,
+          packedLight, r, g, b, alpha);
+      case 5 -> emitFaceRect(buf, x + 1, y0, z, x + 1, y1, z + 1, 5, sprite,
+          packedLight, r, g, b, alpha);
+      case 2 -> emitFaceRect(buf, x, y0, z, x + 1, y1, z, 2, sprite,
+          packedLight, r, g, b, alpha);
+      case 3 -> emitFaceRect(buf, x, y0, z + 1, x + 1, y1, z + 1, 3,
+          sprite, packedLight, r, g, b, alpha);
+      default -> 0;
+    };
+  }
+
   private void buildMeshFromWorld(int chunkX, int chunkY, int chunkZ,
       int lodLevel, boolean highPriority, boolean interactivePriority,
       boolean lightFix) {
@@ -5038,6 +5263,162 @@ public class CustomChunkMesher {
       new short[3], new short[3], new short[3], new short[3]
   });
 
+  private static int emitFaceRect(ByteBuffer buf, int x0, int y0, int z0,
+      int x1, int y1, int z1, int normalIndex, TextureAtlasSprite sprite,
+      byte packedLight, byte r, byte g, byte b, byte alpha) {
+    short sx = (short) (x0 * 256);
+    short sy = (short) (y0 * 256);
+    short sz = (short) (z0 * 256);
+    short ex = (short) (x1 * 256);
+    short ey = (short) (y1 * 256);
+    short ez = (short) (z1 * 256);
+    short[][] p = FACE_POS_POOL.get();
+    switch (normalIndex) {
+      case 1:
+        p[0][0] = sx;
+        p[0][1] = ey;
+        p[0][2] = sz;
+        p[1][0] = sx;
+        p[1][1] = ey;
+        p[1][2] = ez;
+        p[2][0] = ex;
+        p[2][1] = ey;
+        p[2][2] = ez;
+        p[3][0] = ex;
+        p[3][1] = ey;
+        p[3][2] = sz;
+        break;
+      case 0:
+        p[0][0] = sx;
+        p[0][1] = sy;
+        p[0][2] = ez;
+        p[1][0] = sx;
+        p[1][1] = sy;
+        p[1][2] = sz;
+        p[2][0] = ex;
+        p[2][1] = sy;
+        p[2][2] = sz;
+        p[3][0] = ex;
+        p[3][1] = sy;
+        p[3][2] = ez;
+        break;
+      case 3:
+        p[0][0] = sx;
+        p[0][1] = ey;
+        p[0][2] = ez;
+        p[1][0] = sx;
+        p[1][1] = sy;
+        p[1][2] = ez;
+        p[2][0] = ex;
+        p[2][1] = sy;
+        p[2][2] = ez;
+        p[3][0] = ex;
+        p[3][1] = ey;
+        p[3][2] = ez;
+        break;
+      case 2:
+        p[0][0] = ex;
+        p[0][1] = ey;
+        p[0][2] = sz;
+        p[1][0] = ex;
+        p[1][1] = sy;
+        p[1][2] = sz;
+        p[2][0] = sx;
+        p[2][1] = sy;
+        p[2][2] = sz;
+        p[3][0] = sx;
+        p[3][1] = ey;
+        p[3][2] = sz;
+        break;
+      case 5:
+        p[0][0] = ex;
+        p[0][1] = ey;
+        p[0][2] = ez;
+        p[1][0] = ex;
+        p[1][1] = sy;
+        p[1][2] = ez;
+        p[2][0] = ex;
+        p[2][1] = sy;
+        p[2][2] = sz;
+        p[3][0] = ex;
+        p[3][1] = ey;
+        p[3][2] = sz;
+        break;
+      case 4:
+        p[0][0] = sx;
+        p[0][1] = ey;
+        p[0][2] = sz;
+        p[1][0] = sx;
+        p[1][1] = sy;
+        p[1][2] = sz;
+        p[2][0] = sx;
+        p[2][1] = sy;
+        p[2][2] = ez;
+        p[3][0] = sx;
+        p[3][1] = ey;
+        p[3][2] = ez;
+        break;
+      default:
+        return 0;
+    }
+    short uMin = 0;
+    short uMax = (short) 65535;
+    short vMin = 0;
+    short vMax = (short) 65535;
+    if (sprite != null) {
+      uMin = (short) (sprite.getU0() * 65535.0f);
+      uMax = (short) (sprite.getU1() * 65535.0f);
+      vMin = (short) (sprite.getV0() * 65535.0f);
+      vMax = (short) (sprite.getV1() * 65535.0f);
+    }
+    byte nIdx = (byte) normalIndex;
+    buf.putShort(p[0][0]);
+    buf.putShort(p[0][1]);
+    buf.putShort(p[0][2]);
+    buf.putShort(uMin);
+    buf.putShort(vMin);
+    buf.put(r);
+    buf.put(g);
+    buf.put(b);
+    buf.put(alpha);
+    buf.put(packedLight);
+    buf.put(nIdx);
+    buf.putShort(p[1][0]);
+    buf.putShort(p[1][1]);
+    buf.putShort(p[1][2]);
+    buf.putShort(uMin);
+    buf.putShort(vMax);
+    buf.put(r);
+    buf.put(g);
+    buf.put(b);
+    buf.put(alpha);
+    buf.put(packedLight);
+    buf.put(nIdx);
+    buf.putShort(p[2][0]);
+    buf.putShort(p[2][1]);
+    buf.putShort(p[2][2]);
+    buf.putShort(uMax);
+    buf.putShort(vMax);
+    buf.put(r);
+    buf.put(g);
+    buf.put(b);
+    buf.put(alpha);
+    buf.put(packedLight);
+    buf.put(nIdx);
+    buf.putShort(p[3][0]);
+    buf.putShort(p[3][1]);
+    buf.putShort(p[3][2]);
+    buf.putShort(uMax);
+    buf.putShort(vMin);
+    buf.put(r);
+    buf.put(g);
+    buf.put(b);
+    buf.put(alpha);
+    buf.put(packedLight);
+    buf.put(nIdx);
+    return 1;
+  }
+
   private int emitFaceScaled(ByteBuffer buf, int x, int y, int z, int normalIndex,
       TextureAtlasSprite sprite, byte packedLight, byte r, byte g,
       byte b, byte alpha, int scale, int topDrop) {
@@ -5548,16 +5929,23 @@ public class CustomChunkMesher {
   }
 
   public void removeMesh(int cx, int cy, int cz) {
+    removeMesh(cx, cy, cz, true);
+  }
+
+  public void removeMesh(int cx, int cy, int cz, boolean clearDigest) {
     long key = packChunkKey(cx, cy, cz);
     ChunkMeshData mesh;
     synchronized (meshCache) {
       mesh = meshCache.remove(key);
     }
-    removeFarFieldDigest(key);
+    if (clearDigest) {
+      removeFarFieldDigest(key);
+    }
     if (mesh != null) {
       NativeBridge.nUnregisterChunkMesh(cx, cy, cz);
       NativeBridge.nDestroyBuffer(mesh.bufferHandle);
       meshCountAtomic.decrementAndGet();
+      meshUpdateGeneration.incrementAndGet();
     }
 
     synchronized (emptyKeys) {

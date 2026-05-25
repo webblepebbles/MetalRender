@@ -352,7 +352,7 @@ public final class MetalRenderConfig {
   }
 
   public static boolean isFarFieldDescriptorRuntimeActive() {
-    return false;
+    return true;
   }
 
   public static int getLodLevel(int chunkDistance) {

@@ -204,7 +204,8 @@ public final class MetalRenderCommands {
 
     private static void sendLodStatus(FabricClientCommandSource src) {
         msg(src, "§6§l--- MetalRender LOD ---");
-        msg(src, "§7Mode: §aZone 0 active");
+        msg(src, "§7LOD: §aEnabled");
+        msg(src, "§7Mode: §aZone 0 + automatic far-field");
         msg(src, "§7Runtime: §fScreen-space near-field LOD is active");
         msg(src, "§7Zone 0: §f0-" + MetalRenderConfig.zone0RadiusChunks()
                 + " chunks §7(screen-space subtiers)");
@@ -215,7 +216,7 @@ public final class MetalRenderCommands {
                 "§7Zone 0 thresholds: §fA > " + fmtPx(MetalRenderConfig.zone0ExactBlockPixels())
                         + "px, B > " + fmtPx(MetalRenderConfig.zone0GreedyBlockPixels())
                         + "px, C > " + fmtPx(MetalRenderConfig.zone0ClusterBlockPixels()) + "px");
-        msg(src, "§7Far-field runtime: §eDescriptor path pending");
+        msg(src, "§7Far-field runtime: §eAutomatic path active");
     }
 
     private static String fmtPx(float value) {
