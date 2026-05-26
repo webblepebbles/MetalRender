@@ -7,7 +7,7 @@
     "pebbles_boon"
   ],
   "name": "MetalRender",
-  "description": "Experimental Metal-based renderer for Minecraft on macOS.",
+  "description": "funny MacOS mod",
   "environment": "client",
   "entrypoints": {
     "client": [

@@ -742,7 +742,9 @@ public class MetalWorldRenderer {
       return BuildLane.VIEW;
     }
     int chunkDist = getChunkDistanceFromPlayer(chunkX, chunkZ);
-    if (chunkDist <= HOT_LOAD_REBUILD_RANGE + NORMAL_FRONTIER_RING_SCAN_SPAN) {
+    int frontRange = Math.max(HOT_LOAD_REBUILD_RANGE + NORMAL_FRONTIER_RING_SCAN_SPAN,
+        MetalRenderConfig.zone0RadiusChunks());
+    if (chunkDist <= frontRange) {
       return BuildLane.FRONT;
     }
     return BuildLane.FAR;
