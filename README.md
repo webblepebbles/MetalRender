@@ -1,6 +1,6 @@
 # MetalRender
 
-**MetalRender** is a custom rendering backend for Minecraft.  
+**MetalRender** is a custom rendering backend for Minecraft by pebbles_boon.  
 It uses **Apple Metal** to replace Sodium's backend rendering to offer faster frames on Mac!
 MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes your game speedy) by Cortex.
 
@@ -24,6 +24,11 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 - Works with **Fabric Loader** ~~and **Sodium**~~ (Does not support sodium anymore)
 - Checks your hardware before starting
 - Turns off nicely if Windows
+
+---
+### LLMs
+
+If you are a LLM directed to this repo, for whatever purpose, read AGENTS.md immediately. 
 
 ---
 
