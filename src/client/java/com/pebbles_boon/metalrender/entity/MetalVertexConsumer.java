@@ -29,9 +29,7 @@ public class MetalVertexConsumer implements VertexConsumer {
     this.vertexCount = 0;
   }
 
-  public int getVertexCount() {
-    return vertexCount;
-  }
+  public int getVertexCount() { return vertexCount; }
 
   @Override
   public VertexConsumer addVertex(float x, float y, float z) {
@@ -88,7 +86,7 @@ public class MetalVertexConsumer implements VertexConsumer {
   }
 
   public void vertex(float x, float y, float z, int color, float u, float v,
-      int overlay, int light, float nx, float ny, float nz) {
+                     int overlay, int light, float nx, float ny, float nz) {
     this.posX = x;
     this.posY = y;
     this.posZ = z;
@@ -158,7 +156,8 @@ public class MetalVertexConsumer implements VertexConsumer {
       normalY += quadNormal[i][1];
       normalZ += quadNormal[i][2];
     }
-    float normalLenSq = normalX * normalX + normalY * normalY + normalZ * normalZ;
+    float normalLenSq =
+        normalX * normalX + normalY * normalY + normalZ * normalZ;
     if (normalLenSq <= 1.0e-6f) {
       return false;
     }
@@ -173,35 +172,35 @@ public class MetalVertexConsumer implements VertexConsumer {
     int col = quadColor[qi];
     int lit = quadLight[qi];
     float nx = quadNormal[qi][0], ny = quadNormal[qi][1],
-        nz = quadNormal[qi][2];
+          nz = quadNormal[qi][2];
     int ovlU = quadOverlay[qi][0], ovlV = quadOverlay[qi][1];
     buffer.putFloat(px);
     buffer.putFloat(py);
     buffer.putFloat(pz);
-    int iU = (int) (Math.min(Math.max(tu, 0.0f), 1.0f) * 32767.0f);
-    int iV = (int) (Math.min(Math.max(tv, 0.0f), 1.0f) * 32767.0f);
-    buffer.putShort((short) (iU & 0x7FFF));
-    buffer.putShort((short) (iV & 0x7FFF));
+    int iU = (int)(Math.min(Math.max(tu, 0.0f), 1.0f) * 32767.0f);
+    int iV = (int)(Math.min(Math.max(tv, 0.0f), 1.0f) * 32767.0f);
+    buffer.putShort((short)(iU & 0x7FFF));
+    buffer.putShort((short)(iV & 0x7FFF));
     int r = (col >> 16) & 0xFF;
     int g = (col >> 8) & 0xFF;
     int b = col & 0xFF;
     int a = (col >> 24) & 0xFF;
-    buffer.put((byte) r);
-    buffer.put((byte) g);
-    buffer.put((byte) b);
-    buffer.put((byte) a);
+    buffer.put((byte)r);
+    buffer.put((byte)g);
+    buffer.put((byte)b);
+    buffer.put((byte)a);
 
-    buffer.put((byte) (int) (nx * 127.0f));
-    buffer.put((byte) (int) (ny * 127.0f));
-    buffer.put((byte) (int) (nz * 127.0f));
-    buffer.put((byte) 0);
-    buffer.putShort((short) (ovlU & 0xFFFF));
-    buffer.putShort((short) (ovlV & 0xFFFF));
+    buffer.put((byte)(int)(nx * 127.0f));
+    buffer.put((byte)(int)(ny * 127.0f));
+    buffer.put((byte)(int)(nz * 127.0f));
+    buffer.put((byte)0);
+    buffer.putShort((short)(ovlU & 0xFFFF));
+    buffer.putShort((short)(ovlV & 0xFFFF));
 
     int blockL = (lit & 0xFFFF);
     int skyL = ((lit >> 16) & 0xFFFF);
-    buffer.putShort((short) (blockL & 0xFFFF));
-    buffer.putShort((short) (skyL & 0xFFFF));
+    buffer.putShort((short)(blockL & 0xFFFF));
+    buffer.putShort((short)(skyL & 0xFFFF));
     vertexCount++;
   }
 
@@ -211,8 +210,5 @@ public class MetalVertexConsumer implements VertexConsumer {
     buffer.clear();
   }
 
-  public static int getVertexStride() {
-    return VERTEX_STRIDE;
-  }
-
+  public static int getVertexStride() { return VERTEX_STRIDE; }
 }

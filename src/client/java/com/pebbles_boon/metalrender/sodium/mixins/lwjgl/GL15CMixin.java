@@ -12,25 +12,25 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class GL15CMixin {
   @Inject(method = "glBindBuffer", at = @At("HEAD"), remap = false)
   private static void metalrender$onBindBuffer(int target, int buffer,
-      CallbackInfo ci) {
+                                               CallbackInfo ci) {
     if (com.pebbles_boon.metalrender.config.MetalRenderConfig.mirrorUploads()) {
       GLIntercept.onBindBuffer(target, buffer);
     }
   }
   @Inject(method = "glBufferData", at = @At("HEAD"), remap = false)
   private static void metalrender$onBufferDataBB(int target, ByteBuffer data,
-      int usage, CallbackInfo ci) {
+                                                 int usage, CallbackInfo ci) {
     if (com.pebbles_boon.metalrender.config.MetalRenderConfig.mirrorUploads()) {
       GLIntercept.onBufferData(target, data, usage, 32);
     }
   }
   @Inject(method = "glBufferData", at = @At("HEAD"), remap = false)
   private static void metalrender$onBufferDataSize(int target, long size,
-      int usage, CallbackInfo ci) {
+                                                   int usage, CallbackInfo ci) {
   }
   @Inject(method = "glDeleteBuffers", at = @At("HEAD"), remap = false)
   private static void metalrender$onDeleteBuffers(IntBuffer buffers,
-      CallbackInfo ci) {
+                                                  CallbackInfo ci) {
     if (com.pebbles_boon.metalrender.config.MetalRenderConfig.mirrorUploads() &&
         buffers != null) {
       while (buffers.hasRemaining()) {

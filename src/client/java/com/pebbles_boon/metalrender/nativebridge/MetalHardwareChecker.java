@@ -25,7 +25,7 @@ public final class MetalHardwareChecker {
   public static String getDeviceName() {
     try {
       return NativeBridge.isLibLoaded() ? NativeBridge.nGetDeviceName()
-          : "Unknown";
+                                        : "Unknown";
     } catch (Throwable t) {
       return "Unknown";
     }
@@ -44,12 +44,9 @@ public final class MetalHardwareChecker {
     return arch.contains("aarch64") || arch.contains("arm64");
   }
 
-  public static boolean appleSilicon() {
-    return isAppleSilicon();
-  }
+  public static boolean appleSilicon() { return isAppleSilicon(); }
 
-  public static void showIncompatibleScreen() {
-  }
+  public static void showIncompatibleScreen() {}
 
   private static void scheduleCheck() {
     if (compatible != null || checkScheduled)
@@ -60,8 +57,8 @@ public final class MetalHardwareChecker {
     } catch (UnsatisfiedLinkError | IllegalArgumentException e) {
       compatible = true;
       LOGGER.warn("[MetalRender] Could not schedule GL capability check, "
-          + "allowing fallback",
-          e);
+                      + "allowing fallback",
+                  e);
     }
   }
 }

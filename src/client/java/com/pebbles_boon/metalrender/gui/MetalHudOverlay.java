@@ -14,14 +14,17 @@ public final class MetalHudOverlay implements HudElement {
   private static final String LABEL = "MetalRender ACTIVE";
   private static final int LOADING_COLOR = 0xFFFFAA00;
   private static final int LOADING_BG_COLOR = 0x80000000;
-  private static final Identifier HUD_ID = Identifier.fromNamespaceAndPath("metalrender", "hud_overlay");
+  private static final Identifier HUD_ID =
+      Identifier.fromNamespaceAndPath("metalrender", "hud_overlay");
 
   private String cachedLoadingText;
   private int cachedLoadingTextWidth;
   private int lastPending = -1, lastMeshes = -1;
 
   @Override
-  public void extractRenderState(net.minecraft.client.gui.GuiGraphicsExtractor context, DeltaTracker tickCounter) {
+  public void
+  extractRenderState(net.minecraft.client.gui.GuiGraphicsExtractor context,
+                     DeltaTracker tickCounter) {
     if (!MetalRenderClient.isEnabled() ||
         MetalRenderClient.getWorldRenderer() == null ||
         !MetalRenderClient.getWorldRenderer().isReady()) {
@@ -41,7 +44,8 @@ public final class MetalHudOverlay implements HudElement {
         int pending = wr.getLoadingModePendingCount();
         int meshes = wr.getLoadingModeMeshCount();
         if (pending != lastPending || meshes != lastMeshes) {
-          cachedLoadingText = "Loading: " + pending + " pending / " + meshes + " built";
+          cachedLoadingText =
+              "Loading: " + pending + " pending / " + meshes + " built";
           cachedLoadingTextWidth = font.width(cachedLoadingText);
           lastPending = pending;
           lastMeshes = meshes;
@@ -50,11 +54,11 @@ public final class MetalHudOverlay implements HudElement {
         int screenWidth = mc.getWindow().getGuiScaledWidth();
         int lx = screenWidth - textWidth - 6;
         int ly = 4;
-        context.fill(lx - 3, ly - 1, lx + textWidth + 3, ly + 10, LOADING_BG_COLOR);
+        context.fill(lx - 3, ly - 1, lx + textWidth + 3, ly + 10,
+                     LOADING_BG_COLOR);
         context.text(font, cachedLoadingText, lx, ly, LOADING_COLOR, true);
       }
     } catch (Exception e) {
-
     }
   }
 

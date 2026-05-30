@@ -29,10 +29,14 @@ public final class MetalRenderConfig {
   private static final float DEFAULT_ZONE0_GREEDY_BLOCK_PIXELS = 4.0f;
   private static final float DEFAULT_ZONE0_CLUSTER_BLOCK_PIXELS = 1.5f;
   private static volatile int zone0RadiusChunks = DEFAULT_ZONE0_RADIUS_CHUNKS;
-  private static volatile int farFieldRadiusChunks = DEFAULT_FAR_FIELD_RADIUS_CHUNKS;
-  private static volatile float zone0ExactBlockPixels = DEFAULT_ZONE0_EXACT_BLOCK_PIXELS;
-  private static volatile float zone0GreedyBlockPixels = DEFAULT_ZONE0_GREEDY_BLOCK_PIXELS;
-  private static volatile float zone0ClusterBlockPixels = DEFAULT_ZONE0_CLUSTER_BLOCK_PIXELS;
+  private static volatile int farFieldRadiusChunks =
+      DEFAULT_FAR_FIELD_RADIUS_CHUNKS;
+  private static volatile float zone0ExactBlockPixels =
+      DEFAULT_ZONE0_EXACT_BLOCK_PIXELS;
+  private static volatile float zone0GreedyBlockPixels =
+      DEFAULT_ZONE0_GREEDY_BLOCK_PIXELS;
+  private static volatile float zone0ClusterBlockPixels =
+      DEFAULT_ZONE0_CLUSTER_BLOCK_PIXELS;
   private static volatile boolean mirrorUploads = false;
   private static volatile boolean swapOpaque = false;
   private static volatile boolean swapCutout = false;
@@ -45,12 +49,14 @@ public final class MetalRenderConfig {
 
   private static java.nio.file.Path configFile() {
     return net.fabricmc.loader.api.FabricLoader.getInstance()
-        .getConfigDir().resolve("metalrender.json");
+        .getConfigDir()
+        .resolve("metalrender.json");
   }
 
   private static java.nio.file.Path deepDebugFlagFile() {
     return net.fabricmc.loader.api.FabricLoader.getInstance()
-        .getConfigDir().resolve("metalrender-debug-next-run.flag");
+        .getConfigDir()
+        .resolve("metalrender-debug-next-run.flag");
   }
 
   private static void activateOneRunDeepDebugIfRequested() {
@@ -73,12 +79,15 @@ public final class MetalRenderConfig {
       java.nio.file.Path path = configFile();
       if (java.nio.file.Files.exists(path)) {
         String raw = java.nio.file.Files.readString(path);
-        com.google.gson.JsonObject obj = com.google.gson.JsonParser.parseString(raw).getAsJsonObject();
+        com.google.gson.JsonObject obj =
+            com.google.gson.JsonParser.parseString(raw).getAsJsonObject();
 
         if (obj.has("enableMetalRendering"))
-          cfg.enableMetalRendering = obj.get("enableMetalRendering").getAsBoolean();
+          cfg.enableMetalRendering =
+              obj.get("enableMetalRendering").getAsBoolean();
         if (obj.has("enableSimpleLighting"))
-          cfg.enableSimpleLighting = obj.get("enableSimpleLighting").getAsBoolean();
+          cfg.enableSimpleLighting =
+              obj.get("enableSimpleLighting").getAsBoolean();
         if (obj.has("enableDebugOverlay"))
           cfg.enableDebugOverlay = obj.get("enableDebugOverlay").getAsBoolean();
         if (obj.has("debugPinkBlockTint"))
@@ -88,9 +97,11 @@ public final class MetalRenderConfig {
         if (obj.has("zone2Radius"))
           cfg.zone2Radius = obj.get("zone2Radius").getAsInt();
         if (obj.has("lodTransitionDistance"))
-          cfg.lodTransitionDistance = obj.get("lodTransitionDistance").getAsFloat();
+          cfg.lodTransitionDistance =
+              obj.get("lodTransitionDistance").getAsFloat();
         if (obj.has("biomeTransitionDetail"))
-          cfg.biomeTransitionDetail = obj.get("biomeTransitionDetail").getAsInt();
+          cfg.biomeTransitionDetail =
+              obj.get("biomeTransitionDetail").getAsInt();
         if (obj.has("enableZone2Lod"))
           cfg.enableZone2Lod = obj.get("enableZone2Lod").getAsBoolean();
         if (obj.has("leafCullingMode"))
@@ -98,30 +109,37 @@ public final class MetalRenderConfig {
         if (obj.has("targetFrameRate"))
           cfg.targetFrameRate = obj.get("targetFrameRate").getAsInt();
         if (obj.has("prioritizeFpsOverTps"))
-          cfg.prioritizeFpsOverTps = obj.get("prioritizeFpsOverTps").getAsBoolean();
+          cfg.prioritizeFpsOverTps =
+              obj.get("prioritizeFpsOverTps").getAsBoolean();
         if (obj.has("maxMemoryMB"))
           cfg.maxMemoryMB = obj.get("maxMemoryMB").getAsInt();
         if (obj.has("enableTripleBuffering"))
-          cfg.enableTripleBuffering = obj.get("enableTripleBuffering").getAsBoolean();
+          cfg.enableTripleBuffering =
+              obj.get("enableTripleBuffering").getAsBoolean();
         if (obj.has("enableMemoryPressureFallback"))
-          cfg.enableMemoryPressureFallback = obj.get("enableMemoryPressureFallback").getAsBoolean();
+          cfg.enableMemoryPressureFallback =
+              obj.get("enableMemoryPressureFallback").getAsBoolean();
         if (obj.has("enableBurstThreadMode"))
-          cfg.enableBurstThreadMode = obj.get("enableBurstThreadMode").getAsBoolean();
+          cfg.enableBurstThreadMode =
+              obj.get("enableBurstThreadMode").getAsBoolean();
         if (obj.has("enableMeshShaders"))
           cfg.enableMeshShaders = obj.get("enableMeshShaders").getAsBoolean();
         if (obj.has("enableArgumentBuffers"))
-          cfg.enableArgumentBuffers = obj.get("enableArgumentBuffers").getAsBoolean();
+          cfg.enableArgumentBuffers =
+              obj.get("enableArgumentBuffers").getAsBoolean();
 
         if (obj.has("enableIndirectCommandBuffers"))
-          cfg.enableIndirectCommandBuffers = obj.get("enableIndirectCommandBuffers").getAsBoolean();
+          cfg.enableIndirectCommandBuffers =
+              obj.get("enableIndirectCommandBuffers").getAsBoolean();
         if (obj.has("enableMemorylessTargets"))
-          cfg.enableMemorylessTargets = obj.get("enableMemorylessTargets").getAsBoolean();
+          cfg.enableMemorylessTargets =
+              obj.get("enableMemorylessTargets").getAsBoolean();
 
         if (obj.has("lodZone0RadiusChunks")) {
           zone0RadiusChunks = obj.get("lodZone0RadiusChunks").getAsInt();
         } else if (obj.has("savedLod4Distance")) {
           zone0RadiusChunks = Math.max(DEFAULT_ZONE0_RADIUS_CHUNKS,
-              obj.get("savedLod4Distance").getAsInt());
+                                       obj.get("savedLod4Distance").getAsInt());
         }
         if (obj.has("lodFarFieldRadiusChunks"))
           farFieldRadiusChunks = obj.get("lodFarFieldRadiusChunks").getAsInt();
@@ -130,16 +148,18 @@ public final class MetalRenderConfig {
         if (obj.has("lodZone0GreedyPixels"))
           zone0GreedyBlockPixels = obj.get("lodZone0GreedyPixels").getAsFloat();
         if (obj.has("lodZone0ClusterPixels"))
-          zone0ClusterBlockPixels = obj.get("lodZone0ClusterPixels").getAsFloat();
+          zone0ClusterBlockPixels =
+              obj.get("lodZone0ClusterPixels").getAsFloat();
         if (obj.has("savedResolutionScale"))
-          resolutionScale = clamp(obj.get("savedResolutionScale").getAsFloat(), 0.20f, 1.5f);
+          resolutionScale =
+              clamp(obj.get("savedResolutionScale").getAsFloat(), 0.20f, 1.5f);
         if (obj.has("savedAggressiveFrustumCulling"))
-          aggressiveFrustumCulling = obj.get("savedAggressiveFrustumCulling").getAsBoolean();
+          aggressiveFrustumCulling =
+              obj.get("savedAggressiveFrustumCulling").getAsBoolean();
         if (obj.has("savedOcclusionCulling"))
           occlusionCulling = obj.get("savedOcclusionCulling").getAsBoolean();
       }
     } catch (Exception e) {
-
     }
 
     normalizeLodGroundwork();
@@ -152,8 +172,7 @@ public final class MetalRenderConfig {
     return cfg;
   }
 
-  private MetalRenderConfig() {
-  }
+  private MetalRenderConfig() {}
 
   private static void applyStableQualityFallback(MetalRenderConfig cfg) {
     aggressiveFrustumCulling = false;
@@ -163,13 +182,18 @@ public final class MetalRenderConfig {
 
   public void save() {
 
-    System.setProperty("metalrender.enabled", String.valueOf(enableMetalRendering));
+    System.setProperty("metalrender.enabled",
+                       String.valueOf(enableMetalRendering));
     System.setProperty("metalrender.feature.icb",
-        String.valueOf(enableIndirectCommandBuffers));
-    System.setProperty("metalrender.feature.mesh", String.valueOf(enableMeshShaders));
-    System.setProperty("metalrender.feature.argbuf", String.valueOf(enableArgumentBuffers));
-    System.setProperty("metalrender.feature.oit", String.valueOf(enableProgrammableBlending));
-    System.setProperty("metalrender.feature.memoryless", String.valueOf(enableMemorylessTargets));
+                       String.valueOf(enableIndirectCommandBuffers));
+    System.setProperty("metalrender.feature.mesh",
+                       String.valueOf(enableMeshShaders));
+    System.setProperty("metalrender.feature.argbuf",
+                       String.valueOf(enableArgumentBuffers));
+    System.setProperty("metalrender.feature.oit",
+                       String.valueOf(enableProgrammableBlending));
+    System.setProperty("metalrender.feature.memoryless",
+                       String.valueOf(enableMemorylessTargets));
 
     try {
       com.google.gson.JsonObject obj = new com.google.gson.JsonObject();
@@ -187,12 +211,14 @@ public final class MetalRenderConfig {
       obj.addProperty("prioritizeFpsOverTps", prioritizeFpsOverTps);
       obj.addProperty("maxMemoryMB", maxMemoryMB);
       obj.addProperty("enableTripleBuffering", enableTripleBuffering);
-      obj.addProperty("enableMemoryPressureFallback", enableMemoryPressureFallback);
+      obj.addProperty("enableMemoryPressureFallback",
+                      enableMemoryPressureFallback);
       obj.addProperty("enableBurstThreadMode", enableBurstThreadMode);
       obj.addProperty("enableMeshShaders", enableMeshShaders);
       obj.addProperty("enableArgumentBuffers", enableArgumentBuffers);
       obj.addProperty("enableProgrammableBlending", enableProgrammableBlending);
-      obj.addProperty("enableIndirectCommandBuffers", enableIndirectCommandBuffers);
+      obj.addProperty("enableIndirectCommandBuffers",
+                      enableIndirectCommandBuffers);
       obj.addProperty("enableMemorylessTargets", enableMemorylessTargets);
 
       obj.addProperty("lodZone0RadiusChunks", zone0RadiusChunks);
@@ -201,48 +227,36 @@ public final class MetalRenderConfig {
       obj.addProperty("lodZone0GreedyPixels", zone0GreedyBlockPixels);
       obj.addProperty("lodZone0ClusterPixels", zone0ClusterBlockPixels);
       obj.addProperty("savedResolutionScale", resolutionScale);
-      obj.addProperty("savedAggressiveFrustumCulling", aggressiveFrustumCulling);
+      obj.addProperty("savedAggressiveFrustumCulling",
+                      aggressiveFrustumCulling);
       obj.addProperty("savedOcclusionCulling", occlusionCulling);
       java.nio.file.Path path = configFile();
       java.nio.file.Files.createDirectories(path.getParent());
-      java.nio.file.Files.writeString(path,
-          new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(obj));
+      java.nio.file.Files.writeString(
+          path,
+          new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(
+              obj));
     } catch (Exception e) {
-
     }
   }
 
-  public static boolean mirrorUploads() {
-    return mirrorUploads;
-  }
+  public static boolean mirrorUploads() { return mirrorUploads; }
 
-  public static boolean swapOpaque() {
-    return swapOpaque;
-  }
+  public static boolean swapOpaque() { return swapOpaque; }
 
-  public static boolean swapCutout() {
-    return swapCutout;
-  }
+  public static boolean swapCutout() { return swapCutout; }
 
-  public static boolean swapTranslucent() {
-    return swapTranslucent;
-  }
+  public static boolean swapTranslucent() { return swapTranslucent; }
 
   public static boolean aggressiveFrustumCulling() {
     return aggressiveFrustumCulling;
   }
 
-  public static boolean occlusionCulling() {
-    return occlusionCulling;
-  }
+  public static boolean occlusionCulling() { return occlusionCulling; }
 
-  public static float resolutionScale() {
-    return resolutionScale;
-  }
+  public static float resolutionScale() { return resolutionScale; }
 
-  public static boolean isDeepDebugActive() {
-    return deepDebugActive;
-  }
+  public static boolean isDeepDebugActive() { return deepDebugActive; }
 
   public static boolean debugPinkBlockTint() {
     return debugPinkBlockTintEnabled;
@@ -266,33 +280,22 @@ public final class MetalRenderConfig {
         java.nio.file.Files.deleteIfExists(flagPath);
       }
     } catch (Exception e) {
-
     }
   }
 
-  public static void setMirrorUploads(boolean v) {
-    mirrorUploads = v;
-  }
+  public static void setMirrorUploads(boolean v) { mirrorUploads = v; }
 
-  public static void setSwapOpaque(boolean v) {
-    swapOpaque = v;
-  }
+  public static void setSwapOpaque(boolean v) { swapOpaque = v; }
 
-  public static void setSwapCutout(boolean v) {
-    swapCutout = v;
-  }
+  public static void setSwapCutout(boolean v) { swapCutout = v; }
 
-  public static void setSwapTranslucent(boolean v) {
-    swapTranslucent = v;
-  }
+  public static void setSwapTranslucent(boolean v) { swapTranslucent = v; }
 
   public static void setAggressiveFrustumCulling(boolean v) {
     aggressiveFrustumCulling = v;
   }
 
-  public static void setOcclusionCulling(boolean v) {
-    occlusionCulling = v;
-  }
+  public static void setOcclusionCulling(boolean v) { occlusionCulling = v; }
 
   public static void setResolutionScale(float v) {
     resolutionScale = clamp(v, 0.20f, 1.5f);
@@ -302,27 +305,21 @@ public final class MetalRenderConfig {
     debugPinkBlockTintEnabled = v;
   }
 
-  public static int zone0RadiusChunks() {
-    return zone0RadiusChunks;
-  }
+  public static int zone0RadiusChunks() { return zone0RadiusChunks; }
 
   public static void setZone0RadiusChunks(int v) {
     zone0RadiusChunks = DEFAULT_ZONE0_RADIUS_CHUNKS;
     normalizeLodGroundwork();
   }
 
-  public static int farFieldRadiusChunks() {
-    return farFieldRadiusChunks;
-  }
+  public static int farFieldRadiusChunks() { return farFieldRadiusChunks; }
 
   public static void setFarFieldRadiusChunks(int v) {
     farFieldRadiusChunks = DEFAULT_FAR_FIELD_RADIUS_CHUNKS;
     normalizeLodGroundwork();
   }
 
-  public static float zone0ExactBlockPixels() {
-    return zone0ExactBlockPixels;
-  }
+  public static float zone0ExactBlockPixels() { return zone0ExactBlockPixels; }
 
   public static void setZone0ExactBlockPixels(float v) {
     zone0ExactBlockPixels = v;
@@ -347,16 +344,12 @@ public final class MetalRenderConfig {
     normalizeLodGroundwork();
   }
 
-  public static boolean isZone0LodRuntimeActive() {
-    return true;
-  }
+  public static boolean isZone0LodRuntimeActive() { return true; }
 
-  public static boolean isFarFieldDescriptorRuntimeActive() {
-    return true;
-  }
+  public static boolean isFarFieldDescriptorRuntimeActive() { return true; }
 
   public static int getLodLevel(int chunkDistance) {
-    return getLodLevel((double) chunkDistance);
+    return getLodLevel((double)chunkDistance);
   }
 
   public static int getLodLevel(double chunkDistance) {
@@ -393,17 +386,24 @@ public final class MetalRenderConfig {
     swapOpaque = getBool("metalrender.swap.opaque", swapOpaque);
     swapCutout = getBool("metalrender.swap.cutout", swapCutout);
     swapTranslucent = getBool("metalrender.swap.translucent", swapTranslucent);
-    aggressiveFrustumCulling = getBool("metalrender.culling.frustum", aggressiveFrustumCulling);
-    occlusionCulling = getBool("metalrender.culling.occlusion", occlusionCulling);
-    resolutionScale = getFloat("metalrender.render.resolutionScale", resolutionScale);
+    aggressiveFrustumCulling =
+        getBool("metalrender.culling.frustum", aggressiveFrustumCulling);
+    occlusionCulling =
+        getBool("metalrender.culling.occlusion", occlusionCulling);
+    resolutionScale =
+        getFloat("metalrender.render.resolutionScale", resolutionScale);
   }
 
   public void loadFeatureFlags() {
-    enableIndirectCommandBuffers = getBool("metalrender.feature.icb", enableIndirectCommandBuffers);
+    enableIndirectCommandBuffers =
+        getBool("metalrender.feature.icb", enableIndirectCommandBuffers);
     enableMeshShaders = getBool("metalrender.feature.mesh", enableMeshShaders);
-    enableArgumentBuffers = getBool("metalrender.feature.argbuf", enableArgumentBuffers);
-    enableProgrammableBlending = getBool("metalrender.feature.oit", enableProgrammableBlending);
-    enableMemorylessTargets = getBool("metalrender.feature.memoryless", enableMemorylessTargets);
+    enableArgumentBuffers =
+        getBool("metalrender.feature.argbuf", enableArgumentBuffers);
+    enableProgrammableBlending =
+        getBool("metalrender.feature.oit", enableProgrammableBlending);
+    enableMemorylessTargets =
+        getBool("metalrender.feature.memoryless", enableMemorylessTargets);
   }
 
   private static boolean getBool(String key, boolean def) {
@@ -428,14 +428,15 @@ public final class MetalRenderConfig {
     zone0RadiusChunks = DEFAULT_ZONE0_RADIUS_CHUNKS;
     farFieldRadiusChunks = DEFAULT_FAR_FIELD_RADIUS_CHUNKS;
     zone0ExactBlockPixels = clamp(zone0ExactBlockPixels, 6.0f, 24.0f);
-    zone0GreedyBlockPixels = clamp(zone0GreedyBlockPixels, 2.0f,
-        zone0ExactBlockPixels - 0.5f);
-    zone0ClusterBlockPixels = clamp(zone0ClusterBlockPixels, 0.5f,
-        zone0GreedyBlockPixels - 0.25f);
+    zone0GreedyBlockPixels =
+        clamp(zone0GreedyBlockPixels, 2.0f, zone0ExactBlockPixels - 0.5f);
+    zone0ClusterBlockPixels =
+        clamp(zone0ClusterBlockPixels, 0.5f, zone0GreedyBlockPixels - 0.25f);
   }
 
   private static float estimateBlockFacePixels(double chunkDistance) {
-    net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+    net.minecraft.client.Minecraft mc =
+        net.minecraft.client.Minecraft.getInstance();
     double screenHeight = 1080.0;
     double fovDegrees = 70.0;
     if (mc != null) {
@@ -446,13 +447,15 @@ public final class MetalRenderConfig {
         fovDegrees = mc.options.fov().get();
       }
     }
-    double clampedFovRadians = Math.toRadians(clamp((float) fovDegrees, 30.0f, 110.0f));
+    double clampedFovRadians =
+        Math.toRadians(clamp((float)fovDegrees, 30.0f, 110.0f));
     double distanceBlocks = Math.max(1.0, chunkDistance * 16.0);
-    double denominator = 2.0 * Math.tan(clampedFovRadians * 0.5) * distanceBlocks;
+    double denominator =
+        2.0 * Math.tan(clampedFovRadians * 0.5) * distanceBlocks;
     if (denominator <= 0.0) {
       return DEFAULT_ZONE0_EXACT_BLOCK_PIXELS;
     }
-    return (float) (screenHeight / denominator);
+    return (float)(screenHeight / denominator);
   }
 
   private static float clamp(float v, float lo, float hi) {

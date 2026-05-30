@@ -19,16 +19,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(Minecraft.class)
 public class MinecraftClientMixin {
-  @Unique
-  private boolean metalrender$levelWasLoaded = false;
-  @Unique
-  private int metalrender$debugCounter = 0;
-  @Unique
-  private boolean metalrender$forcingStartupBlocker;
+  @Unique private boolean metalrender$levelWasLoaded = false;
+  @Unique private int metalrender$debugCounter = 0;
+  @Unique private boolean metalrender$forcingStartupBlocker;
 
   @Inject(method = "<init>", at = @At("TAIL"))
   private void metalrender$showStartupBlocker(GameConfig gameConfig,
-      CallbackInfo ci) {
+                                              CallbackInfo ci) {
     if (StartupBlocker.shouldBlockStartup()) {
       metalrender$forceStartupBlocker();
     }
@@ -36,8 +33,8 @@ public class MinecraftClientMixin {
 
   @Inject(method = "setScreen", at = @At("HEAD"), cancellable = true)
   private void metalrender$keepStartupBlocker(Screen screen, CallbackInfo ci) {
-    if (!StartupBlocker.shouldBlockStartup()
-        || metalrender$forcingStartupBlocker) {
+    if (!StartupBlocker.shouldBlockStartup() ||
+        metalrender$forcingStartupBlocker) {
       return;
     }
     metalrender$forceStartupBlocker();
@@ -46,9 +43,9 @@ public class MinecraftClientMixin {
 
   @Inject(method = "setScreenAndRender", at = @At("HEAD"), cancellable = true)
   private void metalrender$keepStartupBlockerVisible(Screen screen,
-      CallbackInfo ci) {
-    if (!StartupBlocker.shouldBlockStartup()
-        || metalrender$forcingStartupBlocker) {
+                                                     CallbackInfo ci) {
+    if (!StartupBlocker.shouldBlockStartup() ||
+        metalrender$forcingStartupBlocker) {
       return;
     }
     metalrender$forceStartupBlocker();
@@ -57,10 +54,10 @@ public class MinecraftClientMixin {
 
   @Inject(method = "setOverlay", at = @At("HEAD"), cancellable = true)
   private void metalrender$blockStartupOverlays(Overlay overlay,
-      CallbackInfo ci) {
-    if (StartupBlocker.shouldBlockStartup()
-        && !metalrender$forcingStartupBlocker
-        && !(overlay instanceof StartupBlockerOverlay)) {
+                                                CallbackInfo ci) {
+    if (StartupBlocker.shouldBlockStartup() &&
+        !metalrender$forcingStartupBlocker &&
+        !(overlay instanceof StartupBlockerOverlay)) {
       ci.cancel();
     }
   }
@@ -69,7 +66,7 @@ public class MinecraftClientMixin {
   private void metalrender$forceStartupBlocker() {
     metalrender$forcingStartupBlocker = true;
     try {
-      ((Minecraft) (Object) this).setOverlay(new StartupBlockerOverlay());
+      ((Minecraft)(Object)this).setOverlay(new StartupBlockerOverlay());
     } finally {
       metalrender$forcingStartupBlocker = false;
     }
@@ -82,20 +79,20 @@ public class MinecraftClientMixin {
     }
     if (MetalRenderClient.isEnabled()) {
       PerformanceController.startFrame();
-      ClientLevel level = ((Minecraft) (Object) this).level;
+      ClientLevel level = ((Minecraft)(Object)this).level;
       metalrender$debugCounter++;
       if (metalrender$debugCounter % 600 == 1) {
         MetalLogger.deepInfo(
             "[MinecraftClientMixin] level=" +
-                (level != null ? "present" : "null") +
-                " levelWasLoaded=" + metalrender$levelWasLoaded + " wr=" +
-                (MetalRenderClient.getWorldRenderer() != null ? "present"
-                    : "null"));
+            (level != null ? "present" : "null") +
+            " levelWasLoaded=" + metalrender$levelWasLoaded + " wr=" +
+            (MetalRenderClient.getWorldRenderer() != null ? "present"
+                                                          : "null"));
       }
       if (level != null && !metalrender$levelWasLoaded) {
         MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
         MetalLogger.info("[MinecraftClientMixin] Level detected! wr=" +
-            (wr != null));
+                         (wr != null));
         if (wr != null) {
           try {
             wr.onWorldLoad();

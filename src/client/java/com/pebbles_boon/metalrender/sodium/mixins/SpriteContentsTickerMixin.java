@@ -9,8 +9,8 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(targets = "net.minecraft.client.texture.SpriteContents$Animator")
 public class SpriteContentsTickerMixin {
 
-    @Inject(method = "tick", at = @At("HEAD"))
-    private void metalrender$onAnimationTick(CallbackInfo ci) {
-        MetalTextureManager.markAtlasDirty();
-    }
+  @Inject(method = "tick", at = @At("HEAD"))
+  private void metalrender$onAnimationTick(CallbackInfo ci) {
+    MetalTextureManager.markAtlasDirty();
+  }
 }

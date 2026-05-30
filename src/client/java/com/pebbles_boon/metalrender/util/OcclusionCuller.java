@@ -31,8 +31,8 @@ public class OcclusionCuller {
       dist = 1e-3;
     double az = Math.atan2(dz, dx);
     double el = Math.asin(dy / dist);
-    int ai = (int) Math.floor((az + Math.PI) / (2.0 * Math.PI) * AZIMUTH_BINS);
-    int ei = (int) Math.floor((el + Math.PI / 2.0) / Math.PI * ELEVATION_BINS);
+    int ai = (int)Math.floor((az + Math.PI) / (2.0 * Math.PI) * AZIMUTH_BINS);
+    int ei = (int)Math.floor((el + Math.PI / 2.0) / Math.PI * ELEVATION_BINS);
     if (ai < 0)
       ai = 0;
     else if (ai >= AZIMUTH_BINS)
@@ -43,10 +43,10 @@ public class OcclusionCuller {
       ei = ELEVATION_BINS - 1;
     int idx = ei * AZIMUTH_BINS + ai;
     float nearest = depthGrid[idx];
-    boolean occluded = nearest + MARGIN < (float) dist;
+    boolean occluded = nearest + MARGIN < (float)dist;
     if (!occluded) {
-      if ((float) dist < nearest)
-        depthGrid[idx] = (float) dist;
+      if ((float)dist < nearest)
+        depthGrid[idx] = (float)dist;
     }
     return occluded;
   }

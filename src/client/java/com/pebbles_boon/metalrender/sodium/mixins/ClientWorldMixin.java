@@ -15,7 +15,8 @@ public class ClientWorldMixin {
 
   @Inject(method = "sendBlockUpdated", at = @At("RETURN"), require = 0)
   private void metalrender$onHandleBlockUpdate(BlockPos pos, BlockState state,
-      BlockState oldState, int flags, CallbackInfo ci) {
+                                               BlockState oldState, int flags,
+                                               CallbackInfo ci) {
     metalrender$triggerRebuild(pos);
   }
 

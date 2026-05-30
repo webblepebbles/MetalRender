@@ -6,9 +6,7 @@ public class BufferArena {
   private final long capacityBytes;
   private final AtomicLong used = new AtomicLong();
   private final int blockSize;
-  public BufferArena(long capacityBytes) {
-    this(capacityBytes, 4096);
-  }
+  public BufferArena(long capacityBytes) { this(capacityBytes, 4096); }
   public BufferArena(long capacityBytes, int blockSize) {
     this.capacityBytes = capacityBytes;
     this.blockSize = Math.max(256, blockSize);
@@ -23,21 +21,12 @@ public class BufferArena {
     used.addAndGet(bytes);
     return prev;
   }
-  public void free(long handle, long bytes) {
-    used.addAndGet(-bytes);
-  }
+  public void free(long handle, long bytes) { used.addAndGet(-bytes); }
   public ByteBuffer acquire() {
     return ByteBuffer.allocateDirect(blockSize).order(ByteOrder.LITTLE_ENDIAN);
   }
-  public void release(ByteBuffer buf) {
-  }
-  public long getUsedBytes() {
-    return used.get();
-  }
-  public long getCapacityBytes() {
-    return capacityBytes;
-  }
-  public long upload(ByteBuffer data) {
-    return 0L;
-  }
+  public void release(ByteBuffer buf) {}
+  public long getUsedBytes() { return used.get(); }
+  public long getCapacityBytes() { return capacityBytes; }
+  public long upload(ByteBuffer data) { return 0L; }
 }

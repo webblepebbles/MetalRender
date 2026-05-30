@@ -65,15 +65,16 @@ public class MetalRenderClient implements ClientModInitializer {
       applyDeferredRuntimeChanges(mc);
       applyFpsPriorityMode(mc);
       syncCfg(mc);
-      if (config != null && config.enableMetalRendering && renderer == null && mc != null) {
+      if (config != null && config.enableMetalRendering && renderer == null &&
+          mc != null) {
         initMetal(mc);
       }
     });
   }
 
   public static void requestDeferredApply(boolean requestCfgSync,
-      boolean refreshLevelRenderer,
-      boolean refreshWorldRenderer) {
+                                          boolean refreshLevelRenderer,
+                                          boolean refreshWorldRenderer) {
     runtimeApplyPending = true;
     cfgSyncPending |= requestCfgSync;
     levelRendererRefreshPending |= refreshLevelRenderer;
@@ -87,13 +88,12 @@ public class MetalRenderClient implements ClientModInitializer {
 
     runtimeApplyPending = false;
     if (NativeBridge.isLibLoaded()) {
-      boolean useArgBufs = config.enableArgumentBuffers || config.enableIndirectCommandBuffers;
-      NativeBridge.nSetFeatureFlags(
-          config.enableIndirectCommandBuffers,
-          config.enableMeshShaders,
-          useArgBufs,
-          config.enableProgrammableBlending,
-          config.enableMemorylessTargets);
+      boolean useArgBufs =
+          config.enableArgumentBuffers || config.enableIndirectCommandBuffers;
+      NativeBridge.nSetFeatureFlags(config.enableIndirectCommandBuffers,
+                                    config.enableMeshShaders, useArgBufs,
+                                    config.enableProgrammableBlending,
+                                    config.enableMemorylessTargets);
     }
 
     MetalWorldRenderer wr = worldRenderer;
@@ -146,11 +146,13 @@ public class MetalRenderClient implements ClientModInitializer {
   }
 
   private static void applyFpsPriorityMode(Minecraft mc) {
-    if (mc == null || mc.options == null || config == null || !config.prioritizeFpsOverTps) {
+    if (mc == null || mc.options == null || config == null ||
+        !config.prioritizeFpsOverTps) {
       return;
     }
     try {
-      if (mc.options.simulationDistance().get() > FPS_PRIORITY_SIMULATION_DISTANCE) {
+      if (mc.options.simulationDistance().get() >
+          FPS_PRIORITY_SIMULATION_DISTANCE) {
         mc.options.simulationDistance().set(FPS_PRIORITY_SIMULATION_DISTANCE);
         mc.options.save();
       }
@@ -159,14 +161,17 @@ public class MetalRenderClient implements ClientModInitializer {
   }
 
   private static void drainRenderer() {
-    if (renderer == null || !renderer.isAvailable() || !NativeBridge.isLibLoaded()) {
+    if (renderer == null || !renderer.isAvailable() ||
+        !NativeBridge.isLibLoaded()) {
       return;
     }
     try {
       NativeBridge.nFlushFrames();
       NativeBridge.nWaitForRender(renderer.getHandle());
     } catch (Throwable t) {
-      MetalLogger.warn("failed to drain Metal renderer before lifecycle change: %s", t.getMessage());
+      MetalLogger.warn(
+          "failed to drain Metal renderer before lifecycle change: %s",
+          t.getMessage());
     }
   }
 
@@ -178,7 +183,8 @@ public class MetalRenderClient implements ClientModInitializer {
       mc.execute(() -> mc.setScreen(new MetalRenderSettingsScreen(mc.screen)));
       MetalLogger.info("Opened MetalRender settings screen.");
     } catch (Exception e) {
-      MetalLogger.warn("failed to open MetalRender settings screen: %s", e.getMessage());
+      MetalLogger.warn("failed to open MetalRender settings screen: %s",
+                       e.getMessage());
     }
   }
 
@@ -219,38 +225,26 @@ public class MetalRenderClient implements ClientModInitializer {
     }
   }
 
-  public static MetalRenderClient getInstance() {
-    return instance;
-  }
+  public static MetalRenderClient getInstance() { return instance; }
 
-  public static MetalRenderer getRenderer() {
-    return renderer;
-  }
+  public static MetalRenderer getRenderer() { return renderer; }
 
-  public static MetalRenderConfig getConfig() {
-    return config;
-  }
+  public static MetalRenderConfig getConfig() { return config; }
 
-  public static MetalRenderCoordinator getCoordinator() {
-    return coordinator;
-  }
+  public static MetalRenderCoordinator getCoordinator() { return coordinator; }
 
   public static MeshShaderBackend getMeshShaderBackend() {
     return meshShaderBackend;
   }
 
-  public static boolean isMetalAvailable() {
-    return metalUp;
-  }
+  public static boolean isMetalAvailable() { return metalUp; }
 
   public static boolean isEnabled() {
-    return config != null && config.enableMetalRendering && metalUp
-        && renderer != null && renderer.isAvailable();
+    return config != null && config.enableMetalRendering && metalUp &&
+        renderer != null && renderer.isAvailable();
   }
 
-  public static MetalWorldRenderer getWorldRenderer() {
-    return worldRenderer;
-  }
+  public static MetalWorldRenderer getWorldRenderer() { return worldRenderer; }
 
   public static SodiumMetalInterface getSodiumInterface() {
     if (sodiumInterface == null) {
@@ -267,10 +261,17 @@ public class MetalRenderClient implements ClientModInitializer {
     try {
       var o = mc.options;
       var cfg = config;
-      int fpsCap = o != null && o.framerateLimit() != null ? o.framerateLimit().get() : -1;
-      boolean vsync = o != null && o.enableVsync() != null && Boolean.TRUE.equals(o.enableVsync().get());
-      int rd = o != null && o.renderDistance() != null ? o.renderDistance().get() : -1;
-      int sd = o != null && o.simulationDistance() != null ? o.simulationDistance().get() : -1;
+      int fpsCap = o != null && o.framerateLimit() != null
+                       ? o.framerateLimit().get()
+                       : -1;
+      boolean vsync = o != null && o.enableVsync() != null &&
+                      Boolean.TRUE.equals(o.enableVsync().get());
+      int rd = o != null && o.renderDistance() != null
+                   ? o.renderDistance().get()
+                   : -1;
+      int sd = o != null && o.simulationDistance() != null
+                   ? o.simulationDistance().get()
+                   : -1;
 
       boolean meshOk = NativeBridge.nSupportsMeshShaders();
       boolean indOk = NativeBridge.nSupportsIndirect();
@@ -278,25 +279,25 @@ public class MetalRenderClient implements ClientModInitializer {
       boolean gpuOn = NativeBridge.nIsGPUDrivenActive();
 
       MetalLogger.info(
-          "STARTUP_DIAG: supportsMesh=%s supportsIndirect=%s meshActive=%s gpuDriven=%s cfg(mesh=%s icb=%s argBuf=%s) fpsLimit=%d vsync=%s rd=%d sd=%d",
-          meshOk, indOk, meshOn, gpuOn,
-          cfg != null && cfg.enableMeshShaders,
+          "STARTUP_DIAG: supportsMesh=%s supportsIndirect=%s meshActive=%s " +
+          "gpuDriven=%s cfg(mesh=%s icb=%s argBuf=%s) fpsLimit=%d vsync=%s " +
+          "rd=%d sd=%d",
+          meshOk, indOk, meshOn, gpuOn, cfg != null && cfg.enableMeshShaders,
           cfg != null && cfg.enableIndirectCommandBuffers,
-          cfg != null && cfg.enableArgumentBuffers,
-          fpsCap, vsync, rd, sd);
+          cfg != null && cfg.enableArgumentBuffers, fpsCap, vsync, rd, sd);
 
       if (cfg != null && cfg.enableMeshShaders && !meshOn) {
-        MetalLogger.warn(
-            "STARTUP_DIAG: Mesh shaders requested but inactive. Check capability gates/fallback path selection.");
+        MetalLogger.warn("STARTUP_DIAG: Mesh shaders requested but inactive. " +
+                         "Check capability gates/fallback path selection.");
       }
       if (cfg != null && cfg.enableIndirectCommandBuffers && !indOk) {
-        MetalLogger.warn(
-            "STARTUP_DIAG: Indirect command buffers requested but not supported on this runtime/device.");
+        MetalLogger.warn("STARTUP_DIAG: Indirect command buffers requested " +
+                         "but not supported on this runtime/device.");
       }
       if (vsync || (fpsCap > 0 && fpsCap <= 60)) {
-        MetalLogger.warn(
-            "STARTUP_DIAG: FPS may be capped by settings (vsync=%s, framerateLimit=%d).",
-            vsync, fpsCap);
+        MetalLogger.warn("STARTUP_DIAG: FPS may be capped by settings " +
+                         "(vsync=%s, framerateLimit=%d).",
+                         vsync, fpsCap);
       }
     } catch (Throwable t) {
       MetalLogger.warn("STARTUP_DIAG failed: %s", t.getMessage());

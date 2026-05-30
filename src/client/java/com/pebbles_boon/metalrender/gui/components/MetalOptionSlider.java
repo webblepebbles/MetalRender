@@ -20,8 +20,9 @@ public class MetalOptionSlider extends AbstractSliderButton {
   private final Function<Float, Component> labelFormatter;
 
   public MetalOptionSlider(int x, int y, int width, int height, Component text,
-      float min, float max, float step, float currentValue,
-      Consumer<Float> onChange, Function<Float, Component> labelFormatter) {
+                           float min, float max, float step, float currentValue,
+                           Consumer<Float> onChange,
+                           Function<Float, Component> labelFormatter) {
     super(x, y, width, height, text, normalize(currentValue, min, max));
     this.minValue = min;
     this.maxValue = max;
@@ -38,7 +39,7 @@ public class MetalOptionSlider extends AbstractSliderButton {
   }
 
   public float getRealValue() {
-    float raw = minValue + (float) this.value * (maxValue - minValue);
+    float raw = minValue + (float)this.value * (maxValue - minValue);
     if (step > 0)
       raw = Math.round(raw / step) * step;
     return Math.max(minValue, Math.min(maxValue, raw));
@@ -52,7 +53,7 @@ public class MetalOptionSlider extends AbstractSliderButton {
       return;
     }
     if (step >= 1.0f) {
-      setMessage(Component.literal(String.valueOf((int) v)));
+      setMessage(Component.literal(String.valueOf((int)v)));
     } else {
       setMessage(Component.literal(String.format("%.2f", v)));
     }
@@ -65,14 +66,15 @@ public class MetalOptionSlider extends AbstractSliderButton {
   }
 
   @Override
-  public void extractWidgetRenderState(GuiGraphicsExtractor ctx, int mx, int my, float delta) {
+  public void extractWidgetRenderState(GuiGraphicsExtractor ctx, int mx, int my,
+                                       float delta) {
     int x = getX(), y = getY(), w = getWidth(), h = getHeight();
 
     int trackY = y + h / 2 - 2;
     int trackH = 4;
     ctx.fill(x, trackY, x + w, trackY + trackH, C_TRACK);
 
-    int fillW = (int) (this.value * w);
+    int fillW = (int)(this.value * w);
     if (fillW > 0) {
       ctx.fill(x, trackY, x + fillW, trackY + trackH, C_FILL);
     }

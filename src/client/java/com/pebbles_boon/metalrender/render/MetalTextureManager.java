@@ -11,7 +11,8 @@ import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL11;
 
 public class MetalTextureManager {
-  private static final net.minecraft.resources.Identifier BLOCKS_ATLAS_ID = TextureAtlas.LOCATION_BLOCKS;
+  private static final net.minecraft.resources.Identifier BLOCKS_ATLAS_ID =
+      TextureAtlas.LOCATION_BLOCKS;
   private final long deviceHandle;
   private long blockAtlasTexture;
   private long lightmapTexture;
@@ -36,9 +37,7 @@ public class MetalTextureManager {
   private long lastLightmapObservedGameTime = Long.MIN_VALUE;
   private long lastUploadedLightmapGameTime = Long.MIN_VALUE;
 
-  public static void markAtlasDirty() {
-    atlasDirty = true;
-  }
+  public static void markAtlasDirty() { atlasDirty = true; }
 
   public MetalTextureManager(long deviceHandle) {
     this.deviceHandle = deviceHandle;
@@ -49,7 +48,8 @@ public class MetalTextureManager {
       Minecraft mc = Minecraft.getInstance();
       if (mc == null || mc.getTextureManager() == null)
         return;
-      AbstractTexture atlasTexture = mc.getTextureManager().getTexture(BLOCKS_ATLAS_ID);
+      AbstractTexture atlasTexture =
+          mc.getTextureManager().getTexture(BLOCKS_ATLAS_ID);
       if (atlasTexture == null) {
         MetalLogger.info("Block atlas texture not available yet");
         blockAtlasLoaded = true;
@@ -70,24 +70,25 @@ public class MetalTextureManager {
       int prevTex = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, glTexId);
       int width = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0,
-          GL11.GL_TEXTURE_WIDTH);
+                                               GL11.GL_TEXTURE_WIDTH);
       int height = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0,
-          GL11.GL_TEXTURE_HEIGHT);
+                                                GL11.GL_TEXTURE_HEIGHT);
       if (width <= 0 || height <= 0) {
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTex);
         MetalLogger.info("Block atlas dimensions invalid: %dx%d", width,
-            height);
+                         height);
         blockAtlasLoaded = true;
         usingFallbackBlockAtlas = true;
         return;
       }
       ByteBuffer pixels = BufferUtils.createByteBuffer(width * height * 4);
       GL11.glGetTexImage(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA,
-          GL11.GL_UNSIGNED_BYTE, pixels);
+                         GL11.GL_UNSIGNED_BYTE, pixels);
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTex);
       byte[] data = new byte[width * height * 4];
       pixels.get(data);
-      long newTexture = NativeBridge.nCreateTexture2D(deviceHandle, width, height, data);
+      long newTexture =
+          NativeBridge.nCreateTexture2D(deviceHandle, width, height, data);
       if (newTexture != 0) {
         if (blockAtlasTexture != 0 && blockAtlasTexture != newTexture) {
           NativeBridge.nDestroyTexture2D(blockAtlasTexture);
@@ -98,7 +99,7 @@ public class MetalTextureManager {
         blockAtlasLoaded = true;
         usingFallbackBlockAtlas = false;
         MetalLogger.info("Block atlas loaded: %dx%d, Metal handle=%d", width,
-            height, newTexture);
+                         height, newTexture);
       } else {
         MetalLogger.error("Failed to create Metal texture for block atlas");
         blockAtlasLoaded = true;
@@ -128,7 +129,8 @@ public class MetalTextureManager {
       Minecraft mc = Minecraft.getInstance();
       if (mc == null || mc.getTextureManager() == null)
         return;
-      AbstractTexture atlasTexture = mc.getTextureManager().getTexture(BLOCKS_ATLAS_ID);
+      AbstractTexture atlasTexture =
+          mc.getTextureManager().getTexture(BLOCKS_ATLAS_ID);
       if (atlasTexture == null)
         return;
       int glTexId = 0;
@@ -141,9 +143,9 @@ public class MetalTextureManager {
       int prevTex = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, glTexId);
       int width = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0,
-          GL11.GL_TEXTURE_WIDTH);
+                                               GL11.GL_TEXTURE_WIDTH);
       int height = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0,
-          GL11.GL_TEXTURE_HEIGHT);
+                                                GL11.GL_TEXTURE_HEIGHT);
       if (width != blockAtlasWidth || height != blockAtlasHeight) {
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTex);
         loadBlockAtlas();
@@ -155,13 +157,14 @@ public class MetalTextureManager {
       }
       atlasPixelBuffer.clear();
       GL11.glGetTexImage(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA,
-          GL11.GL_UNSIGNED_BYTE, atlasPixelBuffer);
+                         GL11.GL_UNSIGNED_BYTE, atlasPixelBuffer);
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTex);
       if (atlasUploadData == null || atlasUploadData.length < dataSize) {
         atlasUploadData = new byte[dataSize];
       }
       atlasPixelBuffer.get(atlasUploadData, 0, dataSize);
-      NativeBridge.nUpdateTexture2D(blockAtlasTexture, width, height, atlasUploadData);
+      NativeBridge.nUpdateTexture2D(blockAtlasTexture, width, height,
+                                    atlasUploadData);
     } catch (Exception e) {
     }
   }
@@ -171,13 +174,14 @@ public class MetalTextureManager {
       return;
     Minecraft mc = Minecraft.getInstance();
     long gameTime = mc != null && mc.level != null ? mc.level.getGameTime()
-        : Long.MIN_VALUE;
+                                                   : Long.MIN_VALUE;
     if (gameTime == lastLightmapObservedGameTime)
       return;
     lastLightmapObservedGameTime = gameTime;
-    if (lastUploadedLightmapGameTime != Long.MIN_VALUE
-        && gameTime != Long.MIN_VALUE
-        && gameTime - lastUploadedLightmapGameTime < LIGHTMAP_MIN_GAME_TIME_DELTA) {
+    if (lastUploadedLightmapGameTime != Long.MIN_VALUE &&
+        gameTime != Long.MIN_VALUE &&
+        gameTime - lastUploadedLightmapGameTime <
+            LIGHTMAP_MIN_GAME_TIME_DELTA) {
       return;
     }
     lightmapFramesSinceUpload++;
@@ -195,25 +199,15 @@ public class MetalTextureManager {
     uploadLightmap();
   }
 
-  public boolean isBlockAtlasLoaded() {
-    return blockAtlasLoaded;
-  }
+  public boolean isBlockAtlasLoaded() { return blockAtlasLoaded; }
 
-  public boolean isLightmapLoaded() {
-    return lightmapLoaded;
-  }
+  public boolean isLightmapLoaded() { return lightmapLoaded; }
 
-  public boolean isUsingFallbackBlockAtlas() {
-    return usingFallbackBlockAtlas;
-  }
+  public boolean isUsingFallbackBlockAtlas() { return usingFallbackBlockAtlas; }
 
-  public long getBlockAtlasTexture() {
-    return blockAtlasTexture;
-  }
+  public long getBlockAtlasTexture() { return blockAtlasTexture; }
 
-  public long getLightmapTexture() {
-    return lightmapTexture;
-  }
+  public long getLightmapTexture() { return lightmapTexture; }
 
   private void uploadLightmap() {
     try {
@@ -236,27 +230,30 @@ public class MetalTextureManager {
       int prevTex = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, glTexId);
       int width = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0,
-          GL11.GL_TEXTURE_WIDTH);
+                                               GL11.GL_TEXTURE_WIDTH);
       int height = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0,
-          GL11.GL_TEXTURE_HEIGHT);
+                                                GL11.GL_TEXTURE_HEIGHT);
       if (width <= 0 || height <= 0) {
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTex);
         return;
       }
       int dataSize = width * height * 4;
-      if (lightmapPixelBuffer == null || lightmapPixelBuffer.capacity() < dataSize) {
+      if (lightmapPixelBuffer == null ||
+          lightmapPixelBuffer.capacity() < dataSize) {
         lightmapPixelBuffer = BufferUtils.createByteBuffer(dataSize);
       }
       lightmapPixelBuffer.clear();
       GL11.glGetTexImage(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA,
-          GL11.GL_UNSIGNED_BYTE, lightmapPixelBuffer);
+                         GL11.GL_UNSIGNED_BYTE, lightmapPixelBuffer);
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTex);
       if (lightmapUploadData == null || lightmapUploadData.length < dataSize) {
         lightmapUploadData = new byte[dataSize];
       }
       lightmapPixelBuffer.get(lightmapUploadData, 0, dataSize);
-      if (lightmapTexture == 0 || width != lightmapWidth || height != lightmapHeight) {
-        long newTexture = NativeBridge.nCreateTexture2D(deviceHandle, width, height, lightmapUploadData);
+      if (lightmapTexture == 0 || width != lightmapWidth ||
+          height != lightmapHeight) {
+        long newTexture = NativeBridge.nCreateTexture2D(
+            deviceHandle, width, height, lightmapUploadData);
         if (newTexture == 0) {
           return;
         }
@@ -267,9 +264,10 @@ public class MetalTextureManager {
         lightmapWidth = width;
         lightmapHeight = height;
         MetalLogger.info("Lightmap loaded: %dx%d, Metal handle=%d", width,
-            height, newTexture);
+                         height, newTexture);
       } else {
-        NativeBridge.nUpdateTexture2D(lightmapTexture, width, height, lightmapUploadData);
+        NativeBridge.nUpdateTexture2D(lightmapTexture, width, height,
+                                      lightmapUploadData);
       }
       lightmapLoaded = true;
     } catch (Exception e) {
@@ -302,5 +300,4 @@ public class MetalTextureManager {
     atlasFramesSinceUpload = 0;
     atlasDirty = true;
   }
-
 }

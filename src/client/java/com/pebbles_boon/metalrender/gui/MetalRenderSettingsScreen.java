@@ -50,9 +50,8 @@ public class MetalRenderSettingsScreen extends Screen {
   private static final int FPS_LIMIT_MAX = 240;
   private static final int FPS_LIMIT_UNLIMITED = 241;
 
-  private static final String[] TABS = {
-      "Video", "MetalRender", "Quality", "Performance", "Advanced", "LOD"
-  };
+  private static final String[] TABS = {"Video",       "MetalRender", "Quality",
+                                        "Performance", "Advanced",    "LOD"};
 
   private final Screen parent;
   private MetalRenderConfig config;
@@ -89,9 +88,7 @@ public class MetalRenderSettingsScreen extends Screen {
 
   private final List<Row> rows = new ArrayList<>();
 
-  private enum RT {
-    SECTION, TOGGLE, CYCLE, INFO, VANILLA, SLIDER
-  }
+  private enum RT { SECTION, TOGGLE, CYCLE, INFO, VANILLA, SLIDER }
 
   private static class Row {
     final RT type;
@@ -107,13 +104,9 @@ public class MetalRenderSettingsScreen extends Screen {
       label = l;
     }
 
-    int h() {
-      return type == RT.SECTION ? SEC_H : CARD_H;
-    }
+    int h() { return type == RT.SECTION ? SEC_H : CARD_H; }
 
-    int gap() {
-      return type == RT.SECTION ? 0 : CARD_GAP;
-    }
+    int gap() { return type == RT.SECTION ? 0 : CARD_GAP; }
   }
 
   public MetalRenderSettingsScreen(Screen parent) {
@@ -164,7 +157,8 @@ public class MetalRenderSettingsScreen extends Screen {
   }
 
   @Override
-  public void extractRenderState(GuiGraphicsExtractor ctx, int mx, int my, float delta) {
+  public void extractRenderState(GuiGraphicsExtractor ctx, int mx, int my,
+                                 float delta) {
     var font = getFont();
 
     ctx.fill(0, 0, width, height, 0xAA000000);
@@ -174,12 +168,11 @@ public class MetalRenderSettingsScreen extends Screen {
     fr(ctx, px, py, pw, ph, C_PANEL);
 
     fr(ctx, px, py, pw, HDR_H, C_HEADER);
-    ctx.text(font,
-        Component.literal("MetalRender Settings"),
-        px + 12, py + (HDR_H - 9) / 2, C_TEXT_PRI);
+    ctx.text(font, Component.literal("MetalRender Settings"), px + 12,
+             py + (HDR_H - 9) / 2, C_TEXT_PRI);
     int vx = px + 12 + font.width("MetalRender Settings") + 6;
-    ctx.text(font, Component.literal("v0.1.7"),
-        vx, py + (HDR_H - 9) / 2, C_TEXT_SEC, false);
+    ctx.text(font, Component.literal("v0.1.7"), vx, py + (HDR_H - 9) / 2,
+             C_TEXT_SEC, false);
 
     renderTabs(ctx, mx, my);
 
@@ -197,8 +190,8 @@ public class MetalRenderSettingsScreen extends Screen {
       gpu = "Unknown GPU";
     if (font.width(gpu) > pw / 2 - 20)
       gpu = gpu.substring(0, Math.min(gpu.length(), 30)) + "\u2026";
-    ctx.text(font, Component.literal(gpu),
-        px + 12, fy + (FOOT_H - 9) / 2, C_TEXT_SEC, false);
+    ctx.text(font, Component.literal(gpu), px + 12, fy + (FOOT_H - 9) / 2,
+             C_TEXT_SEC, false);
     super.extractRenderState(ctx, mx, my, delta);
   }
 
@@ -210,12 +203,13 @@ public class MetalRenderSettingsScreen extends Screen {
     for (int i = 0; i < TABS.length; i++) {
       int tx = px + i * tw;
       boolean sel = i == selectedTab;
-      boolean hov = mx >= tx && mx < tx + tw && my >= ty && my < ty + TAB_H && !sel;
+      boolean hov =
+          mx >= tx && mx < tx + tw && my >= ty && my < ty + TAB_H && !sel;
       int bg = sel ? C_TAB_ACTIVE : (hov ? C_TAB_HOVER : C_TAB_BAR);
       fr(ctx, tx + 2, ty + 2, tw - 4, TAB_H - 4, bg);
       int tc = (sel || hov) ? C_TEXT_PRI : C_TEXT_SEC;
-      ctx.centeredText(font,
-          Component.literal(TABS[i]), tx + tw / 2, ty + (TAB_H - 9) / 2, tc);
+      ctx.centeredText(font, Component.literal(TABS[i]), tx + tw / 2,
+                       ty + (TAB_H - 9) / 2, tc);
     }
     fr(ctx, px, ty + TAB_H - 1, pw, 1, C_DIVIDER);
   }
@@ -236,59 +230,62 @@ public class MetalRenderSettingsScreen extends Screen {
   private void drawRow(GuiGraphicsExtractor ctx, Row r, int y, int mx, int my) {
     var font = getFont();
     if (r.type == RT.SECTION) {
-      ctx.text(font, Component.literal(r.label.toUpperCase()),
-          cx + 4, y + (SEC_H - 9) / 2 + 4, C_TEXT_SEC, false);
+      ctx.text(font, Component.literal(r.label.toUpperCase()), cx + 4,
+               y + (SEC_H - 9) / 2 + 4, C_TEXT_SEC, false);
       return;
     }
-    boolean hov = mx >= cx && mx < cx + cw
-        && my >= y && my < y + r.h()
-        && my >= cy && my < cy + ch;
+    boolean hov = mx >= cx && mx < cx + cw && my >= y && my < y + r.h() &&
+                  my >= cy && my < cy + ch;
     fr(ctx, cx, y, cw, CARD_H, hov ? C_CARD_HOVER : C_CARD);
 
     if (r.type == RT.TOGGLE && "Enabled".equals(r.value))
       fr(ctx, cx, y, 3, CARD_H, C_TAB_ACTIVE);
-    ctx.text(font, Component.literal(r.label),
-        cx + 10, y + (CARD_H - 9) / 2, C_TEXT_PRI, false);
+    ctx.text(font, Component.literal(r.label), cx + 10, y + (CARD_H - 9) / 2,
+             C_TEXT_PRI, false);
     int rx = cx + cw - 8;
     switch (r.type) {
-      case TOGGLE -> {
-        boolean on = "Enabled".equals(r.value);
-        drawPill(ctx, rx - PILL_W, y + (CARD_H - PILL_H) / 2, on);
+    case TOGGLE -> {
+      boolean on = "Enabled".equals(r.value);
+      drawPill(ctx, rx - PILL_W, y + (CARD_H - PILL_H) / 2, on);
+    }
+    case CYCLE -> {
+      int vw = font.width(r.value) + 12;
+      fr(ctx, rx - vw, y + 8, vw, CARD_H - 16, C_TAB_ACTIVE);
+      ctx.centeredText(font, Component.literal(r.value), rx - vw / 2,
+                       y + (CARD_H - 9) / 2, C_TEXT_PRI);
+    }
+    case INFO -> {
+      String v = r.value == null ? "" : r.value;
+      int col = C_TEXT_SEC;
+      if ("Enabled".equals(v) || "Yes".equals(v) || "Supported".equals(v) ||
+          "Installed".equals(v))
+        col = C_VAL_ON;
+      else if ("Disabled".equals(v) || "No".equals(v) ||
+               "Not Available".equals(v) || "Not Installed".equals(v))
+        col = C_VAL_OFF;
+      else if (!v.isEmpty())
+        col = C_TEXT_ACCENT;
+      ctx.text(font, Component.literal(v), rx - font.width(v),
+               y + (CARD_H - 9) / 2, col, false);
+    }
+    case VANILLA -> {
+      String v = r.value == null ? "" : r.value;
+      int col = "ON".equals(v)
+                    ? C_VAL_ON
+                    : ("OFF".equals(v) ? C_VAL_OFF : C_TEXT_ACCENT);
+      ctx.text(font, Component.literal(v), rx - font.width(v),
+               y + (CARD_H - 9) / 2, col, false);
+    }
+    case SLIDER -> {
+      if (r.slider != null) {
+        String sv = r.slider.getMessage().getString();
+        ctx.text(font, Component.literal(sv),
+                 rx - SLIDER_W - 6 - font.width(sv), y + (CARD_H - 9) / 2,
+                 C_TEXT_ACCENT, false);
       }
-      case CYCLE -> {
-        int vw = font.width(r.value) + 12;
-        fr(ctx, rx - vw, y + 8, vw, CARD_H - 16, C_TAB_ACTIVE);
-        ctx.centeredText(font,
-            Component.literal(r.value), rx - vw / 2, y + (CARD_H - 9) / 2, C_TEXT_PRI);
-      }
-      case INFO -> {
-        String v = r.value == null ? "" : r.value;
-        int col = C_TEXT_SEC;
-        if ("Enabled".equals(v) || "Yes".equals(v) || "Supported".equals(v) || "Installed".equals(v))
-          col = C_VAL_ON;
-        else if ("Disabled".equals(v) || "No".equals(v) || "Not Available".equals(v) || "Not Installed".equals(v))
-          col = C_VAL_OFF;
-        else if (!v.isEmpty())
-          col = C_TEXT_ACCENT;
-        ctx.text(font, Component.literal(v),
-            rx - font.width(v), y + (CARD_H - 9) / 2, col, false);
-      }
-      case VANILLA -> {
-        String v = r.value == null ? "" : r.value;
-        int col = "ON".equals(v) ? C_VAL_ON : ("OFF".equals(v) ? C_VAL_OFF : C_TEXT_ACCENT);
-        ctx.text(font, Component.literal(v),
-            rx - font.width(v), y + (CARD_H - 9) / 2, col, false);
-      }
-      case SLIDER -> {
-        if (r.slider != null) {
-          String sv = r.slider.getMessage().getString();
-          ctx.text(font, Component.literal(sv),
-              rx - SLIDER_W - 6 - font.width(sv),
-              y + (CARD_H - 9) / 2, C_TEXT_ACCENT, false);
-        }
-      }
-      default -> {
-      }
+    }
+    default -> {
+    }
     }
     fr(ctx, cx + 8, y + CARD_H - 1, cw - 16, 1, C_DIVIDER);
   }
@@ -306,8 +303,8 @@ public class MetalRenderSettingsScreen extends Screen {
       return;
     int sbX = px + pw - 4;
     int tot = totalH();
-    int thumbH = Math.max(16, (int) ((float) ch / tot * ch));
-    int thumbY = cy + (int) ((float) scrollOffset / maxScroll * (ch - thumbH));
+    int thumbH = Math.max(16, (int)((float)ch / tot * ch));
+    int thumbY = cy + (int)((float)scrollOffset / maxScroll * (ch - thumbH));
     ctx.fill(sbX, cy, sbX + 3, cy + ch, 0xFF3A3A3C);
     ctx.fill(sbX, thumbY, sbX + 3, thumbY + thumbH, C_SCROLLTHUMB);
   }
@@ -318,7 +315,8 @@ public class MetalRenderSettingsScreen extends Screen {
         continue;
       int ry = r.renderY;
       boolean vis = ry >= cy && ry + CARD_H <= cy + ch;
-      r.slider.setPosition(cx + cw - 8 - SLIDER_W, ry + (CARD_H - SLIDER_H) / 2);
+      r.slider.setPosition(cx + cw - 8 - SLIDER_W,
+                           ry + (CARD_H - SLIDER_H) / 2);
       r.slider.setWidth(SLIDER_W);
       r.slider.visible = vis;
       r.slider.active = vis;
@@ -348,7 +346,7 @@ public class MetalRenderSettingsScreen extends Screen {
     int sbX = px + pw - 6;
     if (mx >= sbX && mx <= sbX + 6 && my >= cy && my <= cy + ch) {
       dragging = true;
-      dragOriginY = (int) my;
+      dragOriginY = (int)my;
       dragOriginOff = scrollOffset;
       return true;
     }
@@ -380,9 +378,9 @@ public class MetalRenderSettingsScreen extends Screen {
     if (dragging && maxScroll > 0) {
       double my = click.y();
       int tot = totalH();
-      int thumbH = Math.max(16, (int) ((float) ch / tot * ch));
-      float ratio = (float) (my - dragOriginY) / (ch - thumbH);
-      scrollOffset = cl(dragOriginOff + (int) (ratio * maxScroll), 0, maxScroll);
+      int thumbH = Math.max(16, (int)((float)ch / tot * ch));
+      float ratio = (float)(my - dragOriginY) / (ch - thumbH);
+      scrollOffset = cl(dragOriginOff + (int)(ratio * maxScroll), 0, maxScroll);
       return true;
     }
     return super.mouseDragged(click, dx, dy);
@@ -397,7 +395,7 @@ public class MetalRenderSettingsScreen extends Screen {
   @Override
   public boolean mouseScrolled(double mx, double my, double hAmt, double vAmt) {
     if (mx >= px && mx < px + pw && my >= cy && my < cy + ch) {
-      scrollOffset = cl(scrollOffset - (int) (vAmt * CARD_H * 2), 0, maxScroll);
+      scrollOffset = cl(scrollOffset - (int)(vAmt * CARD_H * 2), 0, maxScroll);
       return true;
     }
     return super.mouseScrolled(mx, my, hAmt, vAmt);
@@ -409,30 +407,34 @@ public class MetalRenderSettingsScreen extends Screen {
     config.save();
 
     boolean metalFlip = config.enableMetalRendering != initialMetalOn;
-    boolean needsRebuild = (pendingRenderDist != initialRenderDist)
-        || (config.biomeTransitionDetail != initialBiomeDetail)
-        || (config.leafCullingMode != initialLeafCulling)
-        || (config.enableSimpleLighting != initialSmoothLighting)
-        || (config.debugPinkBlockTint != initialDebugPinkBlockTint)
-        || (MetalRenderConfig.zone0ExactBlockPixels() != initialZone0ExactBlockPx)
-        || (MetalRenderConfig.zone0GreedyBlockPixels() != initialZone0GreedyBlockPx)
-        || (MetalRenderConfig.zone0ClusterBlockPixels() != initialZone0ClusterBlockPx);
+    boolean needsRebuild =
+        (pendingRenderDist != initialRenderDist) ||
+        (config.biomeTransitionDetail != initialBiomeDetail) ||
+        (config.leafCullingMode != initialLeafCulling) ||
+        (config.enableSimpleLighting != initialSmoothLighting) ||
+        (config.debugPinkBlockTint != initialDebugPinkBlockTint) ||
+        (MetalRenderConfig.zone0ExactBlockPixels() !=
+         initialZone0ExactBlockPx) ||
+        (MetalRenderConfig.zone0GreedyBlockPixels() !=
+         initialZone0GreedyBlockPx) ||
+        (MetalRenderConfig.zone0ClusterBlockPixels() !=
+         initialZone0ClusterBlockPx);
 
     boolean biomeChanged = config.biomeTransitionDetail != initialBiomeDetail;
     com.pebbles_boon.metalrender.util.MetalLogger.info(
-        "Settings closed: needsRebuild=%b (renderDist=%b biome=%b leaf=%b lighting=%b lod=%b)",
-        needsRebuild,
-        pendingRenderDist != initialRenderDist,
-        biomeChanged,
+        "Settings closed: needsRebuild=%b (renderDist=%b biome=%b leaf=%b "
+            + "lighting=%b lod=%b)",
+        needsRebuild, pendingRenderDist != initialRenderDist, biomeChanged,
         config.leafCullingMode != initialLeafCulling,
         config.enableSimpleLighting != initialSmoothLighting,
-        (MetalRenderConfig.zone0ExactBlockPixels() != initialZone0ExactBlockPx)
-            || (MetalRenderConfig.zone0GreedyBlockPixels() != initialZone0GreedyBlockPx)
-            || (MetalRenderConfig.zone0ClusterBlockPixels() != initialZone0ClusterBlockPx));
+        (MetalRenderConfig.zone0ExactBlockPixels() !=
+         initialZone0ExactBlockPx) ||
+            (MetalRenderConfig.zone0GreedyBlockPixels() !=
+             initialZone0GreedyBlockPx) ||
+            (MetalRenderConfig.zone0ClusterBlockPixels() !=
+             initialZone0ClusterBlockPx));
     MetalRenderClient.requestDeferredApply(
-        metalFlip,
-        metalFlip,
-        !metalFlip && (needsRebuild || biomeChanged));
+        metalFlip, metalFlip, !metalFlip && (needsRebuild || biomeChanged));
 
     Minecraft mc = Minecraft.getInstance();
     if (mc != null)
@@ -463,15 +465,17 @@ public class MetalRenderSettingsScreen extends Screen {
     clearWidgets();
     rows.clear();
     int bw = 64, bh = 20;
-    addRenderableWidget(Button.builder(Component.literal("Done"), b -> onClose())
-        .bounds(px + pw - bw - 10, py + (HDR_H - bh) / 2, bw, bh).build());
+    addRenderableWidget(
+        Button.builder(Component.literal("Done"), b -> onClose())
+            .bounds(px + pw - bw - 10, py + (HDR_H - bh) / 2, bw, bh)
+            .build());
     switch (selectedTab) {
-      case 0 -> buildVideo();
-      case 1 -> buildMetal();
-      case 2 -> buildQuality();
-      case 3 -> buildPerformance();
-      case 4 -> buildAdvanced();
-      case 5 -> buildLod();
+    case 0 -> buildVideo();
+    case 1 -> buildMetal();
+    case 2 -> buildQuality();
+    case 3 -> buildPerformance();
+    case 4 -> buildAdvanced();
+    case 5 -> buildLod();
     }
     for (Row r : rows)
       if (r.type == RT.SLIDER && r.slider != null)
@@ -484,18 +488,26 @@ public class MetalRenderSettingsScreen extends Screen {
     vanilla("Fullscreen", o.fullscreen());
     vanilla("VSync", o.enableVsync());
     sld("Max FPS", 1, FPS_LIMIT_UNLIMITED, 1, pendingMaxFps,
-        v -> pendingMaxFps = (int) (float) v,
+        v
+        -> pendingMaxFps = (int)(float)v,
         MetalRenderSettingsScreen::formatFpsLimit);
-    sld("GUI Scale", 0, 6, 1, pendingGuiScale, v -> pendingGuiScale = (int) (float) v);
+    sld("GUI Scale", 0, 6, 1, pendingGuiScale,
+        v -> pendingGuiScale = (int)(float)v);
     sec("World");
-    sld("Render Distance", 2, 32, 1, pendingRenderDist, v -> pendingRenderDist = (int) (float) v);
-    sld("Simulation Distance", 5, 32, 1, pendingSimDist, v -> pendingSimDist = (int) (float) v);
+    sld("Render Distance", 2, 32, 1, pendingRenderDist,
+        v -> pendingRenderDist = (int)(float)v);
+    sld("Simulation Distance", 5, 32, 1, pendingSimDist,
+        v -> pendingSimDist = (int)(float)v);
     sec("Environment");
-    sld("Brightness", 0f, 1f, 0.05f, (float) pendingBrightness, v -> pendingBrightness = v);
+    sld("Brightness", 0f, 1f, 0.05f, (float)pendingBrightness,
+        v -> pendingBrightness = v);
     sec("Camera");
-    sld("Field of View", 30f, 110f, 1f, pendingFov, v -> pendingFov = (int) (float) v);
-    sld("Distortion Effects", 0f, 1f, 0.05f, (float) pendingDistortion, v -> pendingDistortion = v);
-    sld("FOV Effects", 0f, 1f, 0.05f, (float) pendingFovEffects, v -> pendingFovEffects = v);
+    sld("Field of View", 30f, 110f, 1f, pendingFov,
+        v -> pendingFov = (int)(float)v);
+    sld("Distortion Effects", 0f, 1f, 0.05f, (float)pendingDistortion,
+        v -> pendingDistortion = v);
+    sld("FOV Effects", 0f, 1f, 0.05f, (float)pendingFovEffects,
+        v -> pendingFovEffects = v);
     vanilla("View Bobbing", o.bobView());
     vanilla("Entity Shadows", o.entityShadows());
     vanilla("Graphics", o.graphicsPreset());
@@ -503,21 +515,30 @@ public class MetalRenderSettingsScreen extends Screen {
 
   private void buildMetal() {
     sec("Renderer");
-    tog("Metal Rendering", config.enableMetalRendering, v -> config.enableMetalRendering = v);
-    tog("Smooth Lighting", config.enableSimpleLighting, v -> config.enableSimpleLighting = v);
-    tog("Debug: Pink Block Tint", config.debugPinkBlockTint, v -> config.debugPinkBlockTint = v);
+    tog("Metal Rendering", config.enableMetalRendering,
+        v -> config.enableMetalRendering = v);
+    tog("Smooth Lighting", config.enableSimpleLighting,
+        v -> config.enableSimpleLighting = v);
+    tog("Debug: Pink Block Tint", config.debugPinkBlockTint,
+        v -> config.debugPinkBlockTint = v);
     if (MetalRenderConfig.isDeepDebugActive()) {
       nfo("Deep Debug Status", "Active this run");
     } else {
-      tog("Deep Debug Next Run", pendingDeepDebugNextRun, v -> pendingDeepDebugNextRun = v);
-      nfo("Deep Debug Status", pendingDeepDebugNextRun ? "Armed for next launch" : "Off");
+      tog("Deep Debug Next Run", pendingDeepDebugNextRun,
+          v -> pendingDeepDebugNextRun = v);
+      nfo("Deep Debug Status",
+          pendingDeepDebugNextRun ? "Armed for next launch" : "Off");
     }
     sec("Hardware");
     nfo("GPU", MetalHardwareChecker.getDeviceName());
-    nfo("Metal", MetalRenderClient.isMetalAvailable() ? "Supported" : "Not Available");
+    nfo("Metal",
+        MetalRenderClient.isMetalAvailable() ? "Supported" : "Not Available");
     nfo("Apple Silicon", MetalHardwareChecker.appleSilicon() ? "Yes" : "No");
-    nfo("Sodium", MetalRenderClient.isSodiumLoaded() ? "Installed" : "Not Installed");
-    nfo("Mesh Shaders", MetalHardwareChecker.supportsMeshShaders() ? "Supported" : "Not Available");
+    nfo("Sodium",
+        MetalRenderClient.isSodiumLoaded() ? "Installed" : "Not Installed");
+    nfo("Mesh Shaders", MetalHardwareChecker.supportsMeshShaders()
+                            ? "Supported"
+                            : "Not Available");
   }
 
   private void buildQuality() {
@@ -529,19 +550,26 @@ public class MetalRenderSettingsScreen extends Screen {
     sec("Biome Blending");
 
     sld("Biome Blend", 0, 10, 1, config.biomeTransitionDetail,
-        v -> config.biomeTransitionDetail = (int) (float) v);
+        v -> config.biomeTransitionDetail = (int)(float)v);
   }
 
   private void buildPerformance() {
     sec("Frame Pacing");
-    sld("Target FPS", 30, 5000, 30, pendingTargetFps, v -> pendingTargetFps = (int) (float) v);
-    tog("Triple Buffering", config.enableTripleBuffering, v -> config.enableTripleBuffering = v);
-    tog("Burst Thread Mode", config.enableBurstThreadMode, v -> config.enableBurstThreadMode = v);
-    tog("Sacrifice TPS for FPS", config.prioritizeFpsOverTps, v -> config.prioritizeFpsOverTps = v);
-    nfo("FPS Priority Mode", config.prioritizeFpsOverTps ? "Simulation Distance <= 5" : "Off");
+    sld("Target FPS", 30, 5000, 30, pendingTargetFps,
+        v -> pendingTargetFps = (int)(float)v);
+    tog("Triple Buffering", config.enableTripleBuffering,
+        v -> config.enableTripleBuffering = v);
+    tog("Burst Thread Mode", config.enableBurstThreadMode,
+        v -> config.enableBurstThreadMode = v);
+    tog("Sacrifice TPS for FPS", config.prioritizeFpsOverTps,
+        v -> config.prioritizeFpsOverTps = v);
+    nfo("FPS Priority Mode",
+        config.prioritizeFpsOverTps ? "Simulation Distance <= 5" : "Off");
     sec("Memory");
-    sld("Max GPU Memory (MB)", 512, 4096, 512, pendingMaxMemMb, v -> pendingMaxMemMb = (int) (float) v);
-    tog("Memory Fallback", config.enableMemoryPressureFallback, v -> config.enableMemoryPressureFallback = v);
+    sld("Max GPU Memory (MB)", 512, 4096, 512, pendingMaxMemMb,
+        v -> pendingMaxMemMb = (int)(float)v);
+    tog("Memory Fallback", config.enableMemoryPressureFallback,
+        v -> config.enableMemoryPressureFallback = v);
     sec("Runtime");
     Runtime rt = Runtime.getRuntime();
     long used = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024);
@@ -551,59 +579,71 @@ public class MetalRenderSettingsScreen extends Screen {
 
   private void buildAdvanced() {
     sec("Metal Features");
-    tog("Argument Buffers", config.enableArgumentBuffers, v -> config.enableArgumentBuffers = v);
-    tog("Indirect CMD Buffers", config.enableIndirectCommandBuffers, v -> config.enableIndirectCommandBuffers = v);
-    tog("Mesh Shaders", config.enableMeshShaders, v -> config.enableMeshShaders = v);
-    tog("Programmable Blending", config.enableProgrammableBlending, v -> config.enableProgrammableBlending = v);
-    tog("Memoryless Targets", config.enableMemorylessTargets, v -> config.enableMemorylessTargets = v);
+    tog("Argument Buffers", config.enableArgumentBuffers,
+        v -> config.enableArgumentBuffers = v);
+    tog("Indirect CMD Buffers", config.enableIndirectCommandBuffers,
+        v -> config.enableIndirectCommandBuffers = v);
+    tog("Mesh Shaders", config.enableMeshShaders,
+        v -> config.enableMeshShaders = v);
+    tog("Programmable Blending", config.enableProgrammableBlending,
+        v -> config.enableProgrammableBlending = v);
+    tog("Memoryless Targets", config.enableMemorylessTargets,
+        v -> config.enableMemorylessTargets = v);
   }
 
   private void buildLod() {
-    int exactChunks = approxChunkDistance(MetalRenderConfig.zone0ExactBlockPixels());
-    int greedyChunks = approxChunkDistance(MetalRenderConfig.zone0GreedyBlockPixels());
-    int clusterChunks = approxChunkDistance(MetalRenderConfig.zone0ClusterBlockPixels());
+    int exactChunks =
+        approxChunkDistance(MetalRenderConfig.zone0ExactBlockPixels());
+    int greedyChunks =
+        approxChunkDistance(MetalRenderConfig.zone0GreedyBlockPixels());
+    int clusterChunks =
+        approxChunkDistance(MetalRenderConfig.zone0ClusterBlockPixels());
     sec("Current Runtime");
     nfo("LOD", "Enabled");
     nfo("Mode", "Zone 0 + automatic far-field");
     nfo("Runtime", "Screen-space near-field LOD is active");
-    nfo("View Basis", (int) getCurrentFovDegrees() + " FOV, " + (int) getCurrentScreenHeight()
-        + " px tall");
-    nfo("Range", "0-" + MetalRenderConfig.zone0RadiusChunks()
-        + " chunks near-field, " + MetalRenderConfig.zone0RadiusChunks() + "-"
-        + MetalRenderConfig.farFieldRadiusChunks() + " chunks far-field");
+    nfo("View Basis", (int)getCurrentFovDegrees() + " FOV, " +
+                          (int)getCurrentScreenHeight() + " px tall");
+    nfo("Range",
+        "0-" + MetalRenderConfig.zone0RadiusChunks() + " chunks near-field, " +
+            MetalRenderConfig.zone0RadiusChunks() + "-" +
+            MetalRenderConfig.farFieldRadiusChunks() + " chunks far-field");
     sec("Zone 0");
     nfo("Sub-tier A", "Exact terrain to about " + exactChunks + " chunks");
-    sld("Exact Cutoff", 6.0f, 24.0f, 0.5f, MetalRenderConfig.zone0ExactBlockPixels(),
+    sld("Exact Cutoff", 6.0f, 24.0f, 0.5f,
+        MetalRenderConfig.zone0ExactBlockPixels(),
         MetalRenderConfig::setZone0ExactBlockPixels,
         v -> Component.literal("> " + fmtPx(v) + " px"));
-    nfo("Sub-tier B", "Greedy textured spans from about " + exactChunks
-        + " to " + greedyChunks + " chunks");
-    sld("Greedy Cutoff", 2.0f, 23.5f, 0.5f, MetalRenderConfig.zone0GreedyBlockPixels(),
+    nfo("Sub-tier B", "Greedy textured spans from about " + exactChunks +
+                          " to " + greedyChunks + " chunks");
+    sld("Greedy Cutoff", 2.0f, 23.5f, 0.5f,
+        MetalRenderConfig.zone0GreedyBlockPixels(),
         MetalRenderConfig::setZone0GreedyBlockPixels,
         v -> Component.literal("> " + fmtPx(v) + " px"));
-    nfo("Sub-tier C", "Textured clusters from about " + greedyChunks
-        + " to " + clusterChunks + " chunks");
-    sld("Cluster Cutoff", 0.5f, 23.25f, 0.25f, MetalRenderConfig.zone0ClusterBlockPixels(),
+    nfo("Sub-tier C", "Textured clusters from about " + greedyChunks + " to " +
+                          clusterChunks + " chunks");
+    sld("Cluster Cutoff", 0.5f, 23.25f, 0.25f,
+        MetalRenderConfig.zone0ClusterBlockPixels(),
         MetalRenderConfig::setZone0ClusterBlockPixels,
         v -> Component.literal("> " + fmtPx(v) + " px"));
-    nfo("Sub-tier D", "Near-envelope descriptors from about " + clusterChunks
-        + " to " + MetalRenderConfig.zone0RadiusChunks() + " chunks");
+    nfo("Sub-tier D", "Near-envelope descriptors from about " + clusterChunks +
+                          " to " + MetalRenderConfig.zone0RadiusChunks() +
+                          " chunks");
     sec("Zone 1+");
-    nfo("Range", MetalRenderConfig.zone0RadiusChunks() + "-"
-        + MetalRenderConfig.farFieldRadiusChunks() + " chunks");
+    nfo("Range", MetalRenderConfig.zone0RadiusChunks() + "-" +
+                     MetalRenderConfig.farFieldRadiusChunks() + " chunks");
     nfo("Target", "Automatic fixed-budget far-field");
     nfo("Runtime", "Automatic far-field is active");
     nfo("Path", MetalRenderConfig.isFarFieldDescriptorRuntimeActive()
-        ? "Descriptor envelopes"
-        : "Current coarse near-envelope path");
+                    ? "Descriptor envelopes"
+                    : "Current coarse near-envelope path");
   }
 
-  private void sec(String label) {
-    rows.add(new Row(RT.SECTION, label));
-  }
+  private void sec(String label) { rows.add(new Row(RT.SECTION, label)); }
 
-  private void tog(String label, boolean on, java.util.function.Consumer<Boolean> setter) {
-    boolean[] s = { on };
+  private void tog(String label, boolean on,
+                   java.util.function.Consumer<Boolean> setter) {
+    boolean[] s = {on};
     Row r = new Row(RT.TOGGLE, label);
     r.value = s[0] ? "Enabled" : "Disabled";
     r.action = () -> {
@@ -634,17 +674,18 @@ public class MetalRenderSettingsScreen extends Screen {
     rows.add(r);
   }
 
-  private void sld(String label, float min, float max, float step,
-      float cur, java.util.function.Consumer<Float> cb) {
+  private void sld(String label, float min, float max, float step, float cur,
+                   java.util.function.Consumer<Float> cb) {
     sld(label, min, max, step, cur, cb, null);
   }
 
-  private void sld(String label, float min, float max, float step,
-      float cur, java.util.function.Consumer<Float> cb,
-      java.util.function.Function<Float, Component> formatter) {
+  private void sld(String label, float min, float max, float step, float cur,
+                   java.util.function.Consumer<Float> cb,
+                   java.util.function.Function<Float, Component> formatter) {
     Row r = new Row(RT.SLIDER, label);
-    r.slider = new MetalOptionSlider(0, 0, SLIDER_W, SLIDER_H,
-        Component.literal(""), min, max, step, cur, cb, formatter);
+    r.slider =
+        new MetalOptionSlider(0, 0, SLIDER_W, SLIDER_H, Component.literal(""),
+                              min, max, step, cur, cb, formatter);
     rows.add(r);
   }
 
@@ -692,10 +733,11 @@ public class MetalRenderSettingsScreen extends Screen {
 
   private static int approxChunkDistance(float px) {
     double clampedPx = Math.max(0.25, px);
-    double fovRadians = Math.toRadians(cl((int) Math.round(getCurrentFovDegrees()), 30, 110));
-    double distanceBlocks = getCurrentScreenHeight()
-        / (2.0 * Math.tan(fovRadians * 0.5) * clampedPx);
-    return Math.max(1, (int) Math.round(distanceBlocks / 16.0));
+    double fovRadians =
+        Math.toRadians(cl((int)Math.round(getCurrentFovDegrees()), 30, 110));
+    double distanceBlocks = getCurrentScreenHeight() /
+                            (2.0 * Math.tan(fovRadians * 0.5) * clampedPx);
+    return Math.max(1, (int)Math.round(distanceBlocks / 16.0));
   }
 
   private int totalH() {
@@ -712,21 +754,22 @@ public class MetalRenderSettingsScreen extends Screen {
     if (v instanceof Integer i)
       return String.valueOf(i);
     if (v instanceof Double d) {
-      if (d == (int) (double) d)
-        return String.valueOf((int) (double) d);
+      if (d == (int)(double)d)
+        return String.valueOf((int)(double)d);
       return String.format("%.1f", d);
     }
     return v.toString();
   }
 
-  @SuppressWarnings({ "unchecked", "rawtypes" })
+  @SuppressWarnings({"unchecked", "rawtypes"})
   private void cycleVanilla(OptionInstance opt) {
     Object v = opt.get();
     if (v instanceof Boolean b)
       opt.set(!b);
   }
 
-  private static void fr(GuiGraphicsExtractor ctx, int x, int y, int w, int h, int col) {
+  private static void fr(GuiGraphicsExtractor ctx, int x, int y, int w, int h,
+                         int col) {
     ctx.fill(x, y, x + w, y + h, col);
   }
 

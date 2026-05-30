@@ -10,8 +10,10 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Pseudo
 @Mixin(targets = "net.caffeinemc.mods.sodium.client.render.SodiumWorldRenderer")
 public class SodiumRendererMixin {
-  @Inject(method = "drawChunkLayer", at = @At("HEAD"), cancellable = true, require = 0)
-  private void metalrender$replaceRender(CallbackInfo ci) {
+  @Inject(method = "drawChunkLayer", at = @At("HEAD"), cancellable = true,
+          require = 0)
+  private void
+  metalrender$replaceRender(CallbackInfo ci) {
     if (MetalRenderClient.isEnabled() &&
         MetalRenderClient.getWorldRenderer() != null) {
       ci.cancel();

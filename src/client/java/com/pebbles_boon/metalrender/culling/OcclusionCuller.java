@@ -7,12 +7,9 @@ import net.minecraft.world.phys.Vec3;
 public class OcclusionCuller {
   private final RegionManager regions;
 
-  public OcclusionCuller(RegionManager regions) {
-    this.regions = regions;
-  }
+  public OcclusionCuller(RegionManager regions) { this.regions = regions; }
 
-  public void update(Camera camera) {
-  }
+  public void update(Camera camera) {}
 
   public boolean isChunkOccluded(BlockPos chunkPos, Camera camera) {
     Vec3 cam = camera.position();
@@ -26,7 +23,8 @@ public class OcclusionCuller {
     dx /= dist;
     dy /= dist;
     dz /= dist;
-    int blockers = regions.countBlockersAlongRay(cam.x, cam.y, cam.z, dx, dy, dz, dist);
+    int blockers =
+        regions.countBlockersAlongRay(cam.x, cam.y, cam.z, dx, dy, dz, dist);
     return blockers >= 3;
   }
 }

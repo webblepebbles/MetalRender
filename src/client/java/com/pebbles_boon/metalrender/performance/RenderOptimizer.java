@@ -17,12 +17,9 @@ public final class RenderOptimizer {
   private long currentFrame = 0;
   private boolean initialized = false;
 
-  private RenderOptimizer() {
-  }
+  private RenderOptimizer() {}
 
-  public static RenderOptimizer getInstance() {
-    return INSTANCE;
-  }
+  public static RenderOptimizer getInstance() { return INSTANCE; }
 
   public void updateFrame(Camera camera, Matrix4f viewProjectionMatrix) {
     if (!initialized) {
@@ -50,7 +47,8 @@ public final class RenderOptimizer {
     int maxY = Math.min(chunkPos.getY() + 16, 320);
     boolean frustumVisible = true;
     if (MetalRenderConfig.aggressiveFrustumCulling()) {
-      frustumVisible = frustumCuller.isRegionVisible(regionX, regionZ, minY, maxY);
+      frustumVisible =
+          frustumCuller.isRegionVisible(regionX, regionZ, minY, maxY);
       if (!frustumVisible) {
         frustumCulledThisFrame++;
         return false;
@@ -68,7 +66,7 @@ public final class RenderOptimizer {
 
   public PerformanceStats getFrameStats() {
     return new PerformanceStats(totalChunksThisFrame, frustumCulledThisFrame,
-        occlusionCulledThisFrame, 0, currentFrame);
+                                occlusionCulledThisFrame, 0, currentFrame);
   }
 
   public void invalidateCache() {
@@ -86,14 +84,14 @@ public final class RenderOptimizer {
     public final double cullPercentage;
 
     PerformanceStats(int total, int frustumCulled, int occlusionCulled,
-        int cacheSize, long frame) {
+                     int cacheSize, long frame) {
       this.totalChunks = total;
       this.frustumCulled = frustumCulled;
       this.occlusionCulled = occlusionCulled;
       this.cacheSize = cacheSize;
       this.currentFrame = frame;
       int culled = frustumCulled + occlusionCulled;
-      this.cullPercentage = total > 0 ? (double) culled / total * 100.0 : 0.0;
+      this.cullPercentage = total > 0 ? (double)culled / total * 100.0 : 0.0;
     }
   }
 }

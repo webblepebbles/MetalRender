@@ -10,16 +10,21 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Pseudo
-@Mixin(targets = "net.caffeinemc.mods.sodium.client.render.chunk.RenderSectionManager", remap = false)
+@Mixin(
+    targets =
+        "net.caffeinemc.mods.sodium.client.render.chunk.RenderSectionManager",
+    remap = false)
 public abstract class ChunkRenderManagerMixin {
-  @Shadow
-  public abstract SortedRenderLists getRenderLists();
+  @Shadow public abstract SortedRenderLists getRenderLists();
 
-  @Inject(method = "renderLayer", at = @At("HEAD"), cancellable = true, require = 0)
-  private void metalrender$skipSodiumTerrainLayer(CallbackInfo ci) {
+  @Inject(method = "renderLayer", at = @At("HEAD"), cancellable = true,
+          require = 0)
+  private void
+  metalrender$skipSodiumTerrainLayer(CallbackInfo ci) {
     if (MetalRenderClient.isMetalAvailable() &&
         MetalRenderClient.getConfig().enableMetalRendering) {
-      com.pebbles_boon.metalrender.render.MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
+      com.pebbles_boon.metalrender.render.MetalWorldRenderer wr =
+          MetalRenderClient.getWorldRenderer();
       if (wr != null && wr.metalActive()) {
         ci.cancel();
         return;

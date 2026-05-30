@@ -47,8 +47,11 @@ loom {
             vmArg "-Djava.library.path=${projectDir}/src/main/resources"
             vmArg "--enable-preview"
             vmArg "--enable-native-access=ALL-UNNAMED"
-            vmArg "-XX:+UseZGC"
-            vmArg "-XX:+ZGenerational"
+            if (project.hasProperty('zgc')) {
+                vmArg "-XX:+UseZGC"
+            } else {
+                vmArg "-XX:+UseG1GC"
+            }
             vmArg "-Xmx8g"
             vmArg "-Xms2g"
             vmArg "-XX:+AlwaysPreTouch"

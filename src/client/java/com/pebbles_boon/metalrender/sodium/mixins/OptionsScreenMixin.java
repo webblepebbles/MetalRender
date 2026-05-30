@@ -12,16 +12,12 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(OptionsScreen.class)
 public abstract class OptionsScreenMixin extends Screen {
-    protected OptionsScreenMixin(Component title) {
-        super(title);
-    }
+  protected OptionsScreenMixin(Component title) { super(title); }
 
-    @Dynamic
-    @Inject(method = {
-            "method_19828",
-            "lambda$init$2"
-    }, at = @At("HEAD"), cancellable = true, require = 0)
-    private void metalrender$openSettings(CallbackInfoReturnable<Screen> cir) {
-        cir.setReturnValue(new MetalRenderSettingsScreen(this));
-    }
+  @Dynamic
+  @Inject(method = {"method_19828", "lambda$init$2"}, at = @At("HEAD"),
+          cancellable = true, require = 0)
+  private void metalrender$openSettings(CallbackInfoReturnable<Screen> cir) {
+    cir.setReturnValue(new MetalRenderSettingsScreen(this));
+  }
 }

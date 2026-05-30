@@ -1,8 +1,7 @@
 package com.pebbles_boon.metalrender.util;
 
-import com.pebbles_boon.metalrender.config.MetalRenderConfig;
-
 import com.mojang.logging.LogUtils;
+import com.pebbles_boon.metalrender.config.MetalRenderConfig;
 import org.slf4j.Logger;
 
 public class MetalLogger {

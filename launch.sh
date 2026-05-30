@@ -2,8 +2,8 @@
 cd "$(dirname "$0")"
 rm -f run/logs/latest.log
 
-# Use Java 21 for Fabric Loom
-export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-21.jdk/Contents/Home
+# Use Java 25 for Fabric Loom
+export JAVA_HOME=/Library/Java/JavaVirtualMachines/jdk-25.jdk/Contents/Home
 
 # Check for GL2Metal flag
 if [[ "$1" == "gl2metal" || "$*" == *"gl2metal"* ]]; then
