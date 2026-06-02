@@ -17,8 +17,6 @@
 #include <mach/mach_host.h>
 #include <mach/mach_time.h>
 #include <mutex>
-#include <pthread.h>
-#include <pthread/qos.h>
 #include <shared_mutex>
 #include <thread>
 #include <unordered_map>
@@ -61,7 +59,6 @@ static inline int dispatch_get_active_cpu_count() {
   unsigned hc = std::thread::hardware_concurrency();
   return (int)(hc == 0 ? 1 : hc);
 }
-
 #endif
 static bool g_available = true;
 id<MTLDevice> g_device = nil;
@@ -82,20 +79,6 @@ static std::vector<MegaSubAlloc> g_megaFreeList;
 static uint64_t g_nextMegaHandle = 0x8000000000000000ULL;
 static std::shared_mutex g_megaMutex;
 
-struct DeferredDeletion {
-  uint64_t handle;
-  int frameQueued;
-  bool isMega;
-};
-
-static std::vector<DeferredDeletion> g_deferredDeletions;
-static std::mutex g_deferredMutex;
-static const int DEFERRED_FRAME_DELAY = 10;
-static std::atomic<bool> g_gpuNeedsRecovery{false};
-static inline bool isMegaHandle(uint64_t h) {
-  return (h & 0x8000000000000000ULL) != 0;
-}
-
 static void megaCoalesceFreeList() {
   if (g_megaFreeList.size() < 2)
     return;
@@ -107,20 +90,31 @@ static void megaCoalesceFreeList() {
 
   size_t write = 0;
   for (size_t read = 1; read < g_megaFreeList.size(); read++) {
-    MegaSubAlloc &prev = g_megaFreeList[write];
-    const MegaSubAlloc &curr = g_megaFreeList[read];
-    if (prev.offset + prev.size == curr.offset) {
-      prev.size += curr.size;
+    if (g_megaFreeList[write].offset + g_megaFreeList[write].size ==
+        g_megaFreeList[read].offset) {
+      g_megaFreeList[write].size += g_megaFreeList[read].size;
     } else {
       write++;
       if (write != read)
-        g_megaFreeList[write] = curr;
+        g_megaFreeList[write] = g_megaFreeList[read];
     }
   }
   g_megaFreeList.resize(write + 1);
 }
-
+struct DeferredDeletion {
+  uint64_t handle;
+  int frameQueued;
+  bool isMega;
+};
+static std::vector<DeferredDeletion> g_deferredDeletions;
+static std::mutex g_deferredMutex;
+static const int DEFERRED_FRAME_DELAY = 10;
+static std::atomic<bool> g_gpuNeedsRecovery{false};
+static inline bool isMegaHandle(uint64_t h) {
+  return (h & 0x8000000000000000ULL) != 0;
+}
 static uint64_t megaAlloc(size_t size) {
+  std::unique_lock<std::shared_mutex> lock(g_megaMutex);
   size_t aligned = (size + 255) & ~255;
 
   int bestIdx = -1;
@@ -332,6 +326,8 @@ static id<MTLRenderPipelineState> g_meshTerrainCutoutPSO = nil;
 static id<MTLRenderPipelineState> g_meshTerrainEmissivePSO = nil;
 bool g_meshShadersActive = false;
 uint32_t g_meshPipelineCount = 0;
+static int g_thermalState = 0;
+static int g_lodRadiusReduction = 0;
 static double g_lastThermalCheckTime = 0;
 static float g_skyBrightness = 1.0f;
 
@@ -351,30 +347,13 @@ static int g_staleOffsetCapacity = 0;
 static bool g_hasStaleDrawList = false;
 static float g_staleCamX = 0, g_staleCamY = 0, g_staleCamZ = 0;
 
+static float g_dynamicLODScale = 1.0f;
 static float g_targetFrameTimeMs = 16.67f;
 static float g_avgFrameTimeMs = 0.0f;
 static int g_configuredRenderDistBlocks = 512;
 static bool g_useMemorylessTargets = false;
 static bool g_useProgrammableBlending = false;
 static bool g_useArgumentBuffers = false;
-enum TerrainPathKind {
-  TERRAIN_PATH_INHOUSE_VERTEX = 0,
-  TERRAIN_PATH_ICB_GPU_DRIVEN = 1,
-  TERRAIN_PATH_MESH_SHADER = 2,
-};
-static int g_lastTerrainPath = TERRAIN_PATH_INHOUSE_VERTEX;
-
-static NSString *terrain_path_name(int terrainPath) {
-  switch (terrainPath) {
-  case TERRAIN_PATH_MESH_SHADER:
-    return @"MESH_SHADER";
-  case TERRAIN_PATH_ICB_GPU_DRIVEN:
-    return @"ICB_GPU_DRIVEN";
-  default:
-    return @"INHOUSE_VERTEX";
-  }
-}
-
 static id<MTLTexture> g_oitAccumTex = nil;
 static id<MTLTexture> g_oitRevealTex = nil;
 static id<MTLRenderPipelineState> g_pipelineOITAccum = nil;
@@ -855,7 +834,7 @@ fragment float4 fragment_terrain(
 			discard_fragment();
 		}
 	}
-  const float faceShade[6] = { 0.5, 1.0, 0.8, 0.8, 0.6, 0.6 };
+	constant float faceShade[6] = { 0.5, 1.0, 0.8, 0.8, 0.6, 0.6 };
 	float shade = (in.normalIdx < 6) ? faceShade[in.normalIdx] : 1.0;
 	float4 baseColor = texColor * float4(in.color);
 	baseColor.rgb *= shade;
@@ -886,7 +865,7 @@ fragment float4 fragment_terrain_icb(
 			discard_fragment();
 		}
 	}
-  const float faceShade[6] = { 0.5, 1.0, 0.8, 0.8, 0.6, 0.6 };
+	constant float faceShade[6] = { 0.5, 1.0, 0.8, 0.8, 0.6, 0.6 };
 	float shade = (in.normalIdx < 6) ? faceShade[in.normalIdx] : 1.0;
 	float4 baseColor = texColor * float4(in.color);
 	baseColor.rgb *= shade;
@@ -1776,6 +1755,12 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nBeginFrame(
   ensure_offscreen();
 }
 extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawTerrain(
+    JNIEnv *, jclass, jlong handle, jint layerId) {}
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawOverlay(
+    JNIEnv *, jclass, jlong handle, jint layerId) {}
+extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nOnWorldLoaded(
     JNIEnv *, jclass, jlong handle) {}
 extern "C" JNIEXPORT void JNICALL
@@ -1814,23 +1799,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSupportsMeshShader
     JNIEnv *, jclass) {
   MetalFeatureCaps caps = current_feature_caps();
   return caps.meshShaders ? JNI_TRUE : JNI_FALSE;
-}
-extern "C" JNIEXPORT void JNICALL
-Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetCurrentThreadQoS(
-    JNIEnv *, jclass, jint qosClass) {
-  qos_class_t qos = QOS_CLASS_UTILITY;
-  switch (qosClass) {
-  case 1:
-    qos = QOS_CLASS_USER_INITIATED;
-    break;
-  case 2:
-    qos = QOS_CLASS_USER_INTERACTIVE;
-    break;
-  default:
-    qos = QOS_CLASS_UTILITY;
-    break;
-  }
-  pthread_set_qos_class_self_np(qos, 0);
 }
 static std::shared_mutex g_bufferMutex;
 static uint64_t store_buffer(id<MTLBuffer> buf) {
@@ -1921,7 +1889,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MetalBackend_render(
     rp.colorAttachments[0].clearColor = MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
     rp.depthAttachment.texture = g_depth;
     rp.depthAttachment.loadAction = MTLLoadActionClear;
-    rp.depthAttachment.storeAction = MTLStoreActionDontCare;
+    rp.depthAttachment.storeAction = MTLStoreActionStore;
     rp.depthAttachment.clearDepth = 1.0;
     id<MTLRenderCommandEncoder> enc =
         [cb renderCommandEncoderWithDescriptor:rp];
@@ -2708,7 +2676,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
     int validCount = 0;
     int megaCount = 0;
 
-    float baseDist = fmaxf(256.0f, (float)g_configuredRenderDistBlocks);
+    float baseDist = fmaxf(384.0f / g_dynamicLODScale,
+                           fmaxf(256.0f, (float)g_configuredRenderDistBlocks));
     const float maxDrawDistSq = baseDist * baseDist;
 
     int totalActive = 0;
@@ -2950,36 +2919,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       }
     }
 
-    static int s_advancedTerrainPathCooldown = 0;
-    static bool s_advancedTerrainFallbackLogged = false;
-    bool heavyTerrainScene = (validCount > 2048) || (megaCount > 1024);
-    bool slowTerrainFrame = g_avgFrameTimeMs > 16.5f;
-    if ((g_meshShadersActive || g_gpuDrivenEnabled) && heavyTerrainScene &&
-        slowTerrainFrame) {
-      s_advancedTerrainPathCooldown = 180;
-    } else if (s_advancedTerrainPathCooldown > 0) {
-      int recoveryStep =
-          (!heavyTerrainScene && g_avgFrameTimeMs < 13.5f) ? 4 : 1;
-      s_advancedTerrainPathCooldown =
-          std::max(0, s_advancedTerrainPathCooldown - recoveryStep);
-    }
-    bool allowAdvancedTerrainPath = s_advancedTerrainPathCooldown == 0;
-    if (!allowAdvancedTerrainPath && !s_advancedTerrainFallbackLogged) {
-      dbg("ADAPTIVE_TERRAIN_PATH: fallback to inhouse vertex "
-          "(avgFrame=%.2fms cmds=%d mega=%d)\n",
-          g_avgFrameTimeMs, validCount, megaCount);
-      s_advancedTerrainFallbackLogged = true;
-    } else if (allowAdvancedTerrainPath && s_advancedTerrainFallbackLogged) {
-      dbg("ADAPTIVE_TERRAIN_PATH: restored advanced terrain path "
-          "(avgFrame=%.2fms cmds=%d mega=%d)\n",
-          g_avgFrameTimeMs, validCount, megaCount);
-      s_advancedTerrainFallbackLogged = false;
-    }
-
-    g_lastTerrainPath = TERRAIN_PATH_INHOUSE_VERTEX;
-
-    if (!g_useProgrammableBlending && allowAdvancedTerrainPath &&
-        g_meshShadersActive && g_pipelineMeshOpaque && megaCount > 0 &&
+    if (g_meshShadersActive && g_pipelineMeshOpaque && megaCount > 0 &&
         g_megaVB && g_blockAtlas && g_tripleBuffers[g_renderSlot] &&
         g_tripleBuffers[g_renderSlot].length >= sizeof(CameraUniformsCPU)) {
 
@@ -3068,7 +3008,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
                      threadsPerObjectThreadgroup:objTPG
                        threadsPerMeshThreadgroup:meshTPG];
           g_drawCallCount++;
-          g_lastTerrainPath = TERRAIN_PATH_MESH_SHADER;
 
           g_currentPipeline = nil;
         }
@@ -3324,15 +3263,14 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       }
       icbCandidateCount++;
     }
-    bool canICB = (allowAdvancedTerrainPath && g_gpuDrivenEnabled &&
-                   g_useArgumentBuffers && icbCandidateCount > 0 &&
-                   g_pipelineInhouseICB && g_fragArgBuf && g_fragArgEncoder &&
-                   g_blockAtlas && g_lightmap);
+    bool canICB =
+        (g_gpuDrivenEnabled && g_useArgumentBuffers && icbCandidateCount > 0 &&
+         g_pipelineInhouseICB && g_fragArgBuf && g_fragArgEncoder &&
+         g_blockAtlas && g_lightmap);
     bool useOpaqueICB = canICB && g_pipelineInhouseICBOpaque &&
                         g_fragArgBufOpaque && g_fragArgEncoderOpaque;
     bool useOpaque = g_pipelineInhouseOpaque != nil;
     if (canICB) {
-      g_lastTerrainPath = TERRAIN_PATH_ICB_GPU_DRIVEN;
       if (useOpaqueICB) {
         [g_currentEncoder setRenderPipelineState:g_pipelineInhouseICBOpaque];
         g_currentPipeline = g_pipelineInhouseICBOpaque;
@@ -3726,6 +3664,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetCurrentFrameCon
       s_cachedRP.colorAttachments[0].storeAction = MTLStoreActionStore;
       s_cachedRP.colorAttachments[0].clearColor =
           MTLClearColorMake(0.0, 0.0, 0.0, 0.0);
+
+      s_cachedRP.depthAttachment.storeAction =
+          g_useMemorylessTargets ? MTLStoreActionDontCare : MTLStoreActionStore;
       s_cachedRP.depthAttachment.clearDepth = 1.0;
     }
 #ifdef METALRENDER_HAS_METALFX
@@ -3754,10 +3695,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetCurrentFrameCon
     s_cachedRP.depthAttachment.loadAction =
         reuseFrame ? MTLLoadActionLoad : MTLLoadActionClear;
 #endif
-    s_cachedRP.depthAttachment.storeAction =
-        (!g_useMemorylessTargets && g_useProgrammableBlending)
-            ? MTLStoreActionStore
-            : MTLStoreActionDontCare;
     g_currentEncoder = [[g_currentCmdBuffer
         renderCommandEncoderWithDescriptor:s_cachedRP] retain];
     g_currentPipeline = nil;
@@ -3831,8 +3768,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
         float frameMs = (float)((ft_now - ft_last) * g_cachedTimebase.numer /
                                 g_cachedTimebase.denom) /
                         1000000.0f;
-        float alpha = frameMs > g_avgFrameTimeMs ? 0.20f : 0.05f;
-        g_avgFrameTimeMs = g_avgFrameTimeMs * (1.0f - alpha) + frameMs * alpha;
+        g_avgFrameTimeMs = g_avgFrameTimeMs * 0.95f + frameMs * 0.05f;
       }
     }
     if (g_frameCount <= 5 || g_frameCount % 500 == 0) {
@@ -3849,7 +3785,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
     if (g_frameCount % 300 == 0) {
       NSLog(@"[MetalRender] Frame %d — ActivePath: %@  ICB=%@  MeshShaders=%@  "
             @"OIT=%@  ArgBuf=%@  draws=%d",
-            g_frameCount, terrain_path_name(g_lastTerrainPath),
+            g_frameCount,
+            g_meshShadersActive
+                ? @"MESH_SHADER"
+                : (g_gpuDrivenEnabled ? @"ICB_GPU_DRIVEN" : @"INHOUSE_VERTEX"),
             g_gpuDrivenEnabled ? @"ON" : @"OFF",
             g_meshShadersActive ? @"ON" : @"OFF",
             g_useProgrammableBlending ? @"ON" : @"OFF",
@@ -3949,17 +3888,38 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
       g_lastThermalCheckTime = now;
       NSProcessInfoThermalState state =
           [[NSProcessInfo processInfo] thermalState];
+      g_thermalState = (int)state;
 
       if (state >= NSProcessInfoThermalStateCritical) {
+        g_lodRadiusReduction = 50;
         g_thermalQualityLevel = 2;
+        g_dynamicLODScale = fmaxf(g_dynamicLODScale, 1.8f);
         if (g_frameCount % 60 == 0)
-          dbg("THERMAL: Critical! quality=2\n");
+          dbg("THERMAL: Critical! quality=2, LOD scale=%.2f\n",
+              g_dynamicLODScale);
       } else if (state >= NSProcessInfoThermalStateSerious) {
+        g_lodRadiusReduction = 25;
         g_thermalQualityLevel = 1;
+        g_dynamicLODScale = fmaxf(g_dynamicLODScale, 1.4f);
         if (g_frameCount % 300 == 0)
-          dbg("THERMAL: Serious. quality=1\n");
+          dbg("THERMAL: Serious. quality=1, LOD scale=%.2f\n",
+              g_dynamicLODScale);
       } else {
+        g_lodRadiusReduction = 0;
         g_thermalQualityLevel = 0;
+      }
+
+      if (g_thermalQualityLevel == 0 && g_avgFrameTimeMs > 0.0f) {
+        if (g_avgFrameTimeMs > 18.0f) {
+
+          g_dynamicLODScale = fminf(g_dynamicLODScale * 1.02f, 1.6f);
+          if (g_frameCount % 300 == 0)
+            dbg("ADAPTIVE_LOD: frame_time=%.1fms > 18ms, scale UP to %.2f\n",
+                g_avgFrameTimeMs, g_dynamicLODScale);
+        } else if (g_avgFrameTimeMs < 14.0f && g_dynamicLODScale > 1.0f) {
+
+          g_dynamicLODScale = fmaxf(g_dynamicLODScale * 0.98f, 1.0f);
+        }
       }
     }
     {
@@ -4894,6 +4854,16 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nExecuteIndirectDra
     g_drawCallCount++;
   }
 }
+extern "C" JNIEXPORT jint JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetThermalState(
+    JNIEnv *, jclass) {
+  return (jint)g_thermalState;
+}
+extern "C" JNIEXPORT jint JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetThermalLODReduction(
+    JNIEnv *, jclass) {
+  return (jint)g_lodRadiusReduction;
+}
 extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetRenderDistance(
     JNIEnv *, jclass, jint distanceBlocks) {
@@ -4906,7 +4876,6 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetFeatureFlags(
     JNIEnv *, jclass, jboolean icb, jboolean meshShaders, jboolean argBuffers,
     jboolean progBlend, jboolean memoryless) {
-  (void)memoryless;
   MetalFeatureCaps caps = current_feature_caps();
   bool prevMemoryless = g_useMemorylessTargets;
   bool requestedArgumentBuffers =
@@ -4917,7 +4886,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetFeatureFlags(
       (meshShaders == JNI_TRUE) && caps.meshShaders && g_meshPipelineCount > 0;
   g_useArgumentBuffers = requestedArgumentBuffers;
   g_useProgrammableBlending = (progBlend == JNI_TRUE);
-  g_useMemorylessTargets = caps.memorylessTargets;
+  g_useMemorylessTargets = (memoryless == JNI_TRUE) && caps.memorylessTargets;
 
   if (prevMemoryless != g_useMemorylessTargets) {
     g_rtWidth = 0;
@@ -5066,10 +5035,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawOITPass(
         rp.depthAttachment.texture = g_depth;
         rp.depthAttachment.loadAction = MTLLoadActionLoad;
         rp.depthAttachment.storeAction = MTLStoreActionDontCare;
-      } else {
-        rp.depthAttachment.texture = nil;
-        rp.depthAttachment.loadAction = MTLLoadActionDontCare;
-        rp.depthAttachment.storeAction = MTLStoreActionDontCare;
       }
       id<MTLRenderCommandEncoder> enc =
           [g_currentCmdBuffer renderCommandEncoderWithDescriptor:rp];
@@ -5167,7 +5132,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawOITPass(
       if (!g_useMemorylessTargets && g_depth) {
         s_resumeRP.depthAttachment.texture = g_depth;
         s_resumeRP.depthAttachment.loadAction = MTLLoadActionLoad;
-        s_resumeRP.depthAttachment.storeAction = MTLStoreActionDontCare;
+        s_resumeRP.depthAttachment.storeAction = MTLStoreActionStore;
       } else {
         s_resumeRP.depthAttachment.texture = nil;
         s_resumeRP.depthAttachment.loadAction = MTLLoadActionDontCare;

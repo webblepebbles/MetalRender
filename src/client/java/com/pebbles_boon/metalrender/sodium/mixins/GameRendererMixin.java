@@ -13,9 +13,9 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public abstract class GameRendererMixin {
   @Inject(method = "renderLevel",
           at = @At(value = "INVOKE",
-                   target = "Lcom/mojang/blaze3d/systems/"
-                            + "CommandEncoder;clearDepthTexture(Lcom/mojang/"
-                            + "blaze3d/textures/GpuTexture;D)V",
+                   target = "Lcom/mojang/blaze3d/systems/" +
+                            "CommandEncoder;clearDepthTexture(Lcom/mojang/" +
+                            "blaze3d/textures/GpuTexture;D)V",
                    remap = false),
           require = 0)
   private void

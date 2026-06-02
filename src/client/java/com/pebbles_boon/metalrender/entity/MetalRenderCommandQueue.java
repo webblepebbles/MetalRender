@@ -4,7 +4,6 @@ import com.mojang.blaze3d.opengl.GlTexture;
 import com.mojang.blaze3d.vertex.PoseStack;
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import java.lang.reflect.Method;
-import java.util.ArrayList;
 import java.util.List;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.gui.Font;
@@ -12,6 +11,7 @@ import net.minecraft.client.model.Model;
 import net.minecraft.client.model.geom.ModelPart;
 import net.minecraft.client.renderer.OrderedSubmitNodeCollector;
 import net.minecraft.client.renderer.SubmitNodeCollector;
+import net.minecraft.client.renderer.block.BlockStateModelSet;
 import net.minecraft.client.renderer.block.MovingBlockRenderState;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
@@ -25,22 +25,27 @@ import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.resources.model.geometry.BakedQuad;
 import net.minecraft.network.chat.Component;
+import net.minecraft.resources.Identifier;
 import net.minecraft.util.FormattedCharSequence;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Quaternionf;
+import org.joml.Vector3f;
 
 public class MetalRenderCommandQueue implements SubmitNodeCollector {
   private VertexConsumer vertexConsumer;
   private int requestedGlTextureId;
+  private int defaultLight;
 
   public MetalRenderCommandQueue(VertexConsumer vertexConsumer, int light) {
     this.vertexConsumer = vertexConsumer;
+    this.defaultLight = light;
   }
 
   public void reset(VertexConsumer vertexConsumer, int light) {
     this.vertexConsumer = vertexConsumer;
     this.requestedGlTextureId = 0;
+    this.defaultLight = light;
   }
 
   public int getRequestedGlTextureId() { return requestedGlTextureId; }
@@ -104,36 +109,44 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
       return;
     }
 
-    Object world =
-        getNamedFieldValue(state, new String[] {"world", "level", "blockView"});
-    Object renderPos =
-        getNamedFieldValue(state, new String[] {"entityBlockPos", "entityPos",
-                                                "blockPos", "fallingBlockPos"});
-    if (world == null || renderPos == null) {
+    TextureAtlasSprite sprite = getMovingBlockSprite(state);
+    int blockAtlasTextureId = getBlockAtlasTextureId();
+    if (sprite == null || blockAtlasTextureId == 0) {
       return;
     }
 
-    Minecraft mc = Minecraft.getInstance();
-    if (mc == null) {
-      return;
-    }
+    int light = defaultLight != 0 ? defaultLight : 0x00F000F0;
+    int color = 0xFFFFFFFF;
+    float u0 = sprite.getU0();
+    float u1 = sprite.getU1();
+    float v0 = sprite.getV0();
+    float v1 = sprite.getV1();
 
-    Object blockRenderer = invokeNamedMethodValue(
-        mc, new String[] {"getBlockRenderer", "getBlockRenderDispatcher",
-                          "getBlockRenderManager"});
-    if (blockRenderer == null) {
-      return;
-    }
-
-    ArrayList<Object> parts = new ArrayList<>();
-    boolean invoked = invokeNamedMethod(
-        blockRenderer,
-        new String[] {"renderBlock", "renderBatched", "tesselateBlock"},
-        state.blockState, renderPos, state, matrices, vertexConsumer,
-        Boolean.TRUE, parts);
-    if (invoked) {
-      requestedGlTextureId = getBlockAtlasTextureId();
-    }
+    emitTexturedQuad(matrices,
+                     0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f,
+                     1.0f, 1.0f, 1.0f, 0.0f, 1.0f, 1.0f,
+                     0.0f, 0.0f, 1.0f, u0, u1, v0, v1, color, light);
+    emitTexturedQuad(matrices,
+                     1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+                     0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f,
+                     0.0f, 0.0f, -1.0f, u0, u1, v0, v1, color, light);
+    emitTexturedQuad(matrices,
+                     0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f,
+                     1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f,
+                     0.0f, 1.0f, 0.0f, u0, u1, v0, v1, color, light);
+    emitTexturedQuad(matrices,
+                     0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f,
+                     1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f,
+                     0.0f, -1.0f, 0.0f, u0, u1, v0, v1, color, light);
+    emitTexturedQuad(matrices,
+                     1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f,
+                     1.0f, 1.0f, 0.0f, 1.0f, 1.0f, 1.0f,
+                     1.0f, 0.0f, 0.0f, u0, u1, v0, v1, color, light);
+    emitTexturedQuad(matrices,
+                     0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+                     0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f,
+                     -1.0f, 0.0f, 0.0f, u0, u1, v0, v1, color, light);
+    requestedGlTextureId = blockAtlasTextureId;
   }
 
   @Override
@@ -211,6 +224,63 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
       }
     }
     return false;
+  }
+
+  private TextureAtlasSprite getMovingBlockSprite(MovingBlockRenderState state) {
+    Minecraft mc = Minecraft.getInstance();
+    if (mc == null || mc.getModelManager() == null) {
+      return null;
+    }
+
+    BlockStateModelSet modelSet = mc.getModelManager().getBlockStateModelSet();
+    if (modelSet == null) {
+      return null;
+    }
+
+    try {
+      return modelSet.getParticleMaterial(state.blockState).sprite();
+    } catch (Exception ignored) {
+      BlockStateModel model = modelSet.get(state.blockState);
+      return model != null ? model.particleMaterial().sprite() : null;
+    }
+  }
+
+  private void emitTexturedQuad(PoseStack matrices,
+                                float x0, float y0, float z0,
+                                float x1, float y1, float z1,
+                                float x2, float y2, float z2,
+                                float x3, float y3, float z3,
+                                float nx, float ny, float nz,
+                                float u0, float u1, float v0, float v1,
+                                int color, int light) {
+    if (!(vertexConsumer instanceof MetalVertexConsumer metalVertexConsumer)) {
+      return;
+    }
+
+    Vector3f normal = new Vector3f(nx, ny, nz);
+    matrices.last().normal().transform(normal);
+    if (normal.lengthSquared() > 1.0e-6f) {
+      normal.normalize();
+    }
+
+    emitVertex(metalVertexConsumer, matrices, x0, y0, z0, u0, v1, color, light,
+               normal);
+    emitVertex(metalVertexConsumer, matrices, x1, y1, z1, u1, v1, color, light,
+               normal);
+    emitVertex(metalVertexConsumer, matrices, x2, y2, z2, u1, v0, color, light,
+               normal);
+    emitVertex(metalVertexConsumer, matrices, x3, y3, z3, u0, v0, color, light,
+               normal);
+  }
+
+  private void emitVertex(MetalVertexConsumer metalVertexConsumer,
+                          PoseStack matrices, float x, float y, float z,
+                          float u, float v, int color, int light,
+                          Vector3f normal) {
+    Vector3f position = new Vector3f(x, y, z);
+    matrices.last().pose().transformPosition(position);
+    metalVertexConsumer.vertex(position.x, position.y, position.z, color, u, v,
+                               0, light, normal.x, normal.y, normal.z);
   }
 
   private Object invokeNamedMethodValue(Object target, String[] methodNames,

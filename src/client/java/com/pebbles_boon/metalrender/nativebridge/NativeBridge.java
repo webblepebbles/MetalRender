@@ -199,6 +199,10 @@ public final class NativeBridge {
 
   public static native void nGetGPUCullStats(int[] outStats);
 
+  public static native int nGetThermalState();
+
+  public static native int nGetThermalLODReduction();
+
   public static native void nSetRenderDistance(int distanceBlocks);
 
   public static native long nGetAvailableMemory();

@@ -7,7 +7,6 @@ import com.pebbles_boon.metalrender.nativebridge.NativeMemory;
 import com.pebbles_boon.metalrender.util.MetalLogger;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
-import it.unimi.dsi.fastutil.longs.LongIterator;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -19,8 +18,7 @@ import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import java.util.concurrent.ThreadFactory;
-import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.Semaphore;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.color.block.BlockColors;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -58,13 +56,6 @@ public class CustomChunkMesher {
                                   -> ByteBuffer.allocateDirect(VERTEX_BUF_SIZE)
                                          .order(ByteOrder.nativeOrder()));
   private final Long2ObjectOpenHashMap<ChunkMeshData> meshCache;
-  private final Long2ObjectOpenHashMap<FarFieldDigest> farFieldDigestCache;
-  private final java.util.ArrayDeque<UploadJob> uploadQueue =
-      new java.util.ArrayDeque<>();
-  private final LongOpenHashSet approxLightKeys = new LongOpenHashSet();
-  private final LongOpenHashSet queuedLightFixKeys = new LongOpenHashSet();
-  private final java.util.ArrayDeque<Long> lightFixQueue =
-      new java.util.ArrayDeque<>();
 
   private final java.util.ArrayList<ChunkMeshData> cachedMeshSnapshot =
       new java.util.ArrayList<>(8192);
@@ -92,31 +83,24 @@ public class CustomChunkMesher {
 
   private java.util.concurrent.ThreadPoolExecutor instantRebuildPool;
   private java.util.concurrent.ThreadPoolExecutor interactiveRebuildPool;
-  private java.util.concurrent.ThreadPoolExecutor lightRebuildPool;
 
+  private static final Semaphore UPLOAD_SEMAPHORE = new Semaphore(6);
   private static final int FALLBACK_UPLOAD_PARALLELISM = 6;
   private static final int FAST_UPLOAD_PARALLELISM = 8;
-  private static final int MAX_LIGHT_FIX_QUEUE = 4096;
+  private static final Semaphore FALLBACK_UPLOAD_SEMAPHORE =
+      new Semaphore(FALLBACK_UPLOAD_PARALLELISM);
+  private static final Semaphore FAST_UPLOAD_SEMAPHORE =
+      new Semaphore(FAST_UPLOAD_PARALLELISM);
   private volatile boolean fastUploadPathActive;
-  private long uploadQueueBytes;
-  private static final int THREAD_QOS_UTILITY = 0;
-  private static final int THREAD_QOS_USER_INITIATED = 1;
-  private static final int THREAD_QOS_USER_INTERACTIVE = 2;
   private static final int NORMAL_TOTAL_THREAD_BUDGET = 64;
   private static final int BURST_TOTAL_THREAD_BUDGET = 128;
   private static final int BURST_MAX_BUILDER_THREADS = 28;
   private static final int BURST_MAX_INSTANT_THREADS = 12;
-  private static final int STARTUP_SOLID_FILL_MESH_THRESHOLD = 1024;
-  private static final int POST_STARTUP_BUILDER_THREAD_CAP_EXTRA = 3;
-  private static final int POST_STARTUP_INSTANT_THREAD_CAP_EXTRA = 1;
   private static final int HIGH_PRIORITY_QUEUE_SPILLOVER_THRESHOLD = 24;
   private static final int INTERACTIVE_PRIORITY_QUEUE_SPILLOVER_THRESHOLD = 48;
   private static final int DETAIL_TIER_SCALE_MEDIUM = 2;
   private static final int DETAIL_TIER_SCALE_FAR = 4;
   private static final int DETAIL_TIER_SCALE_EXTREME = 8;
-  private static final int MAX_TRACKED_VISIBLE_SECTIONS = 8192;
-  private static final int MAX_TRACKED_BLOCK_UPDATES = 4096;
-  private static final int FAR_PROXY_LOD = 4;
   private volatile boolean aggressiveApproximateLighting;
   private final java.util.concurrent.atomic
       .AtomicLong visibleSectionLatencyAccNs =
@@ -147,32 +131,6 @@ public class CustomChunkMesher {
       {1, 0, 2, 3}, {0, 1, 3, 2}, {2, 3, 1, 0},
       {1, 0, 2, 3}, {1, 0, 2, 3}, {2, 3, 1, 0},
   };
-
-  private static void applyThreadQoS(int qosClass) {
-    if (!NativeBridge.isLibLoaded()) {
-      return;
-    }
-    try {
-      NativeBridge.nSetCurrentThreadQoS(qosClass);
-    } catch (Throwable ignored) {
-    }
-  }
-
-  private static ThreadFactory
-  createWorkerFactory(String namePrefix, int threadPriority, int qosClass) {
-    AtomicInteger counter = new AtomicInteger();
-    return runnable -> {
-      Runnable wrapped = () -> {
-        applyThreadQoS(qosClass);
-        runnable.run();
-      };
-      Thread thread =
-          new Thread(wrapped, namePrefix + "-" + counter.incrementAndGet());
-      thread.setDaemon(true);
-      thread.setPriority(threadPriority);
-      return thread;
-    };
-  }
 
   private static float bilinearAO(float[] ao, int face, float localX,
                                   float localY, float localZ) {
@@ -284,99 +242,8 @@ public class CustomChunkMesher {
     }
   }
 
-  public static final class UploadStat {
-    public final int jobs;
-    public final long bytes;
-
-    public UploadStat(int jobs, long bytes) {
-      this.jobs = jobs;
-      this.bytes = bytes;
-    }
-  }
-
-  private static final class UploadJob {
-    final long key;
-    final long gen;
-    final boolean approxLight;
-    final int chunkX;
-    final int chunkY;
-    final int chunkZ;
-    final int lodLevel;
-    final int quadCount;
-    final int opaqueQuadCount;
-    final int buildPlayerCX;
-    final int buildPlayerCY;
-    final int buildPlayerCZ;
-    final byte[] data;
-    final FarFieldDigest digest;
-
-    UploadJob(long key, long gen, boolean approxLight, int chunkX, int chunkY,
-              int chunkZ, int lodLevel, int quadCount, int opaqueQuadCount,
-              int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ,
-              byte[] data, FarFieldDigest digest) {
-      this.key = key;
-      this.gen = gen;
-      this.approxLight = approxLight;
-      this.chunkX = chunkX;
-      this.chunkY = chunkY;
-      this.chunkZ = chunkZ;
-      this.lodLevel = lodLevel;
-      this.quadCount = quadCount;
-      this.opaqueQuadCount = opaqueQuadCount;
-      this.buildPlayerCX = buildPlayerCX;
-      this.buildPlayerCY = buildPlayerCY;
-      this.buildPlayerCZ = buildPlayerCZ;
-      this.data = data;
-      this.digest = digest;
-    }
-
-    int bytes() { return data != null ? data.length : 0; }
-  }
-
-  private static final UploadStat EMPTY_UPLOAD_STAT = new UploadStat(0, 0L);
-
-  public static final class FarFieldDigest {
-    public final int chunkX;
-    public final int chunkY;
-    public final int chunkZ;
-    public final long versionStamp;
-    public final int solidBlockCount;
-    public final int exposedBlockCount;
-    public final int dominantStateId;
-    public final int dominantStateCount;
-    public final int minSolidY;
-    public final int maxSolidY;
-    public final int maxBlockLight;
-    public final int maxSkyLight;
-    public final byte[] columnBottomHeights;
-    public final byte[] columnTopHeights;
-
-    public FarFieldDigest(int chunkX, int chunkY, int chunkZ, long versionStamp,
-                          int solidBlockCount, int exposedBlockCount,
-                          int dominantStateId, int dominantStateCount,
-                          int minSolidY, int maxSolidY, int maxBlockLight,
-                          int maxSkyLight, byte[] columnBottomHeights,
-                          byte[] columnTopHeights) {
-      this.chunkX = chunkX;
-      this.chunkY = chunkY;
-      this.chunkZ = chunkZ;
-      this.versionStamp = versionStamp;
-      this.solidBlockCount = solidBlockCount;
-      this.exposedBlockCount = exposedBlockCount;
-      this.dominantStateId = dominantStateId;
-      this.dominantStateCount = dominantStateCount;
-      this.minSolidY = minSolidY;
-      this.maxSolidY = maxSolidY;
-      this.maxBlockLight = maxBlockLight;
-      this.maxSkyLight = maxSkyLight;
-      this.columnBottomHeights = columnBottomHeights;
-      this.columnTopHeights = columnTopHeights;
-    }
-  }
-
   public CustomChunkMesher() {
     this.meshCache = new Long2ObjectOpenHashMap<>();
-    this.farFieldDigestCache = new Long2ObjectOpenHashMap<>();
     this.dirtyGeneration.defaultReturnValue(0L);
     this.pendingVisibleSectionNanos.defaultReturnValue(0L);
     this.pendingBlockUpdateNanos.defaultReturnValue(0L);
@@ -398,8 +265,12 @@ public class CustomChunkMesher {
     this.steadyInstantThreadCount = steadyInstantThreads;
     this.maxInstantThreadCount =
         Math.max(steadyInstantThreads, maxInstantThreads);
-    ThreadFactory meshFactory = createWorkerFactory(
-        "MetalRender-MeshBuilder", Thread.MIN_PRIORITY, THREAD_QOS_UTILITY);
+    java.util.concurrent.ThreadFactory meshFactory = r -> {
+      Thread t = new Thread(r, "MetalRender-MeshBuilder");
+      t.setDaemon(true);
+      t.setPriority(Thread.MIN_PRIORITY);
+      return t;
+    };
     this.builderPool = new java.util.concurrent.ThreadPoolExecutor(
         warmupThreadCount, warmupThreadCount, 10L,
         java.util.concurrent.TimeUnit.SECONDS,
@@ -408,10 +279,9 @@ public class CustomChunkMesher {
 
     java.util.concurrent.ScheduledExecutorService warmupTimer =
         java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
-          ThreadFactory warmupFactory =
-              createWorkerFactory("MetalRender-WarmupTimer",
-                                  Thread.MIN_PRIORITY, THREAD_QOS_UTILITY);
-          return warmupFactory.newThread(r);
+          Thread t = new Thread(r, "MetalRender-WarmupTimer");
+          t.setDaemon(true);
+          return t;
         });
     warmupTimer.schedule(() -> {
       if (getPendingCount() == 0) {
@@ -422,31 +292,29 @@ public class CustomChunkMesher {
 
     this.dirtyRebuildPool = this.builderPool;
 
-    ThreadFactory instantFactory =
-        createWorkerFactory("MetalRender-InstantRebuild", Thread.NORM_PRIORITY,
-                            THREAD_QOS_USER_INITIATED);
+    java.util.concurrent.ThreadFactory instantFactory = r -> {
+      Thread t = new Thread(r, "MetalRender-InstantRebuild");
+      t.setDaemon(true);
+      t.setPriority(Thread.MIN_PRIORITY);
+      return t;
+    };
     this.instantRebuildPool = new java.util.concurrent.ThreadPoolExecutor(
         steadyInstantThreads, steadyInstantThreads, 1L,
         java.util.concurrent.TimeUnit.SECONDS,
         new java.util.concurrent.LinkedBlockingQueue<>(), instantFactory);
     this.instantRebuildPool.allowCoreThreadTimeOut(true);
 
-    ThreadFactory interactiveFactory =
-        createWorkerFactory("MetalRender-InteractiveRebuild",
-                            Thread.MAX_PRIORITY, THREAD_QOS_USER_INTERACTIVE);
+    java.util.concurrent.ThreadFactory interactiveFactory = r -> {
+      Thread t = new Thread(r, "MetalRender-InteractiveRebuild");
+      t.setDaemon(true);
+      t.setPriority(Thread.NORM_PRIORITY);
+      return t;
+    };
     this.interactiveRebuildPool = new java.util.concurrent.ThreadPoolExecutor(
         interactiveThreads, interactiveThreads, 1L,
         java.util.concurrent.TimeUnit.SECONDS,
         new java.util.concurrent.LinkedBlockingQueue<>(), interactiveFactory);
     this.interactiveRebuildPool.allowCoreThreadTimeOut(true);
-
-    int lightThreads = processors >= 12 ? 2 : 1;
-    ThreadFactory lightFactory = createWorkerFactory(
-        "MetalRender-LightFix", Thread.MIN_PRIORITY, THREAD_QOS_UTILITY);
-    this.lightRebuildPool = new java.util.concurrent.ThreadPoolExecutor(
-        lightThreads, lightThreads, 1L, java.util.concurrent.TimeUnit.SECONDS,
-        new java.util.concurrent.LinkedBlockingQueue<>(), lightFactory);
-    this.lightRebuildPool.allowCoreThreadTimeOut(true);
   }
 
   public long getGlobalIndexBuffer() { return globalIndexBufferHandle; }
@@ -491,6 +359,11 @@ public class CustomChunkMesher {
     } catch (Throwable ignored) {
       fastUploadPathActive = false;
     }
+  }
+
+  private Semaphore getUploadSemaphore() {
+    return fastUploadPathActive ? FAST_UPLOAD_SEMAPHORE
+                                : FALLBACK_UPLOAD_SEMAPHORE;
   }
 
   private static long packChunkKey(int x, int y, int z) {
@@ -743,247 +616,11 @@ public class CustomChunkMesher {
     synchronized (pendingKeys) { return pendingKeys.size(); }
   }
 
-  public boolean isPendingBuild(int chunkX, int chunkY, int chunkZ) {
-    long key = packChunkKey(chunkX, chunkY, chunkZ);
-    synchronized (pendingKeys) { return pendingKeys.contains(key); }
-  }
-
-  private boolean isCurrent(long key, long gen) {
-    synchronized (dirtyGeneration) { return dirtyGeneration.get(key) == gen; }
-  }
-
-  private void clearLightFix(long key) {
-    synchronized (approxLightKeys) { approxLightKeys.remove(key); }
-    synchronized (queuedLightFixKeys) { queuedLightFixKeys.remove(key); }
-    synchronized (lightFixQueue) {
-      java.util.Iterator<Long> iterator = lightFixQueue.iterator();
-      while (iterator.hasNext()) {
-        if (iterator.next().longValue() == key) {
-          iterator.remove();
-        }
-      }
-    }
-  }
-
-  private void queueLightFix(long key) {
-    synchronized (approxLightKeys) {
-      if (!approxLightKeys.contains(key)) {
-        return;
-      }
-    }
-    synchronized (queuedLightFixKeys) {
-      if (!queuedLightFixKeys.add(key)) {
-        return;
-      }
-    }
-    synchronized (lightFixQueue) {
-      if (lightFixQueue.size() >= MAX_LIGHT_FIX_QUEUE) {
-        Long dropped = lightFixQueue.pollFirst();
-        if (dropped != null) {
-          synchronized (queuedLightFixKeys) {
-            queuedLightFixKeys.remove(dropped.longValue());
-          }
-        }
-      }
-      lightFixQueue.addLast(Long.valueOf(key));
-    }
-  }
-
-  public Long pollLightFixKey() {
-    synchronized (lightFixQueue) {
-      while (!lightFixQueue.isEmpty()) {
-        Long key = lightFixQueue.pollFirst();
-        if (key == null) {
-          break;
-        }
-        synchronized (queuedLightFixKeys) {
-          queuedLightFixKeys.remove(key.longValue());
-        }
-        synchronized (approxLightKeys) {
-          if (approxLightKeys.contains(key.longValue())) {
-            return key;
-          }
-        }
-      }
-    }
-    return null;
-  }
-
-  public void requeueLightFix(long key) { queueLightFix(key); }
-
-  public boolean needsLightFix(int chunkX, int chunkY, int chunkZ) {
-    long key = packChunkKey(chunkX, chunkY, chunkZ);
-    synchronized (pendingKeys) {
-      if (pendingKeys.contains(key)) {
-        return false;
-      }
-    }
-    synchronized (approxLightKeys) { return approxLightKeys.contains(key); }
-  }
-
-  private void queueUpload(UploadJob job) {
-    synchronized (uploadQueue) {
-      uploadQueue.addLast(job);
-      uploadQueueBytes += job.bytes();
-    }
-  }
-
-  private void queueClear(long key, long gen, int chunkX, int chunkY,
-                          int chunkZ) {
-    queueUpload(new UploadJob(key, gen, false, chunkX, chunkY, chunkZ, 0, 0, 0,
-                              0, 0, 0, null, null));
-  }
-
-  private static byte[] copyUploadData(ByteBuffer src, int len) {
-    byte[] data = new byte[len];
-    ByteBuffer copy = src.duplicate();
-    copy.position(0);
-    copy.limit(len);
-    copy.get(data);
-    return data;
-  }
-
-  public UploadStat drainUploads(long budgetNanos, int minJobs, int maxJobs) {
-    if (!initialized || maxJobs <= 0) {
-      return EMPTY_UPLOAD_STAT;
-    }
-    long deadline =
-        budgetNanos > 0 ? System.nanoTime() + budgetNanos : Long.MAX_VALUE;
-    int jobs = 0;
-    long bytes = 0L;
-    while (jobs < maxJobs) {
-      if (jobs >= minJobs && System.nanoTime() >= deadline) {
-        break;
-      }
-      UploadJob job;
-      synchronized (uploadQueue) {
-        job = uploadQueue.pollFirst();
-        if (job == null) {
-          break;
-        }
-        uploadQueueBytes -= job.bytes();
-      }
-      bytes += applyUpload(job);
-      jobs++;
-    }
-    if (jobs == 0 && bytes == 0L) {
-      return EMPTY_UPLOAD_STAT;
-    }
-    return new UploadStat(jobs, bytes);
-  }
-
-  private long applyUpload(UploadJob job) {
-    if (!isCurrent(job.key, job.gen)) {
-      synchronized (pendingKeys) { pendingKeys.remove(job.key); }
-      clearLightFix(job.key);
-      return 0L;
-    }
-    if (job.data == null || job.quadCount <= 0) {
-      ChunkMeshData old;
-      synchronized (meshCache) { old = meshCache.remove(job.key); }
-      removeFarFieldDigest(job.key);
-      if (old != null) {
-        NativeBridge.nUnregisterChunkMesh(job.chunkX, job.chunkY, job.chunkZ);
-        NativeBridge.nDestroyBuffer(old.bufferHandle);
-        meshCountAtomic.decrementAndGet();
-      }
-      synchronized (emptyKeys) { emptyKeys.add(job.key); }
-      synchronized (dirtyKeys) { dirtyKeys.remove(job.key); }
-      synchronized (pendingKeys) { pendingKeys.remove(job.key); }
-      clearLightFix(job.key);
-      meshUpdateGeneration.incrementAndGet();
-      recordVisibleLatency(job.key);
-      return 0L;
-    }
-    long bufferHandle = 0L;
-    try {
-      bufferHandle = NativeBridge.nCreateBuffer(
-          deviceHandle, job.data.length, NativeMemory.STORAGE_MODE_SHARED);
-      if (bufferHandle == 0L) {
-        synchronized (dirtyKeys) { dirtyKeys.add(job.key); }
-        synchronized (dirtyGeneration) {
-          dirtyGeneration.put(job.key, dirtyGeneration.get(job.key) + 1L);
-        }
-        synchronized (pendingKeys) { pendingKeys.remove(job.key); }
-        return 0L;
-      }
-      NativeBridge.nUploadBufferData(bufferHandle, job.data, 0,
-                                     job.data.length);
-      ChunkMeshData mesh =
-          new ChunkMeshData(bufferHandle, job.quadCount, job.chunkX, job.chunkY,
-                            job.chunkZ, job.lodLevel, job.buildPlayerCX,
-                            job.buildPlayerCY, job.buildPlayerCZ);
-      ChunkMeshData old;
-      synchronized (meshCache) { old = meshCache.put(job.key, mesh); }
-      if (old == null) {
-        meshCountAtomic.incrementAndGet();
-      }
-      if (job.digest != null) {
-        storeFarFieldDigest(job.key, job.digest);
-      } else {
-        removeFarFieldDigest(job.key);
-      }
-      if (job.approxLight) {
-        synchronized (approxLightKeys) { approxLightKeys.add(job.key); }
-        queueLightFix(job.key);
-      } else {
-        clearLightFix(job.key);
-      }
-      synchronized (emptyKeys) { emptyKeys.remove(job.key); }
-      NativeBridge.nRegisterChunkMesh(job.chunkX, job.chunkY, job.chunkZ,
-                                      bufferHandle, job.quadCount,
-                                      job.opaqueQuadCount, job.lodLevel);
-      if (old != null) {
-        NativeBridge.nDestroyBuffer(old.bufferHandle);
-      }
-      synchronized (dirtyKeys) { dirtyKeys.remove(job.key); }
-      synchronized (pendingKeys) { pendingKeys.remove(job.key); }
-      meshUpdateGeneration.incrementAndGet();
-      recordVisibleLatency(job.key);
-      return job.data.length;
-    } catch (Throwable t) {
-      if (bufferHandle != 0L) {
-        NativeBridge.nDestroyBuffer(bufferHandle);
-      }
-      synchronized (dirtyKeys) { dirtyKeys.add(job.key); }
-      synchronized (dirtyGeneration) {
-        dirtyGeneration.put(job.key, dirtyGeneration.get(job.key) + 1L);
-      }
-      synchronized (pendingKeys) { pendingKeys.remove(job.key); }
-      clearLightFix(job.key);
-      MetalLogger.error("Mesh upload error for chunk [%d,%d,%d]: %s",
-                        job.chunkX, job.chunkY, job.chunkZ, t.getMessage());
-      return 0L;
-    }
-  }
-
-  public int getUploadQueueCount() {
-    synchronized (uploadQueue) { return uploadQueue.size(); }
-  }
-
-  public long getUploadQueueBytes() {
-    synchronized (uploadQueue) { return uploadQueueBytes; }
-  }
-
-  private void clearUploadQueue() {
-    synchronized (uploadQueue) {
-      uploadQueue.clear();
-      uploadQueueBytes = 0L;
-    }
-  }
-
   public void noteSectionAvailable(int chunkX, int chunkY, int chunkZ) {
     long key = packChunkKey(chunkX, chunkY, chunkZ);
     long now = System.nanoTime();
     synchronized (pendingVisibleSectionNanos) {
       if (!pendingVisibleSectionNanos.containsKey(key)) {
-        if (pendingVisibleSectionNanos.size() >= MAX_TRACKED_VISIBLE_SECTIONS) {
-          LongIterator it = pendingVisibleSectionNanos.keySet().iterator();
-          if (it.hasNext()) {
-            it.nextLong();
-            it.remove();
-          }
-        }
         pendingVisibleSectionNanos.put(key, now);
       }
     }
@@ -992,14 +629,6 @@ public class CustomChunkMesher {
   public void noteBlockUpdate(int chunkX, int chunkY, int chunkZ) {
     long key = packChunkKey(chunkX, chunkY, chunkZ);
     synchronized (pendingBlockUpdateNanos) {
-      if (!pendingBlockUpdateNanos.containsKey(key) &&
-          pendingBlockUpdateNanos.size() >= MAX_TRACKED_BLOCK_UPDATES) {
-        LongIterator it = pendingBlockUpdateNanos.keySet().iterator();
-        if (it.hasNext()) {
-          it.nextLong();
-          it.remove();
-        }
-      }
       pendingBlockUpdateNanos.put(key, System.nanoTime());
     }
   }
@@ -1008,7 +637,9 @@ public class CustomChunkMesher {
     long now = System.nanoTime();
     long visibleSectionStart = 0L;
     synchronized (pendingVisibleSectionNanos) {
-      visibleSectionStart = pendingVisibleSectionNanos.remove(key);
+      if (pendingVisibleSectionNanos.containsKey(key)) {
+        visibleSectionStart = pendingVisibleSectionNanos.remove(key);
+      }
     }
     if (visibleSectionStart != 0L) {
       visibleSectionLatencyAccNs.addAndGet(now - visibleSectionStart);
@@ -1017,106 +648,14 @@ public class CustomChunkMesher {
 
     long blockUpdateStart = 0L;
     synchronized (pendingBlockUpdateNanos) {
-      blockUpdateStart = pendingBlockUpdateNanos.remove(key);
+      if (pendingBlockUpdateNanos.containsKey(key)) {
+        blockUpdateStart = pendingBlockUpdateNanos.remove(key);
+      }
     }
     if (blockUpdateStart != 0L) {
       blockUpdateLatencyAccNs.addAndGet(now - blockUpdateStart);
       blockUpdateLatencySamples.incrementAndGet();
     }
-  }
-
-  private void storeFarFieldDigest(long key, FarFieldDigest digest) {
-    synchronized (farFieldDigestCache) { farFieldDigestCache.put(key, digest); }
-  }
-
-  private void removeFarFieldDigest(long key) {
-    synchronized (farFieldDigestCache) { farFieldDigestCache.remove(key); }
-  }
-
-  private static FarFieldDigest
-  buildFarFieldDigest(int chunkX, int chunkY, int chunkZ, int[] blockStates,
-                      byte[] lightData, long versionStamp) {
-    byte[] columnBottomHeights = new byte[SECTION_SIZE * SECTION_SIZE];
-    byte[] columnTopHeights = new byte[SECTION_SIZE * SECTION_SIZE];
-    java.util.Arrays.fill(columnBottomHeights, (byte)-1);
-    java.util.Arrays.fill(columnTopHeights, (byte)-1);
-    int solidBlockCount = 0;
-    int exposedBlockCount = 0;
-    int dominantStateId = 0;
-    int dominantStateCount = 0;
-    int candidateStateId = 0;
-    int candidateBalance = 0;
-    int minSolidY = SECTION_SIZE;
-    int maxSolidY = -1;
-    int maxBlockLight = 0;
-    int maxSkyLight = 0;
-
-    for (int y = 0; y < SECTION_SIZE; y++) {
-      for (int z = 0; z < SECTION_SIZE; z++) {
-        for (int x = 0; x < SECTION_SIZE; x++) {
-          int index = y * 256 + z * 16 + x;
-          int stateId = blockStates[index];
-          if (stateId == 0) {
-            continue;
-          }
-          solidBlockCount++;
-          if (candidateBalance == 0) {
-            candidateStateId = stateId;
-            candidateBalance = 1;
-          } else if (candidateStateId == stateId) {
-            candidateBalance++;
-          } else {
-            candidateBalance--;
-          }
-          if (y < minSolidY) {
-            minSolidY = y;
-          }
-          if (y > maxSolidY) {
-            maxSolidY = y;
-          }
-          int columnIndex = z * SECTION_SIZE + x;
-          if (columnBottomHeights[columnIndex] < 0) {
-            columnBottomHeights[columnIndex] = (byte)y;
-          }
-          columnTopHeights[columnIndex] = (byte)y;
-          if (isDigestExposedBlock(blockStates, x, y, z)) {
-            exposedBlockCount++;
-          }
-          int packedLight = lightData[index] & 0xFF;
-          maxBlockLight = Math.max(maxBlockLight, packedLight & 0xF);
-          maxSkyLight = Math.max(maxSkyLight, (packedLight >> 4) & 0xF);
-        }
-      }
-    }
-
-    if (candidateStateId != 0) {
-      for (int stateId : blockStates) {
-        if (stateId == candidateStateId) {
-          dominantStateCount++;
-        }
-      }
-      dominantStateId = candidateStateId;
-    }
-    if (solidBlockCount == 0) {
-      minSolidY = -1;
-    }
-    return new FarFieldDigest(chunkX, chunkY, chunkZ, versionStamp,
-                              solidBlockCount, exposedBlockCount,
-                              dominantStateId, dominantStateCount, minSolidY,
-                              maxSolidY, maxBlockLight, maxSkyLight,
-                              columnBottomHeights, columnTopHeights);
-  }
-
-  private static boolean isDigestExposedBlock(int[] blockStates, int x, int y,
-                                              int z) {
-    if (x == 0 || x == SECTION_SIZE - 1 || y == 0 || y == SECTION_SIZE - 1 ||
-        z == 0 || z == SECTION_SIZE - 1) {
-      return true;
-    }
-    int index = y * 256 + z * 16 + x;
-    return blockStates[index - 1] == 0 || blockStates[index + 1] == 0 ||
-        blockStates[index - 16] == 0 || blockStates[index + 16] == 0 ||
-        blockStates[index - 256] == 0 || blockStates[index + 256] == 0;
   }
 
   public double getAverageVisibleSectionLatencyMs() {
@@ -1179,14 +718,6 @@ public class CustomChunkMesher {
         : 0;
   }
 
-  public int getLightActiveCount() {
-    return lightRebuildPool != null ? lightRebuildPool.getActiveCount() : 0;
-  }
-
-  public int getLightQueueDepth() {
-    return lightRebuildPool != null ? lightRebuildPool.getQueue().size() : 0;
-  }
-
   public int getBuilderThreadCount() { return builderPool.getCorePoolSize(); }
 
   private static void
@@ -1241,10 +772,8 @@ public class CustomChunkMesher {
     MetalRenderConfig config = MetalRenderClient.getConfig();
     boolean fpsPriorityMode = config != null && config.prioritizeFpsOverTps;
     int approximateLightingThreshold = fpsPriorityMode ? 2048 : 256;
-    boolean startupSolidFill =
-        loadingMode && getMeshCount() < STARTUP_SOLID_FILL_MESH_THRESHOLD;
     aggressiveApproximateLighting =
-        startupSolidFill || pending >= approximateLightingThreshold;
+        loadingMode || pending >= approximateLightingThreshold;
     if (pending <= 0) {
       updateThreadPoolSize(builderPool, 0);
       updateThreadPoolSize(instantRebuildPool, 0);
@@ -1256,67 +785,45 @@ public class CustomChunkMesher {
       return;
     }
     int baseTarget =
-        startupSolidFill ? boostedBuilderThreadCount : steadyBuilderThreadCount;
+        loadingMode ? boostedBuilderThreadCount : steadyBuilderThreadCount;
     if (isBurstThreadModeEnabled()) {
-      baseTarget += startupSolidFill ? 2 : 0;
+      baseTarget += loadingMode ? 2 : 1;
     }
     int backlogBoost = 0;
-    if (startupSolidFill) {
-      if (pending >= 8192) {
-        backlogBoost = 10;
-      } else if (pending >= 4096) {
-        backlogBoost = 8;
-      } else if (pending >= 2048) {
-        backlogBoost = 6;
-      } else if (pending >= 1024) {
-        backlogBoost = 4;
-      } else if (pending >= 512) {
-        backlogBoost = 2;
-      } else if (pending >= 256) {
-        backlogBoost = 1;
-      }
-    } else {
-      if (pending >= 4096) {
-        backlogBoost = 2;
-      } else if (pending >= 2048) {
-        backlogBoost = 1;
-      }
+    if (pending >= 8192) {
+      backlogBoost = 10;
+    } else if (pending >= 4096) {
+      backlogBoost = 8;
+    } else if (pending >= 2048) {
+      backlogBoost = 6;
+    } else if (pending >= 1024) {
+      backlogBoost = 4;
+    } else if (pending >= 512) {
+      backlogBoost = 2;
+    } else if (pending >= 256) {
+      backlogBoost = 1;
     }
     int budgetCap = Math.min(getBuilderThreadCap(), getThreadBudgetCap());
-    if (!startupSolidFill) {
-      budgetCap =
-          Math.min(budgetCap, steadyBuilderThreadCount +
-                                  POST_STARTUP_BUILDER_THREAD_CAP_EXTRA);
-    }
     int target = Math.min(budgetCap, baseTarget + backlogBoost);
     updateThreadPoolSize(builderPool, target);
 
-    int instantTarget = startupSolidFill ? steadyInstantThreadCount + 2
-                                         : steadyInstantThreadCount;
+    int instantTarget =
+        loadingMode ? steadyInstantThreadCount + 2 : steadyInstantThreadCount;
     if (isBurstThreadModeEnabled()) {
-      if (startupSolidFill) {
-        instantTarget++;
-      }
+      instantTarget++;
     }
-    if (startupSolidFill) {
-      if (pending >= 8192) {
-        instantTarget += 5;
-      } else if (pending >= 4096) {
-        instantTarget += 4;
-      } else if (pending >= 2048) {
-        instantTarget += 3;
-      } else if (pending >= 1024) {
-        instantTarget += 2;
-      } else if (pending >= 512) {
-        instantTarget++;
-      }
+    if (pending >= 8192) {
+      instantTarget += 5;
+    } else if (pending >= 4096) {
+      instantTarget += 4;
+    } else if (pending >= 2048) {
+      instantTarget += 3;
+    } else if (pending >= 1024) {
+      instantTarget += 2;
+    } else if (pending >= 512) {
+      instantTarget++;
     }
     instantTarget = Math.min(getInstantThreadCap(), instantTarget);
-    if (!startupSolidFill) {
-      instantTarget =
-          Math.min(instantTarget, steadyInstantThreadCount +
-                                      POST_STARTUP_INSTANT_THREAD_CAP_EXTRA);
-    }
     updateThreadPoolSize(instantRebuildPool, instantTarget);
   }
 
@@ -1342,14 +849,9 @@ public class CustomChunkMesher {
       meshCache.clear();
       meshCountAtomic.set(0);
     }
-    synchronized (farFieldDigestCache) { farFieldDigestCache.clear(); }
-    synchronized (approxLightKeys) { approxLightKeys.clear(); }
-    synchronized (queuedLightFixKeys) { queuedLightFixKeys.clear(); }
-    synchronized (lightFixQueue) { lightFixQueue.clear(); }
     synchronized (pendingKeys) { pendingKeys.clear(); }
     synchronized (dirtyKeys) { dirtyKeys.clear(); }
     synchronized (emptyKeys) { emptyKeys.clear(); }
-    clearUploadQueue();
     MetalLogger.info("All mesh data cleared (%d meshes).", count);
   }
 
@@ -1394,7 +896,6 @@ public class CustomChunkMesher {
 
   public void markDirty(int cx, int cy, int cz) {
     long key = packChunkKey(cx, cy, cz);
-    clearLightFix(key);
 
     synchronized (emptyKeys) { emptyKeys.remove(key); }
     synchronized (dirtyKeys) { dirtyKeys.add(key); }
@@ -1407,9 +908,6 @@ public class CustomChunkMesher {
   public void markAllDirty() {
     long[] keys;
     long[] emptyArr;
-    synchronized (approxLightKeys) { approxLightKeys.clear(); }
-    synchronized (queuedLightFixKeys) { queuedLightFixKeys.clear(); }
-    synchronized (lightFixQueue) { lightFixQueue.clear(); }
     synchronized (meshCache) { keys = meshCache.keySet().toLongArray(); }
     synchronized (emptyKeys) {
       emptyArr = emptyKeys.toLongArray();
@@ -1436,13 +934,10 @@ public class CustomChunkMesher {
     if (!initialized)
       return;
     long key = packChunkKey(chunkX, chunkY, chunkZ);
-    final long genAtSubmit;
-    synchronized (dirtyGeneration) { genAtSubmit = dirtyGeneration.get(key); }
     synchronized (pendingKeys) { pendingKeys.add(key); }
     builderPool.submit(() -> {
       try {
-        doMeshBuild(chunkX, chunkY, chunkZ, blockStates, lightData, key,
-                    genAtSubmit, false);
+        doMeshBuild(chunkX, chunkY, chunkZ, blockStates, lightData, key);
       } catch (Exception e) {
         synchronized (pendingKeys) { pendingKeys.remove(key); }
         MetalLogger.error("Meshing error for chunk [%d,%d,%d]", chunkX, chunkY,
@@ -1452,8 +947,7 @@ public class CustomChunkMesher {
   }
 
   private void doMeshBuild(int chunkX, int chunkY, int chunkZ,
-                           int[] blockStates, byte[] lightData, long key,
-                           long genAtSubmit, boolean approxLight) {
+                           int[] blockStates, byte[] lightData, long key) {
     int[] nXNeg = null, nXPos = null, nYNeg = null, nYPos = null, nZNeg = null,
           nZPos = null;
     byte[] nXNegLight = null, nXPosLight = null, nYNegLight = null,
@@ -1516,10 +1010,9 @@ public class CustomChunkMesher {
       }
     } catch (Exception ignored) {
     }
-    doMeshBuild(chunkX, chunkY, chunkZ, blockStates, lightData, key,
-                genAtSubmit, approxLight, 0, nXNeg, nXPos, nYNeg, nYPos, nZNeg,
-                nZPos, nXNegLight, nXPosLight, nYNegLight, nYPosLight,
-                nZNegLight, nZPosLight);
+    doMeshBuild(chunkX, chunkY, chunkZ, blockStates, lightData, key, 0, nXNeg,
+                nXPos, nYNeg, nYPos, nZNeg, nZPos, nXNegLight, nXPosLight,
+                nYNegLight, nYPosLight, nZNegLight, nZPosLight);
   }
 
   private static boolean shouldRenderAtLod(BlockState state, int lodLevel) {
@@ -2193,14 +1686,12 @@ public class CustomChunkMesher {
 
   private void doMeshBuild(int chunkX, int chunkY, int chunkZ,
                            int[] blockStates, byte[] lightData, long key,
-                           long genAtSubmit, boolean approxLight, int lodLevel,
-                           int[] nXNeg, int[] nXPos, int[] nYNeg, int[] nYPos,
-                           int[] nZNeg, int[] nZPos, byte[] nXNegLight,
-                           byte[] nXPosLight, byte[] nYNegLight,
-                           byte[] nYPosLight, byte[] nZNegLight,
-                           byte[] nZPosLight) {
+                           int lodLevel, int[] nXNeg, int[] nXPos, int[] nYNeg,
+                           int[] nYPos, int[] nZNeg, int[] nZPos,
+                           byte[] nXNegLight, byte[] nXPosLight,
+                           byte[] nYNegLight, byte[] nYPosLight,
+                           byte[] nZNegLight, byte[] nZPosLight) {
     long buildStart = System.nanoTime();
-    boolean keepPending = false;
     try {
       meshBuildCount++;
       ByteBuffer vertexBuffer = VERTEX_BUF_POOL.get();
@@ -2221,7 +1712,7 @@ public class CustomChunkMesher {
       applyFaceShade = false;
       boolean useDistanceTier = false;
       boolean useFastPath = canUseFastLodSection(blockStates, lodLevel);
-      boolean skipNonDirectionalQuads = useFastPath || lodLevel >= 2;
+      boolean skipNonDirectionalQuads = useFastPath;
 
       boolean useSmoothAO = false;
 
@@ -3795,25 +3286,54 @@ public class CustomChunkMesher {
                          lodLevel);
       }
       if (quadCount == 0) {
-        if (!isCurrent(key, genAtSubmit)) {
-          return;
+        ChunkMeshData old;
+        synchronized (meshCache) { old = meshCache.remove(key); }
+        if (old != null) {
+          NativeBridge.nUnregisterChunkMesh(chunkX, chunkY, chunkZ);
+          NativeBridge.nDestroyBuffer(old.bufferHandle);
+          meshCountAtomic.decrementAndGet();
         }
-        queueClear(key, genAtSubmit, chunkX, chunkY, chunkZ);
-        keepPending = true;
+
+        synchronized (emptyKeys) { emptyKeys.add(key); }
+        synchronized (dirtyKeys) { dirtyKeys.remove(key); }
+
+        meshUpdateGeneration.incrementAndGet();
+        recordVisibleLatency(key);
         return;
       }
       vertexBuffer.flip();
       int dataLen = quadCount * 4 * VERTEX_STRIDE;
-      if (!isCurrent(key, genAtSubmit)) {
-        return;
+
+      UPLOAD_SEMAPHORE.acquireUninterruptibly();
+      Semaphore uploadSemaphore = getUploadSemaphore();
+      uploadSemaphore.acquireUninterruptibly();
+      long bufferHandle;
+      try {
+        bufferHandle = NativeBridge.nCreateBuffer(
+            deviceHandle, dataLen, NativeMemory.STORAGE_MODE_SHARED);
+        NativeBridge.nUploadBufferDataDirect(bufferHandle, vertexBuffer, 0,
+                                             dataLen);
+      } finally {
+        UPLOAD_SEMAPHORE.release();
+        uploadSemaphore.release();
       }
-      queueUpload(new UploadJob(
-          key, genAtSubmit, approxLight, chunkX, chunkY, chunkZ, lodLevel,
-          quadCount, opaqueQuadCount, buildPCX, buildPCY, buildPCZ,
-          copyUploadData(vertexBuffer, dataLen),
-          buildFarFieldDigest(chunkX, chunkY, chunkZ, blockStates, lightData,
-                              genAtSubmit)));
-      keepPending = true;
+      ChunkMeshData mesh =
+          new ChunkMeshData(bufferHandle, quadCount, chunkX, chunkY, chunkZ,
+                            lodLevel, buildPCX, buildPCY, buildPCZ);
+      ChunkMeshData old;
+      synchronized (meshCache) { old = meshCache.put(key, mesh); }
+      if (old == null) {
+        meshCountAtomic.incrementAndGet();
+      }
+      NativeBridge.nRegisterChunkMesh(chunkX, chunkY, chunkZ, bufferHandle,
+                                      quadCount, opaqueQuadCount, lodLevel);
+      if (old != null) {
+        NativeBridge.nDestroyBuffer(old.bufferHandle);
+      }
+
+      meshUpdateGeneration.incrementAndGet();
+      recordVisibleLatency(key);
+      synchronized (dirtyKeys) { dirtyKeys.remove(key); }
     } catch (Exception e) {
       MetalLogger.error("Meshing error for chunk [%d,%d,%d]", chunkX, chunkY,
                         chunkZ);
@@ -3847,9 +3367,7 @@ public class CustomChunkMesher {
             dbgBoundaryCullHit, dbgBoundaryWaterMiss, dbgBoundaryNullArr,
             dbgWaterBaked, dbgWaterFallback, dbgWaterBakedCull, dbgNonFullSkip);
       }
-      if (!keepPending) {
-        synchronized (pendingKeys) { pendingKeys.remove(key); }
-      }
+      synchronized (pendingKeys) { pendingKeys.remove(key); }
     }
   }
 
@@ -4118,242 +3636,22 @@ public class CustomChunkMesher {
 
   public void buildMeshFromWorld(int chunkX, int chunkY, int chunkZ,
                                  int lodLevel, boolean highPriority) {
-    buildMeshFromWorld(chunkX, chunkY, chunkZ, lodLevel, highPriority, false,
-                       false);
+    buildMeshFromWorld(chunkX, chunkY, chunkZ, lodLevel, highPriority, false);
   }
 
   public void buildMeshFromWorldInteractive(int chunkX, int chunkY,
                                             int chunkZ) {
-    buildMeshFromWorld(chunkX, chunkY, chunkZ, 0, true, true, false);
-  }
-
-  public void buildMeshFromWorldLightFix(int chunkX, int chunkY, int chunkZ,
-                                         int lodLevel) {
-    buildMeshFromWorld(chunkX, chunkY, chunkZ, lodLevel, false, false, true);
-  }
-
-  public void buildMeshFromDigest(int chunkX, int chunkY, int chunkZ) {
-    if (!initialized) {
-      return;
-    }
-    long key = packChunkKey(chunkX, chunkY, chunkZ);
-    FarFieldDigest digest = getFarFieldDigest(chunkX, chunkY, chunkZ);
-    if (digest == null || digest.solidBlockCount <= 0) {
-      return;
-    }
-    ChunkMeshData current = getMesh(chunkX, chunkY, chunkZ);
-    if (current != null && current.lodLevel >= FAR_PROXY_LOD) {
-      return;
-    }
-    synchronized (pendingKeys) {
-      if (!pendingKeys.add(key)) {
-        return;
-      }
-    }
-    final long genAtSubmit;
-    synchronized (dirtyGeneration) { genAtSubmit = dirtyGeneration.get(key); }
-    builderPool.submit(() -> {
-      long genNow;
-      synchronized (dirtyGeneration) { genNow = dirtyGeneration.get(key); }
-      if (genNow != genAtSubmit) {
-        synchronized (pendingKeys) { pendingKeys.remove(key); }
-        return;
-      }
-      try {
-        if (!emitDigestProxyMesh(digest, key, genAtSubmit)) {
-          synchronized (pendingKeys) { pendingKeys.remove(key); }
-        }
-      } catch (Exception e) {
-        synchronized (pendingKeys) { pendingKeys.remove(key); }
-        MetalLogger.error("Digest mesh build error for [%d,%d,%d]: %s", chunkX,
-                          chunkY, chunkZ, e.getMessage());
-      }
-    });
-  }
-
-  private boolean emitDigestProxyMesh(FarFieldDigest digest, long key,
-                                      long genAtSubmit) {
-    ByteBuffer vertexBuffer = VERTEX_BUF_POOL.get();
-    vertexBuffer.clear();
-    Minecraft mc = Minecraft.getInstance();
-    BlockStateModelSet blockModels = null;
-    if (mc != null && mc.getModelManager() != null) {
-      blockModels = mc.getModelManager().getBlockStateModelSet();
-    }
-    BlockState state = digest.dominantStateId != 0
-                           ? Block.stateById(digest.dominantStateId)
-                           : Blocks.STONE.defaultBlockState();
-    if (state == null || state.isAir()) {
-      state = Blocks.STONE.defaultBlockState();
-    }
-    TextureAtlasSprite sprite = null;
-    if (blockModels != null) {
-      try {
-        BlockStateModel model = blockModels.get(state);
-        if (model != null) {
-          sprite = model.particleMaterial().sprite();
-        }
-      } catch (Exception ignored) {
-      }
-    }
-    int color = getBlockColor(state);
-    byte tintType = getBiomeTintType(state.getBlock());
-    if (tintType != TINT_NONE && mc != null && mc.level != null) {
-      int[] biomeColors = getSectionBiomeColors(
-          mc.level, digest.chunkX, digest.chunkY, digest.chunkZ, 1);
-      if (tintType < biomeColors.length) {
-        color = biomeColors[tintType];
-      }
-    }
-    byte tintR = (byte)((color >> 16) & 0xFF);
-    byte tintG = (byte)((color >> 8) & 0xFF);
-    byte tintB = (byte)(color & 0xFF);
-    byte alpha = (byte)255;
-    byte packedLight = (byte)((digest.maxBlockLight & 0xF) |
-                              ((digest.maxSkyLight & 0xF) << 4));
-    FarFieldDigest xNeg =
-        getFarFieldDigest(digest.chunkX - 1, digest.chunkY, digest.chunkZ);
-    FarFieldDigest xPos =
-        getFarFieldDigest(digest.chunkX + 1, digest.chunkY, digest.chunkZ);
-    FarFieldDigest zNeg =
-        getFarFieldDigest(digest.chunkX, digest.chunkY, digest.chunkZ - 1);
-    FarFieldDigest zPos =
-        getFarFieldDigest(digest.chunkX, digest.chunkY, digest.chunkZ + 1);
-    FarFieldDigest yPos =
-        getFarFieldDigest(digest.chunkX, digest.chunkY + 1, digest.chunkZ);
-    int quadCount = 0;
-    for (int z = 0; z < SECTION_SIZE; z++) {
-      for (int x = 0; x < SECTION_SIZE; x++) {
-        int bottom = getDigestBottom(digest, x, z);
-        int top = getDigestTop(digest, x, z);
-        if (bottom < 0 || top < bottom) {
-          continue;
-        }
-        int topEnd = top + 1;
-        if (!(top == SECTION_SIZE - 1 && getDigestBottom(yPos, x, z) == 0)) {
-          quadCount +=
-              emitFaceRect(vertexBuffer, x, top, z, x + 1, topEnd, z + 1, 1,
-                           sprite, packedLight, tintR, tintG, tintB, alpha);
-        }
-        int westBottom = x > 0 ? getDigestBottom(digest, x - 1, z)
-                               : getDigestBottom(xNeg, SECTION_SIZE - 1, z);
-        int westTop = x > 0 ? getDigestTop(digest, x - 1, z)
-                            : getDigestTop(xNeg, SECTION_SIZE - 1, z);
-        quadCount += emitDigestSide(vertexBuffer, x, z, bottom, topEnd,
-                                    westBottom, westTop, 4, sprite, packedLight,
-                                    tintR, tintG, tintB, alpha);
-        int eastBottom = x + 1 < SECTION_SIZE
-                             ? getDigestBottom(digest, x + 1, z)
-                             : getDigestBottom(xPos, 0, z);
-        int eastTop = x + 1 < SECTION_SIZE ? getDigestTop(digest, x + 1, z)
-                                           : getDigestTop(xPos, 0, z);
-        quadCount += emitDigestSide(vertexBuffer, x, z, bottom, topEnd,
-                                    eastBottom, eastTop, 5, sprite, packedLight,
-                                    tintR, tintG, tintB, alpha);
-        int northBottom = z > 0 ? getDigestBottom(digest, x, z - 1)
-                                : getDigestBottom(zNeg, x, SECTION_SIZE - 1);
-        int northTop = z > 0 ? getDigestTop(digest, x, z - 1)
-                             : getDigestTop(zNeg, x, SECTION_SIZE - 1);
-        quadCount += emitDigestSide(vertexBuffer, x, z, bottom, topEnd,
-                                    northBottom, northTop, 2, sprite,
-                                    packedLight, tintR, tintG, tintB, alpha);
-        int southBottom = z + 1 < SECTION_SIZE
-                              ? getDigestBottom(digest, x, z + 1)
-                              : getDigestBottom(zPos, x, 0);
-        int southTop = z + 1 < SECTION_SIZE ? getDigestTop(digest, x, z + 1)
-                                            : getDigestTop(zPos, x, 0);
-        quadCount += emitDigestSide(vertexBuffer, x, z, bottom, topEnd,
-                                    southBottom, southTop, 3, sprite,
-                                    packedLight, tintR, tintG, tintB, alpha);
-      }
-    }
-    if (quadCount <= 0 || !isCurrent(key, genAtSubmit)) {
-      return false;
-    }
-    vertexBuffer.flip();
-    queueUpload(new UploadJob(
-        key, genAtSubmit, false, digest.chunkX, digest.chunkY, digest.chunkZ,
-        FAR_PROXY_LOD, quadCount, quadCount, 0, 0, 0,
-        copyUploadData(vertexBuffer, quadCount * 4 * VERTEX_STRIDE), digest));
-    return true;
-  }
-
-  private static int getDigestBottom(FarFieldDigest digest, int x, int z) {
-    if (digest == null) {
-      return -1;
-    }
-    return digest.columnBottomHeights[z * SECTION_SIZE + x];
-  }
-
-  private static int getDigestTop(FarFieldDigest digest, int x, int z) {
-    if (digest == null) {
-      return -1;
-    }
-    return digest.columnTopHeights[z * SECTION_SIZE + x];
-  }
-
-  private static int emitDigestSide(ByteBuffer buf, int x, int z, int y0,
-                                    int y1, int otherBottom, int otherTop,
-                                    int normalIndex, TextureAtlasSprite sprite,
-                                    byte packedLight, byte r, byte g, byte b,
-                                    byte alpha) {
-    if (y1 <= y0) {
-      return 0;
-    }
-    if (otherBottom < 0 || otherTop < otherBottom) {
-      return emitDigestSpan(buf, x, z, y0, y1, normalIndex, sprite, packedLight,
-                            r, g, b, alpha);
-    }
-    int count = 0;
-    if (y0 < otherBottom) {
-      count += emitDigestSpan(buf, x, z, y0, Math.min(y1, otherBottom),
-                              normalIndex, sprite, packedLight, r, g, b, alpha);
-    }
-    int otherEnd = otherTop + 1;
-    if (otherEnd < y1) {
-      int start = Math.max(y0, otherEnd);
-      if (start < y1) {
-        count += emitDigestSpan(buf, x, z, start, y1, normalIndex, sprite,
-                                packedLight, r, g, b, alpha);
-      }
-    }
-    return count;
-  }
-
-  private static int emitDigestSpan(ByteBuffer buf, int x, int z, int y0,
-                                    int y1, int normalIndex,
-                                    TextureAtlasSprite sprite, byte packedLight,
-                                    byte r, byte g, byte b, byte alpha) {
-    if (y1 <= y0) {
-      return 0;
-    }
-    return switch (normalIndex) {
-      case 4 ->
-        emitFaceRect(buf, x, y0, z, x, y1, z + 1, 4, sprite, packedLight, r, g,
-                     b, alpha);
-      case 5 ->
-        emitFaceRect(buf, x + 1, y0, z, x + 1, y1, z + 1, 5, sprite,
-                     packedLight, r, g, b, alpha);
-      case 2 ->
-        emitFaceRect(buf, x, y0, z, x + 1, y1, z, 2, sprite, packedLight, r, g,
-                     b, alpha);
-      case 3 ->
-        emitFaceRect(buf, x, y0, z + 1, x + 1, y1, z + 1, 3, sprite,
-                     packedLight, r, g, b, alpha);
-      default -> 0;
-    };
+    buildMeshFromWorld(chunkX, chunkY, chunkZ, 0, true, true);
   }
 
   private void buildMeshFromWorld(int chunkX, int chunkY, int chunkZ,
                                   int lodLevel, boolean highPriority,
-                                  boolean interactivePriority,
-                                  boolean lightFix) {
+                                  boolean interactivePriority) {
     if (!initialized)
       return;
     final int effectiveLodLevel = Math.max(0, Math.min(4, lodLevel));
     final boolean useApproximateLight =
-        !lightFix && !interactivePriority &&
-        (highPriority || aggressiveApproximateLighting);
+        !interactivePriority && (highPriority || aggressiveApproximateLighting);
     long key = packChunkKey(chunkX, chunkY, chunkZ);
     boolean wasDirty;
     synchronized (dirtyKeys) { wasDirty = dirtyKeys.contains(key); }
@@ -4396,11 +3694,21 @@ public class CustomChunkMesher {
         }
         LevelChunkSection section = chunkSections[sectionIdx];
         if (section == null || section.hasOnlyAir()) {
-          if (!isCurrent(key, genAtSubmit)) {
-            synchronized (pendingKeys) { pendingKeys.remove(key); }
-            return;
+
+          synchronized (meshCache) {
+            ChunkMeshData old = meshCache.remove(key);
+            if (old != null) {
+              NativeBridge.nUnregisterChunkMesh(chunkX, chunkY, chunkZ);
+              NativeBridge.nDestroyBuffer(old.bufferHandle);
+              meshCountAtomic.decrementAndGet();
+            }
           }
-          queueClear(key, genAtSubmit, chunkX, chunkY, chunkZ);
+          synchronized (emptyKeys) { emptyKeys.add(key); }
+          synchronized (dirtyKeys) { dirtyKeys.remove(key); }
+          synchronized (pendingKeys) { pendingKeys.remove(key); }
+
+          meshUpdateGeneration.incrementAndGet();
+          recordVisibleLatency(key);
           return;
         }
         int[] blockStates = BLOCK_STATES_POOL.get();
@@ -4418,11 +3726,21 @@ public class CustomChunkMesher {
           }
         }
         if (!hasAnyBlock) {
-          if (!isCurrent(key, genAtSubmit)) {
-            synchronized (pendingKeys) { pendingKeys.remove(key); }
-            return;
+
+          synchronized (meshCache) {
+            ChunkMeshData old = meshCache.remove(key);
+            if (old != null) {
+              NativeBridge.nUnregisterChunkMesh(chunkX, chunkY, chunkZ);
+              NativeBridge.nDestroyBuffer(old.bufferHandle);
+              meshCountAtomic.decrementAndGet();
+            }
           }
-          queueClear(key, genAtSubmit, chunkX, chunkY, chunkZ);
+          synchronized (emptyKeys) { emptyKeys.add(key); }
+          synchronized (dirtyKeys) { dirtyKeys.remove(key); }
+          synchronized (pendingKeys) { pendingKeys.remove(key); }
+
+          meshUpdateGeneration.incrementAndGet();
+          recordVisibleLatency(key);
           return;
         }
         int[] neighborXNeg = null, neighborXPos = null;
@@ -4526,10 +3844,9 @@ public class CustomChunkMesher {
           java.util.Arrays.fill(lightData, (byte)0x00);
         }
         doMeshBuild(chunkX, chunkY, chunkZ, blockStates, lightData, key,
-                    genAtSubmit, useApproximateLight, effectiveLodLevel,
-                    neighborXNeg, neighborXPos, neighborYNeg, neighborYPos,
-                    neighborZNeg, neighborZPos, nXNegLight, nXPosLight,
-                    nYNegLight, nYPosLight, nZNegLight, nZPosLight);
+                    effectiveLodLevel, neighborXNeg, neighborXPos, neighborYNeg,
+                    neighborYPos, neighborZNeg, neighborZPos, nXNegLight,
+                    nXPosLight, nYNegLight, nYPosLight, nZNegLight, nZPosLight);
         long pipeElapsed = System.nanoTime() - pipelineStart;
         pipelineTimeAcc += pipeElapsed;
         pipelineCount++;
@@ -4539,10 +3856,6 @@ public class CustomChunkMesher {
                           chunkY, chunkZ, e.getMessage());
       }
     };
-    if (lightFix) {
-      lightRebuildPool.submit(buildTask);
-      return;
-    }
     if (interactivePriority) {
       int interactiveQueueDepth = interactiveRebuildPool != null
                                       ? interactiveRebuildPool.getQueue().size()
@@ -5623,163 +4936,6 @@ public class CustomChunkMesher {
                                                     new short[3],
                                                     new short[3]});
 
-  private static int emitFaceRect(ByteBuffer buf, int x0, int y0, int z0,
-                                  int x1, int y1, int z1, int normalIndex,
-                                  TextureAtlasSprite sprite, byte packedLight,
-                                  byte r, byte g, byte b, byte alpha) {
-    short sx = (short)(x0 * 256);
-    short sy = (short)(y0 * 256);
-    short sz = (short)(z0 * 256);
-    short ex = (short)(x1 * 256);
-    short ey = (short)(y1 * 256);
-    short ez = (short)(z1 * 256);
-    short[][] p = FACE_POS_POOL.get();
-    switch (normalIndex) {
-    case 1:
-      p[0][0] = sx;
-      p[0][1] = ey;
-      p[0][2] = sz;
-      p[1][0] = sx;
-      p[1][1] = ey;
-      p[1][2] = ez;
-      p[2][0] = ex;
-      p[2][1] = ey;
-      p[2][2] = ez;
-      p[3][0] = ex;
-      p[3][1] = ey;
-      p[3][2] = sz;
-      break;
-    case 0:
-      p[0][0] = sx;
-      p[0][1] = sy;
-      p[0][2] = ez;
-      p[1][0] = sx;
-      p[1][1] = sy;
-      p[1][2] = sz;
-      p[2][0] = ex;
-      p[2][1] = sy;
-      p[2][2] = sz;
-      p[3][0] = ex;
-      p[3][1] = sy;
-      p[3][2] = ez;
-      break;
-    case 3:
-      p[0][0] = sx;
-      p[0][1] = ey;
-      p[0][2] = ez;
-      p[1][0] = sx;
-      p[1][1] = sy;
-      p[1][2] = ez;
-      p[2][0] = ex;
-      p[2][1] = sy;
-      p[2][2] = ez;
-      p[3][0] = ex;
-      p[3][1] = ey;
-      p[3][2] = ez;
-      break;
-    case 2:
-      p[0][0] = ex;
-      p[0][1] = ey;
-      p[0][2] = sz;
-      p[1][0] = ex;
-      p[1][1] = sy;
-      p[1][2] = sz;
-      p[2][0] = sx;
-      p[2][1] = sy;
-      p[2][2] = sz;
-      p[3][0] = sx;
-      p[3][1] = ey;
-      p[3][2] = sz;
-      break;
-    case 5:
-      p[0][0] = ex;
-      p[0][1] = ey;
-      p[0][2] = ez;
-      p[1][0] = ex;
-      p[1][1] = sy;
-      p[1][2] = ez;
-      p[2][0] = ex;
-      p[2][1] = sy;
-      p[2][2] = sz;
-      p[3][0] = ex;
-      p[3][1] = ey;
-      p[3][2] = sz;
-      break;
-    case 4:
-      p[0][0] = sx;
-      p[0][1] = ey;
-      p[0][2] = sz;
-      p[1][0] = sx;
-      p[1][1] = sy;
-      p[1][2] = sz;
-      p[2][0] = sx;
-      p[2][1] = sy;
-      p[2][2] = ez;
-      p[3][0] = sx;
-      p[3][1] = ey;
-      p[3][2] = ez;
-      break;
-    default:
-      return 0;
-    }
-    short uMin = 0;
-    short uMax = (short)65535;
-    short vMin = 0;
-    short vMax = (short)65535;
-    if (sprite != null) {
-      uMin = (short)(sprite.getU0() * 65535.0f);
-      uMax = (short)(sprite.getU1() * 65535.0f);
-      vMin = (short)(sprite.getV0() * 65535.0f);
-      vMax = (short)(sprite.getV1() * 65535.0f);
-    }
-    byte nIdx = (byte)normalIndex;
-    buf.putShort(p[0][0]);
-    buf.putShort(p[0][1]);
-    buf.putShort(p[0][2]);
-    buf.putShort(uMin);
-    buf.putShort(vMin);
-    buf.put(r);
-    buf.put(g);
-    buf.put(b);
-    buf.put(alpha);
-    buf.put(packedLight);
-    buf.put(nIdx);
-    buf.putShort(p[1][0]);
-    buf.putShort(p[1][1]);
-    buf.putShort(p[1][2]);
-    buf.putShort(uMin);
-    buf.putShort(vMax);
-    buf.put(r);
-    buf.put(g);
-    buf.put(b);
-    buf.put(alpha);
-    buf.put(packedLight);
-    buf.put(nIdx);
-    buf.putShort(p[2][0]);
-    buf.putShort(p[2][1]);
-    buf.putShort(p[2][2]);
-    buf.putShort(uMax);
-    buf.putShort(vMax);
-    buf.put(r);
-    buf.put(g);
-    buf.put(b);
-    buf.put(alpha);
-    buf.put(packedLight);
-    buf.put(nIdx);
-    buf.putShort(p[3][0]);
-    buf.putShort(p[3][1]);
-    buf.putShort(p[3][2]);
-    buf.putShort(uMax);
-    buf.putShort(vMin);
-    buf.put(r);
-    buf.put(g);
-    buf.put(b);
-    buf.put(alpha);
-    buf.put(packedLight);
-    buf.put(nIdx);
-    return 1;
-  }
-
   private int emitFaceScaled(ByteBuffer buf, int x, int y, int z,
                              int normalIndex, TextureAtlasSprite sprite,
                              byte packedLight, byte r, byte g, byte b,
@@ -6129,6 +5285,37 @@ public class CustomChunkMesher {
     type = DYNAMIC_TINT_CACHE.get(block);
     if (type != null)
       return type;
+    try {
+      Minecraft mc = Minecraft.getInstance();
+      if (mc != null) {
+        BlockColors blockColors = mc.getBlockColors();
+        if (blockColors != null) {
+          net.minecraft.client.color.block.BlockTintSource tintSrc =
+              blockColors.getTintSource(block.defaultBlockState(), 0);
+          if (tintSrc != null) {
+            int color = tintSrc.color(block.defaultBlockState());
+            if (color != -1 && color != 0xFFFFFF) {
+
+              int r = (color >> 16) & 0xFF;
+              int g = (color >> 8) & 0xFF;
+              int b = color & 0xFF;
+              byte detectedTint;
+              if (b > r && b > g) {
+                detectedTint = TINT_WATER;
+              } else if (g > r * 1.2) {
+
+                detectedTint = TINT_FOLIAGE;
+              } else {
+                detectedTint = TINT_FOLIAGE;
+              }
+              DYNAMIC_TINT_CACHE.put(block, detectedTint);
+              return detectedTint;
+            }
+          }
+        }
+      }
+    } catch (Exception ignored) {
+    }
     DYNAMIC_TINT_CACHE.put(block, TINT_NONE);
     return TINT_NONE;
   }
@@ -6298,40 +5485,15 @@ public class CustomChunkMesher {
     synchronized (meshCache) { return meshCache.get(packChunkKey(cx, cy, cz)); }
   }
 
-  public FarFieldDigest getFarFieldDigest(int cx, int cy, int cz) {
-    synchronized (farFieldDigestCache) {
-      return farFieldDigestCache.get(packChunkKey(cx, cy, cz));
-    }
-  }
-
-  public java.util.List<FarFieldDigest> getAllFarFieldDigests() {
-    synchronized (farFieldDigestCache) {
-      return new java.util.ArrayList<>(farFieldDigestCache.values());
-    }
-  }
-
-  public int getFarFieldDigestCount() {
-    synchronized (farFieldDigestCache) { return farFieldDigestCache.size(); }
-  }
-
   public void removeMesh(int cx, int cy, int cz) {
-    removeMesh(cx, cy, cz, true);
-  }
-
-  public void removeMesh(int cx, int cy, int cz, boolean clearDigest) {
     long key = packChunkKey(cx, cy, cz);
     ChunkMeshData mesh;
     synchronized (meshCache) { mesh = meshCache.remove(key); }
-    if (clearDigest) {
-      removeFarFieldDigest(key);
-    }
     if (mesh != null) {
       NativeBridge.nUnregisterChunkMesh(cx, cy, cz);
       NativeBridge.nDestroyBuffer(mesh.bufferHandle);
       meshCountAtomic.decrementAndGet();
-      meshUpdateGeneration.incrementAndGet();
     }
-
     synchronized (emptyKeys) { emptyKeys.remove(key); }
   }
 
@@ -6344,11 +5506,6 @@ public class CustomChunkMesher {
       }
       meshCache.clear();
     }
-    synchronized (farFieldDigestCache) { farFieldDigestCache.clear(); }
-    synchronized (approxLightKeys) { approxLightKeys.clear(); }
-    synchronized (queuedLightFixKeys) { queuedLightFixKeys.clear(); }
-    synchronized (lightFixQueue) { lightFixQueue.clear(); }
-    clearUploadQueue();
 
     if (NativeBridge.isLibLoaded()) {
       NativeBridge.nClearAllChunkRegistrations();

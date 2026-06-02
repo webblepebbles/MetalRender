@@ -408,7 +408,47 @@ public class MetalEntityRenderer {
       }
     } catch (Exception ignored) {
     }
+    if (captured.glTextureId == 0) {
+      captured.glTextureId = resolveGenericRendererTexture(renderer, state);
+    }
+    if (captured.glTextureId == 0 && reusableCmdQueue != null) {
+      captured.glTextureId = reusableCmdQueue.getRequestedGlTextureId();
+    }
     return true;
+  }
+
+  private int resolveGenericRendererTexture(EntityRenderer<?, ?> renderer,
+                                            EntityRenderState state) {
+    try {
+      for (Method method : renderer.getClass().getMethods()) {
+        if (!method.getName().equals("getTextureLocation") &&
+            !method.getName().equals("getTexture")) {
+          continue;
+        }
+        if (method.getParameterCount() != 1) {
+          continue;
+        }
+
+        Object rawTextureId = method.invoke(renderer, state);
+        if (rawTextureId instanceof Identifier textureId) {
+          return getTextureGlId(textureId);
+        }
+      }
+    } catch (Exception ignored) {
+    }
+    return 0;
+  }
+
+  private int getTextureGlId(Identifier textureId) {
+    Minecraft mc = Minecraft.getInstance();
+    if (mc == null || mc.getTextureManager() == null) {
+      return 0;
+    }
+    AbstractTexture texture = mc.getTextureManager().getTexture(textureId);
+    if (texture != null && texture.getTexture() instanceof GlTexture glTexture) {
+      return glTexture.glId();
+    }
+    return 0;
   }
 
   private void appendFireOverlay(CapturedEntity captured,
