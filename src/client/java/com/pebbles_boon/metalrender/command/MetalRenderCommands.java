@@ -84,6 +84,13 @@ public final class MetalRenderCommands {
                                         return 1;
                                     })))
 
+                            .then(literal("profile").executes(ctx -> {
+                                com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance().toggleVisible();
+                                boolean nowVisible = com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance().isVisible();
+                                msg(ctx.getSource(), nowVisible ? "§aMetalRender profiler enabled." : "§eMetalRender profiler disabled.");
+                                return 1;
+                            }))
+
                             .executes(ctx -> {
                                 sendHelp(ctx.getSource());
                                 return 1;
@@ -110,6 +117,7 @@ public final class MetalRenderCommands {
         msg(src, "§e/metalrender config open §7- Open MetalRender settings screen");
         msg(src, "§e/metalrender config save|reload|reset §7- Config management");
         msg(src, "§e/metalrender performance reset §7- Reset perf settings");
+        msg(src, "§e/metalrender profile §7- Toggle profiler overlay");
     }
 
     private static void openConfigScreen(FabricClientCommandSource src) {

@@ -593,7 +593,14 @@ public class CustomChunkMesher {
     return meshCountAtomic.get();
   }
 
+  public int getTotalVertexCount() {
+    return vertexCountAtomic.get();
+  }
+
   private final java.util.concurrent.atomic.AtomicInteger meshCountAtomic = new java.util.concurrent.atomic.AtomicInteger(
+      0);
+
+  private final java.util.concurrent.atomic.AtomicInteger vertexCountAtomic = new java.util.concurrent.atomic.AtomicInteger(
       0);
 
   private final java.util.concurrent.atomic.AtomicInteger meshUpdateGeneration = new java.util.concurrent.atomic.AtomicInteger(
@@ -841,6 +848,7 @@ public class CustomChunkMesher {
       }
       meshCache.clear();
       meshCountAtomic.set(0);
+      vertexCountAtomic.set(0);
     }
     synchronized (pendingKeys) {
       pendingKeys.clear();
@@ -3261,6 +3269,7 @@ public class CustomChunkMesher {
           NativeBridge.nUnregisterChunkMesh(chunkX, chunkY, chunkZ);
           NativeBridge.nDestroyBuffer(old.bufferHandle);
           meshCountAtomic.decrementAndGet();
+          vertexCountAtomic.addAndGet(-old.quadCount * 4);
         }
 
         synchronized (emptyKeys) {
@@ -3298,6 +3307,9 @@ public class CustomChunkMesher {
       }
       if (old == null) {
         meshCountAtomic.incrementAndGet();
+        vertexCountAtomic.addAndGet(mesh.quadCount * 4);
+      } else {
+        vertexCountAtomic.addAndGet(mesh.quadCount * 4 - old.quadCount * 4);
       }
       NativeBridge.nRegisterChunkMesh(chunkX, chunkY, chunkZ, bufferHandle,
           quadCount, opaqueQuadCount, lodLevel);
@@ -3690,6 +3702,7 @@ public class CustomChunkMesher {
               NativeBridge.nUnregisterChunkMesh(chunkX, chunkY, chunkZ);
               NativeBridge.nDestroyBuffer(old.bufferHandle);
               meshCountAtomic.decrementAndGet();
+              vertexCountAtomic.addAndGet(-old.quadCount * 4);
             }
           }
           synchronized (emptyKeys) {
@@ -3728,6 +3741,7 @@ public class CustomChunkMesher {
               NativeBridge.nUnregisterChunkMesh(chunkX, chunkY, chunkZ);
               NativeBridge.nDestroyBuffer(old.bufferHandle);
               meshCountAtomic.decrementAndGet();
+              vertexCountAtomic.addAndGet(-old.quadCount * 4);
             }
           }
           synchronized (emptyKeys) {
@@ -5437,6 +5451,7 @@ public class CustomChunkMesher {
       NativeBridge.nUnregisterChunkMesh(cx, cy, cz);
       NativeBridge.nDestroyBuffer(mesh.bufferHandle);
       meshCountAtomic.decrementAndGet();
+      vertexCountAtomic.addAndGet(-mesh.quadCount * 4);
     }
     synchronized (emptyKeys) {
       emptyKeys.remove(key);

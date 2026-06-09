@@ -16,6 +16,7 @@ public final class PerformanceController {
   public static void startFrame() {
     frameActive = true;
     PERF_LOGGER.startFrame();
+    MetalRenderProfiler.getInstance().startFrame();
   }
 
   public static void accumulateChunkStats(int processed, int drawn, int frustum,
@@ -31,6 +32,7 @@ public final class PerformanceController {
       return;
     PERF_LOGGER.endFrame(chunksProcessed, chunksDrawn, frustumCulled,
         occlusionCulled);
+    MetalRenderProfiler.getInstance().endFrame();
     chunksProcessed = 0;
     chunksDrawn = 0;
     frustumCulled = 0;

@@ -81,6 +81,7 @@ public class WorldRendererBlitMixin {
           camPos.x, camPos.y, camPos.z);
       worldRenderer.beginFrame(camera, tickDelta, metalrender$projection,
           metalrender$modelView);
+      com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance().startRender();
       metalrender$frameActive = true;
       metalrender$beginFrameCount++;
       if (metalrender$beginFrameCount <= 3) {
@@ -109,6 +110,7 @@ public class WorldRendererBlitMixin {
       return;
     }
     try {
+      com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance().endRender();
       worldRenderer.endFrame();
       MetalRenderer renderer = MetalRenderClient.getRenderer();
       if (renderer != null) {

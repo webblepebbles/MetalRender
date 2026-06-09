@@ -4,6 +4,7 @@ import com.pebbles_boon.metalrender.backend.MetalRenderer;
 import com.pebbles_boon.metalrender.command.MetalRenderCommands;
 import com.pebbles_boon.metalrender.config.MetalRenderConfig;
 import com.pebbles_boon.metalrender.gui.MetalDebugEntry;
+import com.pebbles_boon.metalrender.gui.MetalRenderProfilerOverlay;
 import com.pebbles_boon.metalrender.gui.MetalRenderSettingsScreen;
 import com.pebbles_boon.metalrender.nativebridge.MetalHardwareChecker;
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
@@ -44,6 +45,7 @@ public class MetalRenderClient implements ClientModInitializer {
     config = MetalRenderConfig.load();
     cfgWasOn = config != null && config.enableMetalRendering;
     MetalDebugEntry.register();
+    MetalRenderProfilerOverlay.register();
     if (MetalRenderConfig.isDeepDebugActive()) {
       MetalLogger.info("debug logging is logging");
     }
