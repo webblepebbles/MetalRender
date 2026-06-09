@@ -4,6 +4,7 @@ import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.config.MetalRenderConfig;
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
 import com.pebbles_boon.metalrender.nativebridge.NativeMemory;
+import com.pebbles_boon.metalrender.performance.MetalRenderProfiler;
 import com.pebbles_boon.metalrender.util.MetalLogger;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -3293,8 +3294,11 @@ public class CustomChunkMesher {
       try {
         bufferHandle = NativeBridge.nCreateBuffer(
             deviceHandle, dataLen, NativeMemory.STORAGE_MODE_SHARED);
+        long uploadStart = System.nanoTime();
         NativeBridge.nUploadBufferDataDirect(bufferHandle, vertexBuffer, 0,
             dataLen);
+        MetalRenderProfiler.getInstance().recordUploadTime(System.nanoTime() - uploadStart);
+        MetalRenderProfiler.getInstance().incrementUploadsDone(1);
       } finally {
         UPLOAD_SEMAPHORE.release();
         uploadSemaphore.release();
@@ -3319,6 +3323,7 @@ public class CustomChunkMesher {
 
       meshUpdateGeneration.incrementAndGet();
       recordVisibleLatency(key);
+      MetalRenderProfiler.getInstance().incrementMeshesBuilt(1);
       synchronized (dirtyKeys) {
         dirtyKeys.remove(key);
       }
@@ -3327,6 +3332,7 @@ public class CustomChunkMesher {
           chunkZ);
     } finally {
       long buildElapsed = System.nanoTime() - buildStart;
+      MetalRenderProfiler.getInstance().recordMeshingTime(buildElapsed);
       meshBuildTimeAcc += buildElapsed;
       if (lodLevel < 1) {
         lodSlowTimeAcc += buildElapsed;

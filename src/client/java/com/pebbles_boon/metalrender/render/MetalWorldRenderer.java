@@ -14,6 +14,7 @@ import com.pebbles_boon.metalrender.nativebridge.NativeMemory;
 import com.pebbles_boon.metalrender.particle.MetalParticleRenderer;
 import com.pebbles_boon.metalrender.render.chunk.CustomChunkMesher;
 import com.pebbles_boon.metalrender.sodium.backend.MeshShaderBackend;
+import com.pebbles_boon.metalrender.performance.MetalRenderProfiler;
 import com.pebbles_boon.metalrender.util.MetalLogger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -268,6 +269,7 @@ public class MetalWorldRenderer {
       }
     }
     long tTexture1 = System.nanoTime();
+    MetalRenderProfiler.getInstance().recordTextureTime(tTexture1 - tTexture0);
     long now = System.currentTimeMillis();
     long diagInterval = chunkMesher.getMeshCount() < 2000 ? 1000 : 5000;
     if (MetalRenderConfig.isDeepDebugActive() &&
@@ -340,7 +342,9 @@ public class MetalWorldRenderer {
     modelViewMatrix.set(modelView);
     Vector3f camPos = new Vector3f((float) camera.position().x, (float) camera.position().y,
         (float) camera.position().z);
+    long cullStart = System.nanoTime();
     frustumCuller.update(projectionMatrix, modelViewMatrix, camPos);
+    MetalRenderProfiler.getInstance().recordCullTime(System.nanoTime() - cullStart);
     lastDrawnChunkCount = 0;
     renderer.beginFrame(tickDelta);
     Matrix4f metalProj = new Matrix4f(projectionMatrix);
@@ -382,6 +386,7 @@ public class MetalWorldRenderer {
           if (ibHandle != 0) {
             int drawn = NativeBridge.nDrawAllVisibleChunks(frameCtx, ibHandle);
             lastDrawnChunkCount = drawn;
+            MetalRenderProfiler.getInstance().incrementChunksDrawn(drawn);
             if (frameCount < 10 || frameCount % 1000 == 0) {
               MetalLogger.info("Frame %d: V18 native drew %d chunks",
                   frameCount, drawn);
@@ -481,10 +486,14 @@ public class MetalWorldRenderer {
       if (mc != null && mc.getCameraEntity() != null) {
         inWater = mc.getCameraEntity().isUnderWater();
       }
+      long entityStart = System.nanoTime();
       entityRenderer.renderCapturedEntities(frameCtx, inWater);
+      MetalRenderProfiler.getInstance().recordEntityTime(System.nanoTime() - entityStart);
       NativeBridge.nDrawDeferredWaterPass(frameCtx);
       NativeBridge.nDrawOITPass(frameCtx);
+      long particleStart = System.nanoTime();
       particleRenderer.render(frameCtx);
+      MetalRenderProfiler.getInstance().recordParticleTime(System.nanoTime() - particleStart);
       renderBlockOutline(frameCtx);
     }
     renderer.endFrame();
@@ -663,7 +672,9 @@ public class MetalWorldRenderer {
         scanFrameCounter = 0;
       }
     }
+    long scanStart = System.nanoTime();
     scanForPendingChunks(mc);
+    MetalRenderProfiler.getInstance().recordScanTime(System.nanoTime() - scanStart);
     if (mc.player != null && chunkMesher.getMeshCount() < maxMeshes) {
       int playerChunkX = mc.player.chunkPosition().x();
       int playerChunkZ = mc.player.chunkPosition().z();
@@ -720,7 +731,9 @@ public class MetalWorldRenderer {
           pendingBuildSet.size() <= DETAIL_TIER_REBUILD_SCAN_LIMIT / 2 &&
           chunkMesher.getPendingCount() <= DETAIL_TIER_REBUILD_MAX_PER_PASS &&
           frameCount % DETAIL_TIER_REBUILD_FRAME_INTERVAL == 0) {
+        long lodStart = System.nanoTime();
         rebuildLodMeshes(mc);
+        MetalRenderProfiler.getInstance().recordLodRebuildTime(System.nanoTime() - lodStart);
       }
       if (turnPriorityFrames > 0) {
         turnPriorityFrames--;
@@ -937,6 +950,7 @@ public class MetalWorldRenderer {
       LevelChunkSection section = sections[sy];
       if (section == null || section.hasOnlyAir())
         continue;
+      MetalRenderProfiler.getInstance().incrementChunksScanned(1);
       int worldY = chunk.getSectionYFromSectionIndex(sy);
       if (maxVerticalRange != Integer.MAX_VALUE) {
         boolean withinVerticalWindow = Math.abs(worldY - playerSectionY) <= maxVerticalRange;
@@ -1548,6 +1562,7 @@ public class MetalWorldRenderer {
       if (section == null || section.hasOnlyAir()) {
         continue;
       }
+      MetalRenderProfiler.getInstance().incrementChunksScanned(1);
       int worldY = chunk.getSectionYFromSectionIndex(sy);
       if (!chunkMesher.hasMesh(chunkX, worldY, chunkZ) &&
           isSectionBuildReady(mc.level, chunkX, worldY, chunkZ)) {
