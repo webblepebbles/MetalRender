@@ -3,7 +3,7 @@ plugins {
     id 'maven-publish'
 }
 
-group = "com.metalrender"
+group = "com.pebbles_boon.metalrender"
 version = "v0.1.7"
 
 java {
