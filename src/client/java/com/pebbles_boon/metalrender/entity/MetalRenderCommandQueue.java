@@ -48,7 +48,9 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
     this.defaultLight = light;
   }
 
-  public int getRequestedGlTextureId() { return requestedGlTextureId; }
+  public int getRequestedGlTextureId() {
+    return requestedGlTextureId;
+  }
 
   @Override
   public OrderedSubmitNodeCollector order(int index) {
@@ -57,10 +59,10 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
 
   @Override
   public <S> void submitModel(Model<? super S> model, S state,
-                              PoseStack matrices, RenderType layer, int light,
-                              int overlay, int color, TextureAtlasSprite sprite,
-                              int flags,
-                              ModelFeatureRenderer.CrumblingOverlay crumbling) {
+      PoseStack matrices, RenderType layer, int light,
+      int overlay, int color, TextureAtlasSprite sprite,
+      int flags,
+      ModelFeatureRenderer.CrumblingOverlay crumbling) {
     if (model == null) {
       return;
     }
@@ -69,11 +71,10 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
   }
 
   @Override
-  public void
-  submitModelPart(ModelPart part, PoseStack matrices, RenderType layer,
-                  int light, int overlay, TextureAtlasSprite sprite,
-                  boolean visible, boolean noCull, int color,
-                  ModelFeatureRenderer.CrumblingOverlay crumbling, int extra) {
+  public void submitModelPart(ModelPart part, PoseStack matrices, RenderType layer,
+      int light, int overlay, TextureAtlasSprite sprite,
+      boolean visible, boolean noCull, int color,
+      ModelFeatureRenderer.CrumblingOverlay crumbling, int extra) {
     if (part != null && (visible || noCull)) {
       part.render(matrices, vertexConsumer, light, overlay, color);
     }
@@ -81,30 +82,35 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
 
   @Override
   public void submitShadow(PoseStack matrices, float radius,
-                           List<EntityRenderState.ShadowPiece> pieces) {}
+      List<EntityRenderState.ShadowPiece> pieces) {
+  }
 
   @Override
   public void submitNameTag(PoseStack matrices, Vec3 pos, int bgColor,
-                            Component text, boolean seeThrough, int textColor,
-                            double distance, CameraRenderState camera) {}
+      Component text, boolean seeThrough, int textColor,
+      double distance, CameraRenderState camera) {
+  }
 
   @Override
   public void submitText(PoseStack matrices, float x, float y,
-                         FormattedCharSequence text, boolean shadow,
-                         Font.DisplayMode layerType, int bgColor, int textColor,
-                         int light, int sortOrder) {}
+      FormattedCharSequence text, boolean shadow,
+      Font.DisplayMode layerType, int bgColor, int textColor,
+      int light, int sortOrder) {
+  }
 
   @Override
   public void submitFlame(PoseStack matrices, EntityRenderState state,
-                          Quaternionf rotation) {}
+      Quaternionf rotation) {
+  }
 
   @Override
   public void submitLeash(PoseStack matrices,
-                          EntityRenderState.LeashState leashData) {}
+      EntityRenderState.LeashState leashData) {
+  }
 
   @Override
   public void submitMovingBlock(PoseStack matrices,
-                                MovingBlockRenderState state) {
+      MovingBlockRenderState state) {
     if (state == null || state.blockState == null || vertexConsumer == null) {
       return;
     }
@@ -123,60 +129,61 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
     float v1 = sprite.getV1();
 
     emitTexturedQuad(matrices,
-                     0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f,
-                     1.0f, 1.0f, 1.0f, 0.0f, 1.0f, 1.0f,
-                     0.0f, 0.0f, 1.0f, u0, u1, v0, v1, color, light);
+        0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f,
+        1.0f, 1.0f, 1.0f, 0.0f, 1.0f, 1.0f,
+        0.0f, 0.0f, 1.0f, u0, u1, v0, v1, color, light);
     emitTexturedQuad(matrices,
-                     1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                     0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f,
-                     0.0f, 0.0f, -1.0f, u0, u1, v0, v1, color, light);
+        1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f,
+        0.0f, 0.0f, -1.0f, u0, u1, v0, v1, color, light);
     emitTexturedQuad(matrices,
-                     0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f,
-                     1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f,
-                     0.0f, 1.0f, 0.0f, u0, u1, v0, v1, color, light);
+        0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f,
+        1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f,
+        0.0f, 1.0f, 0.0f, u0, u1, v0, v1, color, light);
     emitTexturedQuad(matrices,
-                     0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f,
-                     1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f,
-                     0.0f, -1.0f, 0.0f, u0, u1, v0, v1, color, light);
+        0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f,
+        1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f,
+        0.0f, -1.0f, 0.0f, u0, u1, v0, v1, color, light);
     emitTexturedQuad(matrices,
-                     1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f,
-                     1.0f, 1.0f, 0.0f, 1.0f, 1.0f, 1.0f,
-                     1.0f, 0.0f, 0.0f, u0, u1, v0, v1, color, light);
+        1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f,
+        1.0f, 1.0f, 0.0f, 1.0f, 1.0f, 1.0f,
+        1.0f, 0.0f, 0.0f, u0, u1, v0, v1, color, light);
     emitTexturedQuad(matrices,
-                     0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
-                     0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f,
-                     -1.0f, 0.0f, 0.0f, u0, u1, v0, v1, color, light);
+        0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
+        0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f,
+        -1.0f, 0.0f, 0.0f, u0, u1, v0, v1, color, light);
     requestedGlTextureId = blockAtlasTextureId;
   }
 
   @Override
   public void submitBlockModel(PoseStack matrices, RenderType layer,
-                               List<BlockStateModelPart> parts, int[] colors,
-                               int x, int y, int z) {}
+      List<BlockStateModelPart> parts, int[] colors,
+      int x, int y, int z) {
+  }
 
   @Override
   public void submitBreakingBlockModel(PoseStack matrices,
-                                       BlockStateModel model, long seed,
-                                       int color) {}
+      BlockStateModel model, long seed,
+      int color) {
+  }
 
   @Override
   public void submitItem(PoseStack matrices, ItemDisplayContext context,
-                         int light, int overlay, int color, int[] tintColors,
-                         List<BakedQuad> quads,
-                         ItemStackRenderState.FoilType foilType) {}
+      int light, int overlay, int color, int[] tintColors,
+      List<BakedQuad> quads,
+      ItemStackRenderState.FoilType foilType) {
+  }
 
   @Override
-  public void
-  submitCustomGeometry(PoseStack matrices, RenderType layer,
-                       SubmitNodeCollector.CustomGeometryRenderer custom) {
+  public void submitCustomGeometry(PoseStack matrices, RenderType layer,
+      SubmitNodeCollector.CustomGeometryRenderer custom) {
     if (custom != null) {
       custom.render(matrices.last(), vertexConsumer);
     }
   }
 
   @Override
-  public void
-  submitParticleGroup(SubmitNodeCollector.ParticleGroupRenderer particleGroup) {
+  public void submitParticleGroup(SubmitNodeCollector.ParticleGroupRenderer particleGroup) {
   }
 
   private static void invokeSetupAnim(Model<?> model, Object state) {
@@ -188,7 +195,7 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
   }
 
   private void invokeRenderToBuffer(Model<?> model, PoseStack matrices,
-                                    int light, int overlay, int color) {
+      int light, int overlay, int color) {
     try {
       Method method = model.getClass().getMethod(
           "renderToBuffer", PoseStack.class, VertexConsumer.class, int.class,
@@ -207,7 +214,7 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
   }
 
   private boolean invokeNamedMethod(Object target, String[] methodNames,
-                                    Object... args) {
+      Object... args) {
     if (target == null) {
       return false;
     }
@@ -246,13 +253,13 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
   }
 
   private void emitTexturedQuad(PoseStack matrices,
-                                float x0, float y0, float z0,
-                                float x1, float y1, float z1,
-                                float x2, float y2, float z2,
-                                float x3, float y3, float z3,
-                                float nx, float ny, float nz,
-                                float u0, float u1, float v0, float v1,
-                                int color, int light) {
+      float x0, float y0, float z0,
+      float x1, float y1, float z1,
+      float x2, float y2, float z2,
+      float x3, float y3, float z3,
+      float nx, float ny, float nz,
+      float u0, float u1, float v0, float v1,
+      int color, int light) {
     if (!(vertexConsumer instanceof MetalVertexConsumer metalVertexConsumer)) {
       return;
     }
@@ -264,27 +271,27 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
     }
 
     emitVertex(metalVertexConsumer, matrices, x0, y0, z0, u0, v1, color, light,
-               normal);
+        normal);
     emitVertex(metalVertexConsumer, matrices, x1, y1, z1, u1, v1, color, light,
-               normal);
+        normal);
     emitVertex(metalVertexConsumer, matrices, x2, y2, z2, u1, v0, color, light,
-               normal);
+        normal);
     emitVertex(metalVertexConsumer, matrices, x3, y3, z3, u0, v0, color, light,
-               normal);
+        normal);
   }
 
   private void emitVertex(MetalVertexConsumer metalVertexConsumer,
-                          PoseStack matrices, float x, float y, float z,
-                          float u, float v, int color, int light,
-                          Vector3f normal) {
+      PoseStack matrices, float x, float y, float z,
+      float u, float v, int color, int light,
+      Vector3f normal) {
     Vector3f position = new Vector3f(x, y, z);
     matrices.last().pose().transformPosition(position);
     metalVertexConsumer.vertex(position.x, position.y, position.z, color, u, v,
-                               0, light, normal.x, normal.y, normal.z);
+        0, light, normal.x, normal.y, normal.z);
   }
 
   private Object invokeNamedMethodValue(Object target, String[] methodNames,
-                                        Object... args) {
+      Object... args) {
     if (target == null) {
       return null;
     }
@@ -306,8 +313,7 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
     if (target == null) {
       return null;
     }
-    for (Class<?> current = target.getClass(); current != null;
-         current = current.getSuperclass()) {
+    for (Class<?> current = target.getClass(); current != null; current = current.getSuperclass()) {
       for (String fieldName : fieldNames) {
         try {
           var field = current.getDeclaredField(fieldName);
@@ -321,9 +327,8 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
   }
 
   private Method findCompatibleMethod(Class<?> targetClass, String methodName,
-                                      Object[] args) {
-    for (Class<?> current = targetClass; current != null;
-         current = current.getSuperclass()) {
+      Object[] args) {
+    for (Class<?> current = targetClass; current != null; current = current.getSuperclass()) {
       for (Method method : current.getDeclaredMethods()) {
         if (!method.getName().equals(methodName) ||
             method.getParameterCount() != args.length) {
@@ -363,10 +368,8 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
     if (mc == null || mc.getTextureManager() == null) {
       return 0;
     }
-    AbstractTexture atlasTexture =
-        mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS);
-    if (atlasTexture != null && atlasTexture.getTexture() instanceof
-                                    GlTexture glTexture) {
+    AbstractTexture atlasTexture = mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS);
+    if (atlasTexture != null && atlasTexture.getTexture() instanceof GlTexture glTexture) {
       return glTexture.glId();
     }
     return 0;

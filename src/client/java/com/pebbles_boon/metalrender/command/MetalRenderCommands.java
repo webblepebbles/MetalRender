@@ -136,8 +136,8 @@ public final class MetalRenderCommands {
         msg(src, "§7Hardware: "
                 + (available ? "§a" + MetalHardwareChecker.getDeviceName() : "§cUnavailable"));
         msg(src,
-            "§7LOD: §aZone 0 active §7(0-" + MetalRenderConfig.zone0RadiusChunks()
-                + " chunks, far target " + MetalRenderConfig.farFieldRadiusChunks() + " chunks)");
+                "§7LOD: §aZone 0 active §7(0-" + MetalRenderConfig.zone0RadiusChunks()
+                        + " chunks, far target " + MetalRenderConfig.farFieldRadiusChunks() + " chunks)");
         msg(src, "§7Resolution scale: §f" + String.format("%.2fx", MetalRenderConfig.resolutionScale()));
         msg(src, "§7Frustum culling: "
                 + (MetalRenderConfig.aggressiveFrustumCulling() ? "§aAggressive" : "§eNormal"));

@@ -411,7 +411,7 @@ public class MetalRenderSettingsScreen extends Screen {
 
     boolean biomeChanged = config.biomeTransitionDetail != initialBiomeDetail;
     com.pebbles_boon.metalrender.util.MetalLogger.info(
-      "Settings closed: needsRebuild=%b (renderDist=%b biome=%b leaf=%b lighting=%b)",
+        "Settings closed: needsRebuild=%b (renderDist=%b biome=%b leaf=%b lighting=%b)",
         needsRebuild,
         pendingRenderDist != initialRenderDist,
         biomeChanged,
@@ -554,18 +554,18 @@ public class MetalRenderSettingsScreen extends Screen {
     nfo("Range", "0-" + MetalRenderConfig.zone0RadiusChunks() + " chunks");
     nfo("Sub-tier A", "> " + fmtPx(MetalRenderConfig.zone0ExactBlockPixels()) + " px: exact terrain");
     nfo("Sub-tier B",
-      fmtPx(MetalRenderConfig.zone0GreedyBlockPixels()) + "-"
-        + fmtPx(MetalRenderConfig.zone0ExactBlockPixels())
-        + " px: greedy textured spans");
+        fmtPx(MetalRenderConfig.zone0GreedyBlockPixels()) + "-"
+            + fmtPx(MetalRenderConfig.zone0ExactBlockPixels())
+            + " px: greedy textured spans");
     nfo("Sub-tier C",
-      fmtPx(MetalRenderConfig.zone0ClusterBlockPixels()) + "-"
-        + fmtPx(MetalRenderConfig.zone0GreedyBlockPixels())
-        + " px: textured surface clusters");
+        fmtPx(MetalRenderConfig.zone0ClusterBlockPixels()) + "-"
+            + fmtPx(MetalRenderConfig.zone0GreedyBlockPixels())
+            + " px: textured surface clusters");
     nfo("Sub-tier D", "< " + fmtPx(MetalRenderConfig.zone0ClusterBlockPixels())
-      + " px: near-envelope descriptors");
+        + " px: near-envelope descriptors");
     sec("Zone 1+");
     nfo("Range", MetalRenderConfig.zone0RadiusChunks() + "-"
-      + MetalRenderConfig.farFieldRadiusChunks() + " chunks");
+        + MetalRenderConfig.farFieldRadiusChunks() + " chunks");
     nfo("Target", "Automatic fixed-budget far-field");
     nfo("Runtime", "Descriptor path pending; legacy coarse fallback is active");
   }

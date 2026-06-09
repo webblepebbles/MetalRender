@@ -47,10 +47,8 @@ public class MetalEntityRenderer {
   private static final int SUBMERGED_HOLD_FRAMES = 20;
   private static final int TEXTURE_CACHE_SIZE = 2048;
   private static final long TEXTURE_UNCACHED = Long.MIN_VALUE;
-  private static final Identifier FIRE_SPRITE_0 =
-      Identifier.fromNamespaceAndPath("minecraft", "block/fire_0");
-  private static final Identifier FIRE_SPRITE_1 =
-      Identifier.fromNamespaceAndPath("minecraft", "block/fire_1");
+  private static final Identifier FIRE_SPRITE_0 = Identifier.fromNamespaceAndPath("minecraft", "block/fire_0");
+  private static final Identifier FIRE_SPRITE_1 = Identifier.fromNamespaceAndPath("minecraft", "block/fire_1");
 
   private long device;
   private boolean active;
@@ -64,27 +62,22 @@ public class MetalEntityRenderer {
   private int vtxCount;
   private long cachedEntityPipeline;
   private final MetalVertexConsumer metalVertexConsumer;
-  private final ArrayList<EntityDrawCommand> pendingDrawPool =
-      new ArrayList<>();
+  private final ArrayList<EntityDrawCommand> pendingDrawPool = new ArrayList<>();
   private int pendingDrawCount;
-  private final ArrayList<CapturedEntity> capturedEntityPool =
-      new ArrayList<>();
+  private final ArrayList<CapturedEntity> capturedEntityPool = new ArrayList<>();
   private int count;
   private final HashMap<Integer, Integer> submergedHoldFrames = new HashMap<>();
   private final long[] textureCache = new long[TEXTURE_CACHE_SIZE];
   private final PoseStack matrixStack = new PoseStack();
-  private final CameraRenderState reusableCameraRenderState =
-      new CameraRenderState();
-  private final Vector3f[] overlayCorners = {new Vector3f(), new Vector3f(),
-                                             new Vector3f(), new Vector3f()};
+  private final CameraRenderState reusableCameraRenderState = new CameraRenderState();
+  private final Vector3f[] overlayCorners = { new Vector3f(), new Vector3f(),
+      new Vector3f(), new Vector3f() };
   private MetalRenderCommandQueue reusableCmdQueue;
 
   public MetalEntityRenderer() {
-    vertexStagingBuffer =
-        ByteBuffer.allocateDirect(MAX_BATCH_VERTICES * ENTITY_VERTEX_STRIDE)
-            .order(ByteOrder.nativeOrder());
-    metalVertexConsumer =
-        new MetalVertexConsumer(vertexStagingBuffer, MAX_BATCH_VERTICES);
+    vertexStagingBuffer = ByteBuffer.allocateDirect(MAX_BATCH_VERTICES * ENTITY_VERTEX_STRIDE)
+        .order(ByteOrder.nativeOrder());
+    metalVertexConsumer = new MetalVertexConsumer(vertexStagingBuffer, MAX_BATCH_VERTICES);
     java.util.Arrays.fill(textureCache, TEXTURE_UNCACHED);
     MetalLogger.info(
         "[BUILD_V9] MetalEntityRenderer constructed for 26.1 official names");
@@ -103,9 +96,13 @@ public class MetalEntityRenderer {
     }
   }
 
-  public void setActive(boolean active) { this.active = active; }
+  public void setActive(boolean active) {
+    this.active = active;
+  }
 
-  public boolean isActive() { return active; }
+  public boolean isActive() {
+    return active;
+  }
 
   public boolean hasVisibleSubmergedEntities() {
     for (int index = 0; index < count; index++) {
@@ -139,10 +136,8 @@ public class MetalEntityRenderer {
     captured.overlayStartVertex = -1;
     captured.overlayVertexCount = 0;
     captured.overlayTextureId = 0;
-    captured.isHurt =
-        entity instanceof LivingEntity living && living.hurtTime > 0;
-    captured.hurtFactor =
-        captured.isHurt ? ((LivingEntity)entity).hurtTime / 10.0f : 0.0f;
+    captured.isHurt = entity instanceof LivingEntity living && living.hurtTime > 0;
+    captured.hurtFactor = captured.isHurt ? ((LivingEntity) entity).hurtTime / 10.0f : 0.0f;
 
     boolean submergedNow = entity.isUnderWater() || entity.isInWater();
     int entityId = entity.getId();
@@ -220,22 +215,21 @@ public class MetalEntityRenderer {
       boolean usedModel = false;
       try {
         usedModel = renderEntityModel(entity, captured, renderDispatcher, camX,
-                                      camY, camZ, delta);
+            camY, camZ, delta);
       } catch (Exception e) {
         if (frameCount < 5) {
           MetalLogger.warn("Failed to render entity model for %s: %s",
-                           entity.getType().toString(), e.getMessage());
+              entity.getType().toString(), e.getMessage());
         }
       }
 
       if (!usedModel || metalVertexConsumer.getVertexCount() == startVertex) {
         if (entity instanceof ItemEntity itemEntity) {
-          boolean rendered =
-              renderItemEntity(itemEntity, captured, camX, camY, camZ, delta);
+          boolean rendered = renderItemEntity(itemEntity, captured, camX, camY, camZ, delta);
           if (rendered) {
             if (metalVertexConsumer.getVertexCount() > startVertex) {
               enqueueEntityDraws(startVertex, captured,
-                                 captured.isHurt ? captured.hurtFactor : 0.0f);
+                  captured.isHurt ? captured.hurtFactor : 0.0f);
               drawn++;
               modelCaptures++;
             }
@@ -288,7 +282,7 @@ public class MetalEntityRenderer {
   }
 
   private void enqueueEntityDraws(int startVertex, CapturedEntity captured,
-                                  float hurtFactor) {
+      float hurtFactor) {
     int endVertex = metalVertexConsumer.getVertexCount();
     int totalVertexCount = endVertex - startVertex;
     if (totalVertexCount <= 0) {
@@ -303,16 +297,16 @@ public class MetalEntityRenderer {
 
     if (mainVertexCount > 0) {
       enqueueDraw(startVertex, mainVertexCount, hurtFactor,
-                  captured.glTextureId);
+          captured.glTextureId);
     }
     if (captured.overlayVertexCount > 0 && captured.overlayTextureId != 0) {
       enqueueDraw(captured.overlayStartVertex, captured.overlayVertexCount,
-                  0.0f, captured.overlayTextureId);
+          0.0f, captured.overlayTextureId);
     }
   }
 
   private void enqueueDraw(int startVertex, int vertexCount, float hurtFactor,
-                           int glTextureId) {
+      int glTextureId) {
     EntityDrawCommand drawCommand = getOrCreateDrawCommand();
     drawCommand.startVertex = startVertex;
     drawCommand.vertexCount = vertexCount;
@@ -323,15 +317,15 @@ public class MetalEntityRenderer {
     pendingDrawCount++;
   }
 
-  @SuppressWarnings({"rawtypes", "unchecked"})
+  @SuppressWarnings({ "rawtypes", "unchecked" })
   private boolean renderEntityModel(Entity entity, CapturedEntity captured,
-                                    EntityRenderDispatcher renderDispatcher,
-                                    double camX, double camY, double camZ,
-                                    float tickDelta) {
+      EntityRenderDispatcher renderDispatcher,
+      double camX, double camY, double camZ,
+      float tickDelta) {
     EntityRenderer renderer = renderDispatcher.getRenderer(entity);
     EntityRenderState state;
     try {
-      state = (EntityRenderState)renderer.createRenderState(entity, tickDelta);
+      state = (EntityRenderState) renderer.createRenderState(entity, tickDelta);
     } catch (Exception e) {
       return false;
     }
@@ -350,8 +344,7 @@ public class MetalEntityRenderer {
     ez += offset.z;
     matrixStack.translate(ex, ey, ez);
 
-    if (frameCount % 3000 == 1 && state instanceof
-                                      LivingEntityRenderState livingState) {
+    if (frameCount % 3000 == 1 && state instanceof LivingEntityRenderState livingState) {
       MetalLogger.info(
           "[ENTITY_DIAG] entity=%s bodyRot=%.1f scale=%.2f livingState=true",
           entity.getType().toString(), livingState.bodyRot, livingState.scale);
@@ -360,8 +353,7 @@ public class MetalEntityRenderer {
     int light = state.lightCoords != 0 ? state.lightCoords : 0x00F000F0;
     captured.light = light;
     if (reusableCmdQueue == null) {
-      reusableCmdQueue =
-          new MetalRenderCommandQueue(metalVertexConsumer, light);
+      reusableCmdQueue = new MetalRenderCommandQueue(metalVertexConsumer, light);
     } else {
       reusableCmdQueue.reset(metalVertexConsumer, light);
     }
@@ -380,11 +372,11 @@ public class MetalEntityRenderer {
 
     try {
       renderer.submit(state, matrixStack, reusableCmdQueue,
-                      reusableCameraRenderState);
+          reusableCameraRenderState);
       if (hasFireRenderState(state) &&
           reusableCameraRenderState.orientation != null) {
         appendFireOverlay(captured, state, ex, ey, ez,
-                          reusableCameraRenderState.orientation);
+            reusableCameraRenderState.orientation);
       }
     } catch (Exception e) {
       return false;
@@ -393,18 +385,15 @@ public class MetalEntityRenderer {
     try {
       if (renderer instanceof LivingEntityRenderer livingRenderer &&
           state instanceof LivingEntityRenderState livingState) {
-                LivingEntityRenderer<?, LivingEntityRenderState, ?> typedRenderer = (LivingEntityRenderer<?, LivingEntityRenderState, ?>) livingRenderer;
-                Identifier textureId =
-                    typedRenderer.getTextureLocation(livingState);
-                if (textureId != null) {
-                  AbstractTexture mcTexture =
-                      Minecraft.getInstance().getTextureManager().getTexture(
-                          textureId);
-                  if (mcTexture != null && mcTexture.getTexture() instanceof
-                                               GlTexture glTexture) {
-                    captured.glTextureId = glTexture.glId();
-                  }
-                }
+        LivingEntityRenderer<?, LivingEntityRenderState, ?> typedRenderer = (LivingEntityRenderer<?, LivingEntityRenderState, ?>) livingRenderer;
+        Identifier textureId = typedRenderer.getTextureLocation(livingState);
+        if (textureId != null) {
+          AbstractTexture mcTexture = Minecraft.getInstance().getTextureManager().getTexture(
+              textureId);
+          if (mcTexture != null && mcTexture.getTexture() instanceof GlTexture glTexture) {
+            captured.glTextureId = glTexture.glId();
+          }
+        }
       }
     } catch (Exception ignored) {
     }
@@ -418,7 +407,7 @@ public class MetalEntityRenderer {
   }
 
   private int resolveGenericRendererTexture(EntityRenderer<?, ?> renderer,
-                                            EntityRenderState state) {
+      EntityRenderState state) {
     try {
       for (Method method : renderer.getClass().getMethods()) {
         if (!method.getName().equals("getTextureLocation") &&
@@ -452,8 +441,8 @@ public class MetalEntityRenderer {
   }
 
   private void appendFireOverlay(CapturedEntity captured,
-                                 EntityRenderState state, double ex, double ey,
-                                 double ez, Quaternionf cameraOrientation) {
+      EntityRenderState state, double ex, double ey,
+      double ez, Quaternionf cameraOrientation) {
     TextureAtlasSprite fire0 = getBlockAtlasSprite(FIRE_SPRITE_0);
     TextureAtlasSprite fire1 = getBlockAtlasSprite(FIRE_SPRITE_1);
     int blockAtlasTextureId = getBlockAtlasTextureId();
@@ -467,7 +456,7 @@ public class MetalEntityRenderer {
     float normalizedHeight = getFloatField(state, "height", 1.8f) / scale;
     float verticalOffset = 0.0f;
     float depthOffset = 0.0f;
-    float baseDepth = 0.3f - (float)((int)normalizedHeight) * 0.02f;
+    float baseDepth = 0.3f - (float) ((int) normalizedHeight) * 0.02f;
     int sliceIndex = 0;
 
     while (normalizedHeight > 0.0f) {
@@ -486,8 +475,8 @@ public class MetalEntityRenderer {
       }
 
       emitFireSlice(ex, ey, ez, cameraOrientation, scale, sliceHalfWidth,
-                    verticalOffset, baseDepth + depthOffset, minU, minV, maxU,
-                    maxV);
+          verticalOffset, baseDepth + depthOffset, minU, minV, maxU,
+          maxV);
 
       normalizedHeight -= 0.45f;
       verticalOffset -= 0.45f;
@@ -505,41 +494,41 @@ public class MetalEntityRenderer {
   }
 
   private void emitFireSlice(double ex, double ey, double ez,
-                             Quaternionf rotation, float scale, float halfWidth,
-                             float verticalOffset, float depthOffset,
-                             float minU, float minV, float maxU, float maxV) {
+      Quaternionf rotation, float scale, float halfWidth,
+      float verticalOffset, float depthOffset,
+      float minU, float minV, float maxU, float maxV) {
     setOverlayCorner(rotation, ex, ey, ez, -halfWidth * scale,
-                     (-verticalOffset) * scale, depthOffset * scale, 0);
+        (-verticalOffset) * scale, depthOffset * scale, 0);
     setOverlayCorner(rotation, ex, ey, ez, halfWidth * scale,
-                     (-verticalOffset) * scale, depthOffset * scale, 1);
+        (-verticalOffset) * scale, depthOffset * scale, 1);
     setOverlayCorner(rotation, ex, ey, ez, halfWidth * scale,
-                     (1.4f - verticalOffset) * scale, depthOffset * scale, 2);
+        (1.4f - verticalOffset) * scale, depthOffset * scale, 2);
     setOverlayCorner(rotation, ex, ey, ez, -halfWidth * scale,
-                     (1.4f - verticalOffset) * scale, depthOffset * scale, 3);
+        (1.4f - verticalOffset) * scale, depthOffset * scale, 3);
 
     int fullBright = 0x00F000F0;
     int color = 0xFFFFFFFF;
     metalVertexConsumer.vertex(overlayCorners[0].x, overlayCorners[0].y,
-                               overlayCorners[0].z, color, maxU, maxV, 0,
-                               fullBright, 0.0f, 1.0f, 0.0f);
+        overlayCorners[0].z, color, maxU, maxV, 0,
+        fullBright, 0.0f, 1.0f, 0.0f);
     metalVertexConsumer.vertex(overlayCorners[1].x, overlayCorners[1].y,
-                               overlayCorners[1].z, color, minU, maxV, 0,
-                               fullBright, 0.0f, 1.0f, 0.0f);
+        overlayCorners[1].z, color, minU, maxV, 0,
+        fullBright, 0.0f, 1.0f, 0.0f);
     metalVertexConsumer.vertex(overlayCorners[2].x, overlayCorners[2].y,
-                               overlayCorners[2].z, color, minU, minV, 0,
-                               fullBright, 0.0f, 1.0f, 0.0f);
+        overlayCorners[2].z, color, minU, minV, 0,
+        fullBright, 0.0f, 1.0f, 0.0f);
     metalVertexConsumer.vertex(overlayCorners[3].x, overlayCorners[3].y,
-                               overlayCorners[3].z, color, maxU, minV, 0,
-                               fullBright, 0.0f, 1.0f, 0.0f);
+        overlayCorners[3].z, color, maxU, minV, 0,
+        fullBright, 0.0f, 1.0f, 0.0f);
   }
 
   private void setOverlayCorner(Quaternionf rotation, double ex, double ey,
-                                double ez, float localX, float localY,
-                                float localZ, int index) {
+      double ez, float localX, float localY,
+      float localZ, int index) {
     Vector3f corner = overlayCorners[index];
     corner.set(localX, localY, localZ);
     rotation.transform(corner);
-    corner.add((float)ex, (float)ey, (float)ez);
+    corner.add((float) ex, (float) ey, (float) ez);
   }
 
   private TextureAtlasSprite getBlockAtlasSprite(Identifier spriteId) {
@@ -547,8 +536,7 @@ public class MetalEntityRenderer {
     if (mc == null || mc.getTextureManager() == null) {
       return null;
     }
-    AbstractTexture atlasTexture =
-        mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS);
+    AbstractTexture atlasTexture = mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS);
     if (atlasTexture instanceof TextureAtlas atlas) {
       return atlas.getSprite(spriteId);
     }
@@ -560,19 +548,17 @@ public class MetalEntityRenderer {
     if (mc == null || mc.getTextureManager() == null) {
       return 0;
     }
-    AbstractTexture atlasTexture =
-        mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS);
-    if (atlasTexture != null && atlasTexture.getTexture() instanceof
-                                    GlTexture glTexture) {
+    AbstractTexture atlasTexture = mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS);
+    if (atlasTexture != null && atlasTexture.getTexture() instanceof GlTexture glTexture) {
       return glTexture.glId();
     }
     return 0;
   }
 
   private boolean renderFallingBlockFallback(Entity entity,
-                                             CapturedEntity captured,
-                                             double camX, double camY,
-                                             double camZ) {
+      CapturedEntity captured,
+      double camX, double camY,
+      double camZ) {
     TextureAtlasSprite sprite = resolveFallingBlockSprite(entity);
     int blockAtlasTextureId = getBlockAtlasTextureId();
     if (sprite == null || blockAtlasTextureId == 0) {
@@ -580,9 +566,9 @@ public class MetalEntityRenderer {
     }
 
     Vec3 position = entity.getPosition(captured.tickDelta);
-    float ex = (float)(position.x - camX);
-    float ey = (float)(position.y - camY);
-    float ez = (float)(position.z - camZ);
+    float ex = (float) (position.x - camX);
+    float ey = (float) (position.y - camY);
+    float ez = (float) (position.z - camZ);
     float halfWidth = Math.max(0.45f, entity.getBbWidth() * 0.5f);
     float height = Math.max(0.9f, entity.getBbHeight());
     float x0 = ex - halfWidth;
@@ -599,24 +585,23 @@ public class MetalEntityRenderer {
     float v1 = sprite.getV1();
 
     emitTexturedQuad(x0, y0, z1, x1, y0, z1, x1, y1, z1, x0, y1, z1, 0.0f, 0.0f,
-                     1.0f, u0, u1, v0, v1, color, light);
+        1.0f, u0, u1, v0, v1, color, light);
     emitTexturedQuad(x1, y0, z0, x0, y0, z0, x0, y1, z0, x1, y1, z0, 0.0f, 0.0f,
-                     -1.0f, u0, u1, v0, v1, color, light);
+        -1.0f, u0, u1, v0, v1, color, light);
     emitTexturedQuad(x0, y1, z0, x0, y1, z1, x1, y1, z1, x1, y1, z0, 0.0f, 1.0f,
-                     0.0f, u0, u1, v0, v1, color, light);
+        0.0f, u0, u1, v0, v1, color, light);
     emitTexturedQuad(x0, y0, z1, x0, y0, z0, x1, y0, z0, x1, y0, z1, 0.0f,
-                     -1.0f, 0.0f, u0, u1, v0, v1, color, light);
+        -1.0f, 0.0f, u0, u1, v0, v1, color, light);
     emitTexturedQuad(x1, y0, z1, x1, y0, z0, x1, y1, z0, x1, y1, z1, 1.0f, 0.0f,
-                     0.0f, u0, u1, v0, v1, color, light);
+        0.0f, u0, u1, v0, v1, color, light);
     emitTexturedQuad(x0, y0, z0, x0, y0, z1, x0, y1, z1, x0, y1, z0, -1.0f,
-                     0.0f, 0.0f, u0, u1, v0, v1, color, light);
+        0.0f, 0.0f, u0, u1, v0, v1, color, light);
     captured.glTextureId = blockAtlasTextureId;
     return true;
   }
 
   private TextureAtlasSprite resolveFallingBlockSprite(Entity entity) {
-    Object blockState =
-        invokeNamedMethod(entity, new String[] {"getBlockState"});
+    Object blockState = invokeNamedMethod(entity, new String[] { "getBlockState" });
     if (blockState == null) {
       return null;
     }
@@ -627,30 +612,30 @@ public class MetalEntityRenderer {
     }
 
     Object blockRenderer = invokeNamedMethod(
-        mc, new String[] {"getBlockRenderer", "getBlockRenderDispatcher",
-                          "getBlockRenderManager"});
+        mc, new String[] { "getBlockRenderer", "getBlockRenderDispatcher",
+            "getBlockRenderManager" });
     if (blockRenderer != null) {
       Object model = invokeNamedMethod(
-          blockRenderer, new String[] {"getBlockModel", "getModel"},
+          blockRenderer, new String[] { "getBlockModel", "getModel" },
           blockState);
       if (model != null) {
         Object particleMaterial = invokeNamedMethod(
-            model, new String[] {"particleMaterial", "getParticleIcon",
-                                 "getParticleTexture"});
+            model, new String[] { "particleMaterial", "getParticleIcon",
+                "getParticleTexture" });
         if (particleMaterial instanceof TextureAtlasSprite sprite) {
           return sprite;
         }
         Object sprite = invokeNamedMethod(particleMaterial,
-                                          new String[] {"sprite", "getSprite"});
+            new String[] { "sprite", "getSprite" });
         if (sprite instanceof TextureAtlasSprite textureAtlasSprite) {
           return textureAtlasSprite;
         }
       }
     }
 
-    Object block = invokeNamedMethod(blockState, new String[] {"getBlock"});
+    Object block = invokeNamedMethod(blockState, new String[] { "getBlock" });
     Object blockId = invokeNamedMethod(BuiltInRegistries.BLOCK,
-                                       new String[] {"getKey"}, block);
+        new String[] { "getKey" }, block);
     if (blockId instanceof Identifier identifier) {
       return getBlockAtlasSprite(Identifier.fromNamespaceAndPath(
           identifier.getNamespace(), "block/" + identifier.getPath()));
@@ -659,7 +644,7 @@ public class MetalEntityRenderer {
   }
 
   private Object invokeNamedMethod(Object target, String[] methodNames,
-                                   Object... args) {
+      Object... args) {
     if (target == null) {
       return null;
     }
@@ -679,9 +664,8 @@ public class MetalEntityRenderer {
   }
 
   private Method findCompatibleMethod(Class<?> targetClass, String methodName,
-                                      Object[] args) {
-    for (Class<?> current = targetClass; current != null;
-         current = current.getSuperclass()) {
+      Object[] args) {
+    for (Class<?> current = targetClass; current != null; current = current.getSuperclass()) {
       for (Method method : current.getDeclaredMethods()) {
         if (!method.getName().equals(methodName) ||
             method.getParameterCount() != args.length) {
@@ -722,7 +706,7 @@ public class MetalEntityRenderer {
   }
 
   private static float getFloatField(EntityRenderState state, String fieldName,
-                                     float fallback) {
+      float fallback) {
     try {
       Field field = state.getClass().getField(fieldName);
       return field.getFloat(state);
@@ -732,7 +716,7 @@ public class MetalEntityRenderer {
   }
 
   private static boolean getBooleanField(EntityRenderState state,
-                                         String fieldName) {
+      String fieldName) {
     try {
       Field field = state.getClass().getField(fieldName);
       return field.getBoolean(state);
@@ -742,8 +726,8 @@ public class MetalEntityRenderer {
   }
 
   private boolean renderItemEntity(ItemEntity entity, CapturedEntity captured,
-                                   double camX, double camY, double camZ,
-                                   float tickDelta) {
+      double camX, double camY, double camZ,
+      float tickDelta) {
     try {
       ItemStack stack = entity.getItem();
       if (stack == null || stack.isEmpty()) {
@@ -757,31 +741,26 @@ public class MetalEntityRenderer {
 
       Identifier itemId = BuiltInRegistries.ITEM.getKey(stack.getItem());
       TextureAtlasSprite sprite = null;
-      AbstractTexture itemsTexture =
-          mc.getTextureManager().getTexture(TextureAtlas.LOCATION_ITEMS);
+      AbstractTexture itemsTexture = mc.getTextureManager().getTexture(TextureAtlas.LOCATION_ITEMS);
       if (itemsTexture instanceof TextureAtlas itemsAtlas) {
         sprite = itemsAtlas.getSprite(Identifier.fromNamespaceAndPath(
             itemId.getNamespace(), "item/" + itemId.getPath()));
       }
 
-      if (itemsTexture != null && itemsTexture.getTexture() instanceof
-                                      GlTexture glTexture) {
+      if (itemsTexture != null && itemsTexture.getTexture() instanceof GlTexture glTexture) {
         captured.glTextureId = glTexture.glId();
       }
 
-      float ex =
-          (float)(Mth.lerp(tickDelta, entity.xOld, entity.getX()) - camX);
-      float ey =
-          (float)(Mth.lerp(tickDelta, entity.yOld, entity.getY()) - camY);
-      float ez =
-          (float)(Mth.lerp(tickDelta, entity.zOld, entity.getZ()) - camZ);
+      float ex = (float) (Mth.lerp(tickDelta, entity.xOld, entity.getX()) - camX);
+      float ey = (float) (Mth.lerp(tickDelta, entity.yOld, entity.getY()) - camY);
+      float ez = (float) (Mth.lerp(tickDelta, entity.zOld, entity.getZ()) - camZ);
 
       float age = entity.getAge() + tickDelta;
       float spinAngle = age / 20.0f * 57.2957795f;
-      float bobY = (float)(Math.sin(age / 10.0f) * 0.1f + 0.1f);
+      float bobY = (float) (Math.sin(age / 10.0f) * 0.1f + 0.1f);
       ey += bobY;
-      float sinSpin = (float)Math.sin(Math.toRadians(spinAngle));
-      float cosSpin = (float)Math.cos(Math.toRadians(spinAngle));
+      float sinSpin = (float) Math.sin(Math.toRadians(spinAngle));
+      float cosSpin = (float) Math.cos(Math.toRadians(spinAngle));
       float halfWidth = 0.125f;
       int light = 0x00F000F0;
       int color = 0xFFFFFFFF;
@@ -801,22 +780,22 @@ public class MetalEntityRenderer {
       float y1 = ey + halfWidth * 2.0f;
 
       metalVertexConsumer.vertex(x0, y0, z0, color, u0, v1, 0, light, nx, 0.0f,
-                                 nz);
+          nz);
       metalVertexConsumer.vertex(x1, y0, z1, color, u1, v1, 0, light, nx, 0.0f,
-                                 nz);
+          nz);
       metalVertexConsumer.vertex(x1, y1, z1, color, u1, v0, 0, light, nx, 0.0f,
-                                 nz);
+          nz);
       metalVertexConsumer.vertex(x0, y1, z0, color, u0, v0, 0, light, nx, 0.0f,
-                                 nz);
+          nz);
 
       metalVertexConsumer.vertex(x1, y0, z1, color, u1, v1, 0, light, -nx, 0.0f,
-                                 -nz);
+          -nz);
       metalVertexConsumer.vertex(x0, y0, z0, color, u0, v1, 0, light, -nx, 0.0f,
-                                 -nz);
+          -nz);
       metalVertexConsumer.vertex(x0, y1, z0, color, u0, v0, 0, light, -nx, 0.0f,
-                                 -nz);
+          -nz);
       metalVertexConsumer.vertex(x1, y1, z1, color, u1, v0, 0, light, -nx, 0.0f,
-                                 -nz);
+          -nz);
       return true;
     } catch (Exception e) {
       if (frameCount < 5) {
@@ -827,12 +806,12 @@ public class MetalEntityRenderer {
   }
 
   private void buildEntityQuads(Entity entity, CapturedEntity captured,
-                                double camX, double camY, double camZ) {
+      double camX, double camY, double camZ) {
     float tickDelta = captured.tickDelta;
     Vec3 position = entity.getPosition(tickDelta);
-    float ex = (float)(position.x - camX);
-    float ey = (float)(position.y - camY);
-    float ez = (float)(position.z - camZ);
+    float ex = (float) (position.x - camX);
+    float ey = (float) (position.y - camY);
+    float ez = (float) (position.z - camZ);
     float halfWidth = entity.getBbWidth() * 0.5f;
     float height = entity.getBbHeight();
     float x0 = ex - halfWidth;
@@ -843,29 +822,29 @@ public class MetalEntityRenderer {
     float z1 = ez + halfWidth;
     int color = 0xFFFFFFFF;
     if (captured.isHurt) {
-      int gb = (int)(255 * (1.0f - captured.hurtFactor * 0.6f));
+      int gb = (int) (255 * (1.0f - captured.hurtFactor * 0.6f));
       color = (255 << 24) | (255 << 16) | (gb << 8) | gb;
     }
     int light = 0x00F000F0;
 
     emitQuad(x0, y0, z1, x1, y0, z1, x1, y1, z1, x0, y1, z1, 0, 0, 1, color,
-             light);
+        light);
     emitQuad(x1, y0, z0, x0, y0, z0, x0, y1, z0, x1, y1, z0, 0, 0, -1, color,
-             light);
+        light);
     emitQuad(x0, y1, z0, x0, y1, z1, x1, y1, z1, x1, y1, z0, 0, 1, 0, color,
-             light);
+        light);
     emitQuad(x0, y0, z1, x0, y0, z0, x1, y0, z0, x1, y0, z1, 0, -1, 0, color,
-             light);
+        light);
     emitQuad(x1, y0, z1, x1, y0, z0, x1, y1, z0, x1, y1, z1, 1, 0, 0, color,
-             light);
+        light);
     emitQuad(x0, y0, z0, x0, y0, z1, x0, y1, z1, x0, y1, z0, -1, 0, 0, color,
-             light);
+        light);
   }
 
   private void emitQuad(float x0, float y0, float z0, float x1, float y1,
-                        float z1, float x2, float y2, float z2, float x3,
-                        float y3, float z3, float nx, float ny, float nz,
-                        int color, int light) {
+      float z1, float x2, float y2, float z2, float x3,
+      float y3, float z3, float nx, float ny, float nz,
+      int color, int light) {
     metalVertexConsumer.vertex(x0, y0, z0, color, 0, 0, 0, light, nx, ny, nz);
     metalVertexConsumer.vertex(x1, y1, z1, color, 1, 0, 0, light, nx, ny, nz);
     metalVertexConsumer.vertex(x2, y2, z2, color, 1, 1, 0, light, nx, ny, nz);
@@ -873,11 +852,11 @@ public class MetalEntityRenderer {
   }
 
   private void emitTexturedQuad(float x0, float y0, float z0, float x1,
-                                float y1, float z1, float x2, float y2,
-                                float z2, float x3, float y3, float z3,
-                                float nx, float ny, float nz, float u0,
-                                float u1, float v0, float v1, int color,
-                                int light) {
+      float y1, float z1, float x2, float y2,
+      float z2, float x3, float y3, float z3,
+      float nx, float ny, float nz, float u0,
+      float u1, float v0, float v1, int color,
+      int light) {
     metalVertexConsumer.vertex(x0, y0, z0, color, u0, v1, 0, light, nx, ny, nz);
     metalVertexConsumer.vertex(x1, y1, z1, color, u1, v1, 0, light, nx, ny, nz);
     metalVertexConsumer.vertex(x2, y2, z2, color, u1, v0, 0, light, nx, ny, nz);
@@ -916,7 +895,7 @@ public class MetalEntityRenderer {
     long activeVertexBuffer = vbufs[frameCount % 3];
     if (activeVertexBuffer != 0 && uploadSize > 0) {
       NativeBridge.nUploadBufferDataDirect(activeVertexBuffer,
-                                           vertexStagingBuffer, 0, uploadSize);
+          vertexStagingBuffer, 0, uploadSize);
     }
 
     MetalRenderer renderer = MetalRenderClient.getRenderer();
@@ -929,8 +908,7 @@ public class MetalEntityRenderer {
 
     long entityPipeline = cachedEntityPipeline;
     if (entityPipeline == 0) {
-      entityPipeline =
-          NativeBridge.nGetEntityPipelineHandle(renderer.getHandle());
+      entityPipeline = NativeBridge.nGetEntityPipelineHandle(renderer.getHandle());
       if (entityPipeline != 0) {
         cachedEntityPipeline = entityPipeline;
       }
@@ -964,7 +942,7 @@ public class MetalEntityRenderer {
       if (drawCommand.hurtFactor != lastHurt ||
           drawCommand.whiteFlash != lastFlash) {
         NativeBridge.nSetEntityOverlay(ctx, drawCommand.hurtFactor,
-                                       drawCommand.whiteFlash, 1.0f);
+            drawCommand.whiteFlash, 1.0f);
         lastHurt = drawCommand.hurtFactor;
         lastFlash = drawCommand.whiteFlash;
       }
@@ -984,8 +962,8 @@ public class MetalEntityRenderer {
         }
       }
       NativeBridge.nDrawEntityBuffer(ctx, activeVertexBuffer,
-                                     drawCommand.vertexCount,
-                                     drawCommand.startVertex, renderFlags);
+          drawCommand.vertexCount,
+          drawCommand.startVertex, renderFlags);
       drawsDone++;
     }
 
@@ -1018,9 +996,9 @@ public class MetalEntityRenderer {
       int previousTexture = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, glTextureId);
       int width = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0,
-                                               GL11.GL_TEXTURE_WIDTH);
+          GL11.GL_TEXTURE_WIDTH);
       int height = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0,
-                                                GL11.GL_TEXTURE_HEIGHT);
+          GL11.GL_TEXTURE_HEIGHT);
       if (width <= 0 || height <= 0 || width > 4096 || height > 4096) {
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture);
         if (glTextureId >= 0 && glTextureId < TEXTURE_CACHE_SIZE) {
@@ -1031,20 +1009,19 @@ public class MetalEntityRenderer {
 
       ByteBuffer pixels = BufferUtils.createByteBuffer(width * height * 4);
       GL11.glGetTexImage(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA,
-                         GL11.GL_UNSIGNED_BYTE, pixels);
+          GL11.GL_UNSIGNED_BYTE, pixels);
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, previousTexture);
       byte[] pixelData = new byte[width * height * 4];
       pixels.get(pixelData);
 
-      long metalTexture =
-          NativeBridge.nCreateTexture2D(device, width, height, pixelData);
+      long metalTexture = NativeBridge.nCreateTexture2D(device, width, height, pixelData);
       if (glTextureId >= 0 && glTextureId < TEXTURE_CACHE_SIZE) {
         textureCache[glTextureId] = metalTexture;
       }
       return metalTexture;
     } catch (Exception e) {
       MetalLogger.error("Failed to create Metal entity texture for glId=%d: %s",
-                        glTextureId, e.getMessage());
+          glTextureId, e.getMessage());
       if (glTextureId >= 0 && glTextureId < TEXTURE_CACHE_SIZE) {
         textureCache[glTextureId] = 0L;
       }
@@ -1053,8 +1030,7 @@ public class MetalEntityRenderer {
   }
 
   public void invalidateTextureCache() {
-    for (int textureIndex = 0; textureIndex < TEXTURE_CACHE_SIZE;
-         textureIndex++) {
+    for (int textureIndex = 0; textureIndex < TEXTURE_CACHE_SIZE; textureIndex++) {
       long handle = textureCache[textureIndex];
       if (handle > 0) {
         NativeBridge.nDestroyTexture2D(handle);
@@ -1064,9 +1040,13 @@ public class MetalEntityRenderer {
     MetalLogger.info("Entity texture cache invalidated");
   }
 
-  public int getLastEntityCount() { return pendingDrawCount; }
+  public int getLastEntityCount() {
+    return pendingDrawCount;
+  }
 
-  public int getLastVertexCount() { return vtxCount; }
+  public int getLastVertexCount() {
+    return vtxCount;
+  }
 
   public void clearCapturedEntities() {
     for (int entityIndex = 0; entityIndex < count; entityIndex++) {
@@ -1080,8 +1060,7 @@ public class MetalEntityRenderer {
     cachedEntityPipeline = 0;
     count = 0;
     pendingDrawCount = 0;
-    for (int textureIndex = 0; textureIndex < TEXTURE_CACHE_SIZE;
-         textureIndex++) {
+    for (int textureIndex = 0; textureIndex < TEXTURE_CACHE_SIZE; textureIndex++) {
       long handle = textureCache[textureIndex];
       if (handle > 0) {
         NativeBridge.nDestroyTexture2D(handle);

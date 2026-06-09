@@ -13,7 +13,9 @@ public final class MetalRenderer implements RenderBackend {
   public static final class MetalRendererBackendHandle {
     private final MetalRenderer renderer;
 
-    MetalRendererBackendHandle(MetalRenderer r) { this.renderer = r; }
+    MetalRendererBackendHandle(MetalRenderer r) {
+      this.renderer = r;
+    }
 
     public long getDeviceHandle() {
       return NativeBridge.nGetDeviceHandle(renderer.handle);
@@ -55,19 +57,25 @@ public final class MetalRenderer implements RenderBackend {
     }
   }
 
-  public boolean isAvailable() { return available && handle != 0; }
+  public boolean isAvailable() {
+    return available && handle != 0;
+  }
 
-  public MetalRendererBackendHandle getBackend() { return backend; }
+  public MetalRendererBackendHandle getBackend() {
+    return backend;
+  }
 
   public void resize(int width, int height) {
     if (handle != 0)
       NativeBridge.nResize(handle, width, height, 1.0f);
   }
 
-  public void beginFrame(float tickDelta) {}
+  public void beginFrame(float tickDelta) {
+  }
 
   @Override
-  public void beginFrame(float[] viewProj) {}
+  public void beginFrame(float[] viewProj) {
+  }
 
   private final float[] reusableMatrixArr = new float[16];
 
@@ -99,13 +107,17 @@ public final class MetalRenderer implements RenderBackend {
     return handle != 0 ? NativeBridge.nGetCurrentFrameContext(handle) : 0;
   }
 
-  public long frameCtx() { return getCurrentFrameContext(); }
+  public long frameCtx() {
+    return getCurrentFrameContext();
+  }
 
   public int getGLTextureId() {
     return handle != 0 ? NativeBridge.nGetGLTextureId(handle) : 0;
   }
 
-  public long getHandle() { return handle; }
+  public long getHandle() {
+    return handle;
+  }
 
   @Override
   public long createVertexBuffer(ByteBuffer data, int size, int stride) {
@@ -113,8 +125,7 @@ public final class MetalRenderer implements RenderBackend {
       return 0L;
     byte[] bytes = new byte[size];
     data.get(bytes);
-    long buf =
-        NativeBridge.nCreateBuffer(getBackend().getDeviceHandle(), size, 0);
+    long buf = NativeBridge.nCreateBuffer(getBackend().getDeviceHandle(), size, 0);
     NativeBridge.nUploadBufferData(buf, bytes, 0, size);
     return buf;
   }
@@ -125,8 +136,7 @@ public final class MetalRenderer implements RenderBackend {
       return 0L;
     byte[] bytes = new byte[size];
     data.get(bytes);
-    long buf =
-        NativeBridge.nCreateBuffer(getBackend().getDeviceHandle(), size, 0);
+    long buf = NativeBridge.nCreateBuffer(getBackend().getDeviceHandle(), size, 0);
     NativeBridge.nUploadBufferData(buf, bytes, 0, size);
     return buf;
   }
@@ -138,7 +148,7 @@ public final class MetalRenderer implements RenderBackend {
 
   @Override
   public void drawIndexed(long vbo, long ibo, int indexCount, int firstIndex,
-                          int baseVertex) {
+      int baseVertex) {
     long ctx = getCurrentFrameContext();
     if (ctx != 0) {
       NativeBridge.nDrawIndexedBuffer(ctx, vbo, ibo, indexCount, firstIndex);
@@ -151,7 +161,11 @@ public final class MetalRenderer implements RenderBackend {
       NativeBridge.nEndFrame(handle);
   }
 
-  public boolean isPassReady(int pass) { return available; }
+  public boolean isPassReady(int pass) {
+    return available;
+  }
 
-  public boolean isOpaqueReady() { return isPassReady(0); }
+  public boolean isOpaqueReady() {
+    return isPassReady(0);
+  }
 }

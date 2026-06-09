@@ -1,4 +1,5 @@
 package com.pebbles_boon.metalrender.sodium.backend;
+
 import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.backend.MetalRenderer;
 import com.pebbles_boon.metalrender.nativebridge.MeshShaderNative;
@@ -7,6 +8,7 @@ import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
 import com.pebbles_boon.metalrender.util.MetalLogger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+
 public class MeshShaderBackend {
   private long[] terrainPipelineHandles = new long[3];
   private long fallbackPipelineHandle;
@@ -20,6 +22,7 @@ public class MeshShaderBackend {
   private int lastDispatchedThreadgroups;
   private long lastStatsLogMs;
   private static final long STATS_LOG_INTERVAL_MS = 5000;
+
   public void initialize() {
     MetalRenderer renderer = MetalRenderClient.getRenderer();
     if (renderer == null || !renderer.isAvailable())
@@ -34,8 +37,8 @@ public class MeshShaderBackend {
         terrainPipelineHandles[2] = handles[2];
         if (handles[0] != 0) {
           MetalLogger.info("Mesh shader terrain pipelines created: "
-                               + "opaque=0x%X, cutout=0x%X, emissive=0x%X",
-                           handles[0], handles[1], handles[2]);
+              + "opaque=0x%X, cutout=0x%X, emissive=0x%X",
+              handles[0], handles[1], handles[2]);
         }
       }
       if (terrainPipelineHandles[0] == 0) {
@@ -47,30 +50,29 @@ public class MeshShaderBackend {
     }
     meshletUploadCapacity = 4096;
     meshletUploadBuffer = ByteBuffer.allocateDirect(meshletUploadCapacity * 32)
-                              .order(ByteOrder.nativeOrder());
+        .order(ByteOrder.nativeOrder());
     active = true;
-    gpuDrivenEnabled =
-        meshShadersAvailable &&
+    gpuDrivenEnabled = meshShadersAvailable &&
         (terrainPipelineHandles[0] != 0 || fallbackPipelineHandle != 0);
     MetalLogger.info("Mesh shader backend initialized (mesh shaders: %s, "
-                         + "GPU-driven: %s, pipelines: %d)",
-                     meshShadersAvailable ? "supported" : "unsupported",
-                     gpuDrivenEnabled ? "enabled" : "disabled",
-                     MeshShaderNative.getActivePipelineCount());
+        + "GPU-driven: %s, pipelines: %d)",
+        meshShadersAvailable ? "supported" : "unsupported",
+        gpuDrivenEnabled ? "enabled" : "disabled",
+        MeshShaderNative.getActivePipelineCount());
   }
+
   public void prepareMeshlets(int[] meshletVertexOffsets,
-                              int[] meshletIndexOffsets,
-                              int[] meshletVertexCounts,
-                              int[] meshletTriangleCounts,
-                              int[] meshletLodLevels, int[] meshletChunkIndices,
-                              int count) {
+      int[] meshletIndexOffsets,
+      int[] meshletVertexCounts,
+      int[] meshletTriangleCounts,
+      int[] meshletLodLevels, int[] meshletChunkIndices,
+      int count) {
     if (!active || !gpuDrivenEnabled || count <= 0)
       return;
     if (count > meshletUploadCapacity) {
       meshletUploadCapacity = count + (count >> 2);
-      meshletUploadBuffer =
-          ByteBuffer.allocateDirect(meshletUploadCapacity * 32)
-              .order(ByteOrder.nativeOrder());
+      meshletUploadBuffer = ByteBuffer.allocateDirect(meshletUploadCapacity * 32)
+          .order(ByteOrder.nativeOrder());
     }
     meshletUploadBuffer.clear();
     for (int i = 0; i < count; i++) {
@@ -87,8 +89,9 @@ public class MeshShaderBackend {
     MeshShaderNative.uploadMeshletBuffer(0, meshletUploadBuffer, count);
     currentMeshletCount = count;
   }
+
   public void drawChunkMesh(long frameContext, long argumentBuffer,
-                            int objectThreadgroups, int meshThreadsPerGroup) {
+      int objectThreadgroups, int meshThreadsPerGroup) {
     if (!active || frameContext == 0)
       return;
     long pipeline = getPipeline(0);
@@ -100,16 +103,18 @@ public class MeshShaderBackend {
     }
     logStatsIfNeeded();
   }
+
   public void drawChunkMeshPass(long frameContext, int passIndex,
-                                long argumentBuffer, int threadgroups) {
+      long argumentBuffer, int threadgroups) {
     if (!active || frameContext == 0 || passIndex < 0 || passIndex > 2)
       return;
     long pipeline = getPipeline(passIndex);
     if (pipeline != 0) {
       MeshShaderNative.drawMeshThreadgroups(frameContext, pipeline,
-                                            threadgroups, 256, argumentBuffer);
+          threadgroups, 256, argumentBuffer);
     }
   }
+
   public void dispatchTerrainFromCullResults(long handle, long argumentBuffer) {
     if (!active)
       return;
@@ -119,6 +124,7 @@ public class MeshShaderBackend {
       MeshShaderNative.dispatchTerrain(handle, visibleCount, argumentBuffer);
     }
   }
+
   private long getPipeline(int passIndex) {
     if (passIndex >= 0 && passIndex < 3 &&
         terrainPipelineHandles[passIndex] != 0) {
@@ -126,6 +132,7 @@ public class MeshShaderBackend {
     }
     return fallbackPipelineHandle;
   }
+
   private void logStatsIfNeeded() {
     long now = System.currentTimeMillis();
     if (now - lastStatsLogMs > STATS_LOG_INTERVAL_MS) {
@@ -136,6 +143,7 @@ public class MeshShaderBackend {
           MeshShaderNative.getActivePipelineCount());
     }
   }
+
   public void shutdown() {
     for (int i = 0; i < 3; i++) {
       if (terrainPipelineHandles[i] != 0) {
@@ -151,9 +159,24 @@ public class MeshShaderBackend {
     active = false;
     gpuDrivenEnabled = false;
   }
-  public boolean isActive() { return active; }
-  public boolean areMeshShadersAvailable() { return meshShadersAvailable; }
-  public boolean isGPUDrivenEnabled() { return gpuDrivenEnabled; }
-  public int getLastVisibleCount() { return lastVisibleCount; }
-  public int getCurrentMeshletCount() { return currentMeshletCount; }
+
+  public boolean isActive() {
+    return active;
+  }
+
+  public boolean areMeshShadersAvailable() {
+    return meshShadersAvailable;
+  }
+
+  public boolean isGPUDrivenEnabled() {
+    return gpuDrivenEnabled;
+  }
+
+  public int getLastVisibleCount() {
+    return lastVisibleCount;
+  }
+
+  public int getCurrentMeshletCount() {
+    return currentMeshletCount;
+  }
 }

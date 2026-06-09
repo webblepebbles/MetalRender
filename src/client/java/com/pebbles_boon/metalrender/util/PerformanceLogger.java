@@ -26,7 +26,7 @@ public final class PerformanceLogger {
   }
 
   public void endFrame(int chunksProcessed, int chunksDrawn, int frustumCulled,
-                       int occlusionCulled) {
+      int occlusionCulled) {
     long frameEndTime = System.nanoTime();
     double frameTime;
     if (lastFrameTime > 0.0) {
@@ -43,7 +43,7 @@ public final class PerformanceLogger {
     currentFPS = 1000.0 / Math.max(avgFrameTime, 0.1);
     long currentTime = System.currentTimeMillis();
     long interval = MetalRenderConfig.isDeepDebugActive() ? DEBUG_LOG_INTERVAL
-                                                          : NORMAL_LOG_INTERVAL;
+        : NORMAL_LOG_INTERVAL;
     if (currentTime - lastLogTime >= interval) {
       logPerformanceStats();
       lastLogTime = currentTime;
@@ -53,30 +53,29 @@ public final class PerformanceLogger {
   private void logPerformanceStats() {
     if (!MetalRenderConfig.isDeepDebugActive()) {
       MetalLogger.info("[PERF] FPS: %.1f | FrameTime: %.2fms", currentFPS,
-                       avgFrameTime);
+          avgFrameTime);
       resetCounters();
       return;
     }
-    double cullingEfficiency =
-        totalChunksProcessed > 0
-            ? (double)(totalFrustumCulled + totalOcclusionCulled) /
-                  totalChunksProcessed * 100
-            : 0;
+    double cullingEfficiency = totalChunksProcessed > 0
+        ? (double) (totalFrustumCulled + totalOcclusionCulled) /
+            totalChunksProcessed * 100
+        : 0;
     MetalLogger.info("[PERF] FPS: %.1f | FrameTime: %.2fms | Chunks: P:%d "
-                         + "D:%d | Culled: F:%d O:%d (%.1f%%)",
-                     currentFPS, avgFrameTime, totalChunksProcessed,
-                     totalChunksDrawn, totalFrustumCulled, totalOcclusionCulled,
-                     cullingEfficiency);
+        + "D:%d | Culled: F:%d O:%d (%.1f%%)",
+        currentFPS, avgFrameTime, totalChunksProcessed,
+        totalChunksDrawn, totalFrustumCulled, totalOcclusionCulled,
+        cullingEfficiency);
     try {
       MetalLogger.info("[PERF][DQ] Scale=%.2f",
-                       MetalRenderConfig.resolutionScale());
+          MetalRenderConfig.resolutionScale());
     } catch (Exception ignored) {
     }
     Runtime rt = Runtime.getRuntime();
     long usedMb = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024);
     long maxMb = rt.maxMemory() / (1024 * 1024);
     MetalLogger.info("[PERF][MEM] Heap=%d/%dMB Frames=%d", usedMb, maxMb,
-                     frameCount);
+        frameCount);
     resetCounters();
   }
 
@@ -87,13 +86,19 @@ public final class PerformanceLogger {
     totalOcclusionCulled = 0;
   }
 
-  public double getCurrentFPS() { return currentFPS; }
+  public double getCurrentFPS() {
+    return currentFPS;
+  }
 
-  public double getAvgFrameTime() { return avgFrameTime; }
+  public double getAvgFrameTime() {
+    return avgFrameTime;
+  }
 
   public double getLastFrameTime() {
     return lastFrameTime > 0.0 ? lastFrameTime : avgFrameTime;
   }
 
-  public long getFrameCount() { return frameCount; }
+  public long getFrameCount() {
+    return frameCount;
+  }
 }

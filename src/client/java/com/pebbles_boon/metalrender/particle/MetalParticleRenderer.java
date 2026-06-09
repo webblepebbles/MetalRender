@@ -45,12 +45,10 @@ public class MetalParticleRenderer {
 
   private long cachedParticlePipeline = 0;
   private long cachedParticleFallbackPipeline = 0;
-  private final ArrayList<ParticleDrawCommand> pendingDrawPool =
-      new ArrayList<>();
+  private final ArrayList<ParticleDrawCommand> pendingDrawPool = new ArrayList<>();
   private int pendingDrawCount;
 
-  private final ArrayList<CapturedParticle> capturedParticlePool =
-      new ArrayList<>();
+  private final ArrayList<CapturedParticle> capturedParticlePool = new ArrayList<>();
   private int count = 0;
   private static final int TEXTURE_CACHE_SIZE = 2048;
   private static final long TEXTURE_UNCACHED = Long.MIN_VALUE;
@@ -66,22 +64,20 @@ public class MetalParticleRenderer {
   private ByteBuffer textureReadbackBuf = null;
   private byte[] texturePixelBuf = null;
 
-  private static final float[][] CORNER_OFFSETS = {{-1.0f, -1.0f, 0.0f},
-                                                   {1.0f, -1.0f, 0.0f},
-                                                   {1.0f, 1.0f, 0.0f},
-                                                   {-1.0f, 1.0f, 0.0f}};
+  private static final float[][] CORNER_OFFSETS = { { -1.0f, -1.0f, 0.0f },
+      { 1.0f, -1.0f, 0.0f },
+      { 1.0f, 1.0f, 0.0f },
+      { -1.0f, 1.0f, 0.0f } };
   private final Quaternionf bbRot = new Quaternionf();
-  private final Vector3f[] bbCorners = {new Vector3f(), new Vector3f(),
-                                        new Vector3f(), new Vector3f()};
+  private final Vector3f[] bbCorners = { new Vector3f(), new Vector3f(),
+      new Vector3f(), new Vector3f() };
   private final Vector3f bbNormal = new Vector3f();
 
-  private final BlockPos.MutableBlockPos scratchPos =
-      new BlockPos.MutableBlockPos();
+  private final BlockPos.MutableBlockPos scratchPos = new BlockPos.MutableBlockPos();
 
   public MetalParticleRenderer() {
-    vertexStagingBuffer =
-        ByteBuffer.allocateDirect(MAX_PARTICLE_VERTICES * VERTEX_STRIDE)
-            .order(ByteOrder.nativeOrder());
+    vertexStagingBuffer = ByteBuffer.allocateDirect(MAX_PARTICLE_VERTICES * VERTEX_STRIDE)
+        .order(ByteOrder.nativeOrder());
   }
 
   public void setup(long device) {
@@ -97,9 +93,13 @@ public class MetalParticleRenderer {
     }
   }
 
-  public void setActive(boolean active) { this.active = active; }
+  public void setActive(boolean active) {
+    this.active = active;
+  }
 
-  public boolean isActive() { return active; }
+  public boolean isActive() {
+    return active;
+  }
 
   public void capture(ParticleEngine engine, Camera camera, float delta) {
     if (!active)
@@ -116,7 +116,7 @@ public class MetalParticleRenderer {
   }
 
   public void captureParticleList(Queue<? extends Particle> particles,
-                                  Camera camera, float delta) {
+      Camera camera, float delta) {
     if (!active || particles == null)
       return;
     double camX = camera.position().x;
@@ -129,15 +129,13 @@ public class MetalParticleRenderer {
     Minecraft mc = Minecraft.getInstance();
     if (mc != null && mc.level != null) {
       world = mc.level;
-      scratchPos.set((int)Math.floor(camera.position().x),
-                     (int)Math.floor(camera.position().y),
-                     (int)Math.floor(camera.position().z));
+      scratchPos.set((int) Math.floor(camera.position().x),
+          (int) Math.floor(camera.position().y),
+          (int) Math.floor(camera.position().z));
       inWater = !mc.level.getBlockState(scratchPos).getFluidState().isEmpty();
       var lights = world.getChunkSource().getLightEngine();
-      int blockLev =
-          lights.getLayerListener(LightLayer.BLOCK).getLightValue(scratchPos);
-      int skyLev =
-          lights.getLayerListener(LightLayer.SKY).getLightValue(scratchPos);
+      int blockLev = lights.getLayerListener(LightLayer.BLOCK).getLightValue(scratchPos);
+      int skyLev = lights.getLayerListener(LightLayer.SKY).getLightValue(scratchPos);
       camLight = ((skyLev * 16) << 16) | (blockLev * 16);
     }
     int captured = 0;
@@ -164,17 +162,17 @@ public class MetalParticleRenderer {
         capturedParticlePool.add(cp);
       }
       count++;
-      ParticleAccessor pa = (ParticleAccessor)p;
-      BillboardParticleAccessor bpa = (BillboardParticleAccessor)bp;
-      cp.x = (float)(Mth.lerp(delta, pa.metalrender$getLastX(),
-                              pa.metalrender$getX()) -
-                     camX);
-      cp.y = (float)(Mth.lerp(delta, pa.metalrender$getLastY(),
-                              pa.metalrender$getY()) -
-                     camY);
-      cp.z = (float)(Mth.lerp(delta, pa.metalrender$getLastZ(),
-                              pa.metalrender$getZ()) -
-                     camZ);
+      ParticleAccessor pa = (ParticleAccessor) p;
+      BillboardParticleAccessor bpa = (BillboardParticleAccessor) bp;
+      cp.x = (float) (Mth.lerp(delta, pa.metalrender$getLastX(),
+          pa.metalrender$getX()) -
+          camX);
+      cp.y = (float) (Mth.lerp(delta, pa.metalrender$getLastY(),
+          pa.metalrender$getY()) -
+          camY);
+      cp.z = (float) (Mth.lerp(delta, pa.metalrender$getLastZ(),
+          pa.metalrender$getZ()) -
+          camZ);
       cp.scale = bp.getQuadSize(delta);
 
       if (inWater) {
@@ -185,7 +183,7 @@ public class MetalParticleRenderer {
       cp.blue = bpa.metalrender$getBlue();
       cp.alpha = bpa.metalrender$getAlpha();
       cp.zRotation = Mth.lerp(delta, bpa.metalrender$getLastZRotation(),
-                              bpa.metalrender$getZRotation());
+          bpa.metalrender$getZRotation());
       var sprite = bpa.metalrender$getSprite();
       if (sprite != null) {
 
@@ -214,13 +212,14 @@ public class MetalParticleRenderer {
         if (logged >= 5)
           break;
         MetalLogger.info("  Particle scale=%.4f class=%s pos=(%.1f,%.1f,%.1f)",
-                         dbg.scale, "captured", dbg.x, dbg.y, dbg.z);
+            dbg.scale, "captured", dbg.x, dbg.y, dbg.z);
         logged++;
       }
     }
   }
 
-  private void collect(ParticleEngine manager, Camera camera, float delta) {}
+  private void collect(ParticleEngine manager, Camera camera, float delta) {
+  }
 
   public void render(long ctx) {
     if (!active || ctx == 0 || device == 0)
@@ -240,7 +239,7 @@ public class MetalParticleRenderer {
     long activeVB = vbufs[frameCount % 3];
     if (activeVB != 0 && uploadSize > 0) {
       NativeBridge.nUploadBufferDataDirect(activeVB, vertexStagingBuffer, 0,
-                                           uploadSize);
+          uploadSize);
     }
     MetalRenderer renderer = MetalRenderClient.getRenderer();
     if (renderer == null) {
@@ -249,8 +248,7 @@ public class MetalParticleRenderer {
     }
     long particlePipeline = cachedParticlePipeline;
     if (particlePipeline == 0) {
-      particlePipeline =
-          NativeBridge.nGetParticlePipelineHandle(renderer.getHandle());
+      particlePipeline = NativeBridge.nGetParticlePipelineHandle(renderer.getHandle());
       if (particlePipeline == 0) {
 
         long fb = cachedParticleFallbackPipeline;
@@ -276,8 +274,7 @@ public class MetalParticleRenderer {
     NativeBridge.nSetEntityOverlay(ctx, 0.0f, 0.0f, 1.0f);
 
     MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
-    long fallbackBlockAtlas =
-        (wr != null) ? wr.getTextureManager().getBlockAtlasTexture() : 0;
+    long fallbackBlockAtlas = (wr != null) ? wr.getTextureManager().getBlockAtlasTexture() : 0;
     long lastBoundTex = 0;
     if (fallbackBlockAtlas != 0) {
       NativeBridge.nBindEntityTexture(ctx, fallbackBlockAtlas);
@@ -295,12 +292,12 @@ public class MetalParticleRenderer {
           lastBoundTex = metalTex;
         }
       } else if (fallbackBlockAtlas != 0 &&
-                 lastBoundTex != fallbackBlockAtlas) {
+          lastBoundTex != fallbackBlockAtlas) {
         NativeBridge.nBindEntityTexture(ctx, fallbackBlockAtlas);
         lastBoundTex = fallbackBlockAtlas;
       }
       NativeBridge.nDrawEntityBuffer(ctx, activeVB, cmd.vertexCount,
-                                     cmd.startVertex, 0x8);
+          cmd.startVertex, 0x8);
       drawsDone++;
     }
     frameCount++;
@@ -376,7 +373,7 @@ public class MetalParticleRenderer {
     }
     if (frameCount < 5 && vtxCount > 0) {
       MetalLogger.info("Built %d particle verts in %d draw batches", vtxCount,
-                       pendingDrawCount);
+          pendingDrawCount);
     }
   }
 
@@ -396,10 +393,10 @@ public class MetalParticleRenderer {
       c.mul(size);
       c.add(x, y, z);
     }
-    int r = (int)(cp.red * 255.0f) & 0xFF;
-    int g = (int)(cp.green * 255.0f) & 0xFF;
-    int b = (int)(cp.blue * 255.0f) & 0xFF;
-    int a = (int)(cp.alpha * 255.0f) & 0xFF;
+    int r = (int) (cp.red * 255.0f) & 0xFF;
+    int g = (int) (cp.green * 255.0f) & 0xFF;
+    int b = (int) (cp.blue * 255.0f) & 0xFF;
+    int a = (int) (cp.alpha * 255.0f) & 0xFF;
     int color = (a << 24) | (r << 16) | (g << 8) | b;
     bbNormal.set(0, 0, 1);
     camRot.transform(bbNormal);
@@ -410,51 +407,51 @@ public class MetalParticleRenderer {
     float v0 = cp.maxV, v1 = cp.maxV, v2 = cp.minV, v3 = cp.minV;
 
     writeParticleVertex(bbCorners[0].x, bbCorners[0].y, bbCorners[0].z, u0, v0,
-                        color, nx, ny, nz, light);
+        color, nx, ny, nz, light);
     writeParticleVertex(bbCorners[1].x, bbCorners[1].y, bbCorners[1].z, u1, v1,
-                        color, nx, ny, nz, light);
+        color, nx, ny, nz, light);
     writeParticleVertex(bbCorners[2].x, bbCorners[2].y, bbCorners[2].z, u2, v2,
-                        color, nx, ny, nz, light);
+        color, nx, ny, nz, light);
     writeParticleVertex(bbCorners[0].x, bbCorners[0].y, bbCorners[0].z, u0, v0,
-                        color, nx, ny, nz, light);
+        color, nx, ny, nz, light);
     writeParticleVertex(bbCorners[2].x, bbCorners[2].y, bbCorners[2].z, u2, v2,
-                        color, nx, ny, nz, light);
+        color, nx, ny, nz, light);
     writeParticleVertex(bbCorners[3].x, bbCorners[3].y, bbCorners[3].z, u3, v3,
-                        color, nx, ny, nz, light);
+        color, nx, ny, nz, light);
   }
 
   private void writeParticleVertex(float px, float py, float pz, float u,
-                                   float v, int color, float nx, float ny,
-                                   float nz, int light) {
+      float v, int color, float nx, float ny,
+      float nz, int light) {
     if (vtxCount >= MAX_PARTICLE_VERTICES ||
         vertexStagingBuffer.remaining() < VERTEX_STRIDE)
       return;
     vertexStagingBuffer.putFloat(px);
     vertexStagingBuffer.putFloat(py);
     vertexStagingBuffer.putFloat(pz);
-    int iU = (int)(Math.min(Math.max(u, 0.0f), 1.0f) * 32767.0f);
-    int iV = (int)(Math.min(Math.max(v, 0.0f), 1.0f) * 32767.0f);
-    vertexStagingBuffer.putShort((short)(iU & 0x7FFF));
-    vertexStagingBuffer.putShort((short)(iV & 0x7FFF));
+    int iU = (int) (Math.min(Math.max(u, 0.0f), 1.0f) * 32767.0f);
+    int iV = (int) (Math.min(Math.max(v, 0.0f), 1.0f) * 32767.0f);
+    vertexStagingBuffer.putShort((short) (iU & 0x7FFF));
+    vertexStagingBuffer.putShort((short) (iV & 0x7FFF));
     int cr = (color >> 16) & 0xFF;
     int cg = (color >> 8) & 0xFF;
     int cb = color & 0xFF;
     int ca = (color >> 24) & 0xFF;
-    vertexStagingBuffer.put((byte)cr);
-    vertexStagingBuffer.put((byte)cg);
-    vertexStagingBuffer.put((byte)cb);
-    vertexStagingBuffer.put((byte)ca);
-    vertexStagingBuffer.put((byte)(int)((nx * 0.5f + 0.5f) * 255.0f));
-    vertexStagingBuffer.put((byte)(int)((ny * 0.5f + 0.5f) * 255.0f));
-    vertexStagingBuffer.put((byte)(int)((nz * 0.5f + 0.5f) * 255.0f));
-    vertexStagingBuffer.put((byte)255);
-    vertexStagingBuffer.putShort((short)0);
-    vertexStagingBuffer.putShort((short)0);
+    vertexStagingBuffer.put((byte) cr);
+    vertexStagingBuffer.put((byte) cg);
+    vertexStagingBuffer.put((byte) cb);
+    vertexStagingBuffer.put((byte) ca);
+    vertexStagingBuffer.put((byte) (int) ((nx * 0.5f + 0.5f) * 255.0f));
+    vertexStagingBuffer.put((byte) (int) ((ny * 0.5f + 0.5f) * 255.0f));
+    vertexStagingBuffer.put((byte) (int) ((nz * 0.5f + 0.5f) * 255.0f));
+    vertexStagingBuffer.put((byte) 255);
+    vertexStagingBuffer.putShort((short) 0);
+    vertexStagingBuffer.putShort((short) 0);
 
     int blockL = light & 0xFFFF;
     int skyL = (light >> 16) & 0xFFFF;
-    vertexStagingBuffer.putShort((short)blockL);
-    vertexStagingBuffer.putShort((short)skyL);
+    vertexStagingBuffer.putShort((short) blockL);
+    vertexStagingBuffer.putShort((short) skyL);
     vtxCount++;
   }
 
@@ -471,9 +468,9 @@ public class MetalParticleRenderer {
       int prevTex = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, glTextureId);
       int width = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0,
-                                               GL11.GL_TEXTURE_WIDTH);
+          GL11.GL_TEXTURE_WIDTH);
       int height = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0,
-                                                GL11.GL_TEXTURE_HEIGHT);
+          GL11.GL_TEXTURE_HEIGHT);
       if (width <= 0 || height <= 0 || width > 8192 || height > 8192) {
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTex);
         if (inBounds)
@@ -482,14 +479,13 @@ public class MetalParticleRenderer {
       }
       int reqSz = width * height * 4;
       if (textureReadbackBuf == null || textureReadbackBuf.capacity() < reqSz) {
-        textureReadbackBuf =
-            ByteBuffer.allocateDirect(reqSz).order(ByteOrder.nativeOrder());
+        textureReadbackBuf = ByteBuffer.allocateDirect(reqSz).order(ByteOrder.nativeOrder());
         texturePixelBuf = new byte[reqSz];
       }
       ByteBuffer pixels = textureReadbackBuf;
       pixels.clear();
       GL11.glGetTexImage(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA,
-                         GL11.GL_UNSIGNED_BYTE, pixels);
+          GL11.GL_UNSIGNED_BYTE, pixels);
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTex);
       pixels.rewind();
       if (texturePixelBuf.length < reqSz)
@@ -502,8 +498,7 @@ public class MetalParticleRenderer {
           textureUploadFrame[glTextureId] = frameCount;
         return cached;
       }
-      long metalTex =
-          NativeBridge.nCreateTexture2D(device, width, height, pixelData);
+      long metalTex = NativeBridge.nCreateTexture2D(device, width, height, pixelData);
       if (inBounds) {
         textureCache[glTextureId] = metalTex;
         textureUploadFrame[glTextureId] = frameCount;
@@ -516,7 +511,7 @@ public class MetalParticleRenderer {
       return metalTex;
     } catch (Exception e) {
       MetalLogger.error("Failed to create Metal particle texture glId=%d: %s",
-                        glTextureId, e.getMessage());
+          glTextureId, e.getMessage());
       if (inBounds)
         textureCache[glTextureId] = 0L;
       return 0;
@@ -524,7 +519,7 @@ public class MetalParticleRenderer {
   }
 
   private boolean shouldRefreshTexture(long cached, int lastUpload,
-                                       Identifier atlasId) {
+      Identifier atlasId) {
     if (cached == TEXTURE_UNCACHED || lastUpload < 0) {
       return true;
     }
@@ -562,9 +557,13 @@ public class MetalParticleRenderer {
     MetalLogger.info("Particle texture cache invalidated");
   }
 
-  public int getLastParticleCount() { return count; }
+  public int getLastParticleCount() {
+    return count;
+  }
 
-  public int getLastVertexCount() { return vtxCount; }
+  public int getLastVertexCount() {
+    return vtxCount;
+  }
 
   public void shutdown() {
     active = false;

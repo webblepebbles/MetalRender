@@ -70,9 +70,9 @@ public final class IOSurfaceBlitter {
   private boolean cachedQuadWasStencil = false;
   private boolean cachedQuadWasDepthMask = false;
   private boolean cachedQuadCmR = true, cachedQuadCmG = true,
-                  cachedQuadCmB = true, cachedQuadCmA = true;
+      cachedQuadCmB = true, cachedQuadCmA = true;
   private int cachedQuadBSrcRGB = -1, cachedQuadBDstRGB = -1,
-              cachedQuadBSrcA = -1, cachedQuadBDstA = -1;
+      cachedQuadBSrcA = -1, cachedQuadBDstA = -1;
   private final int[] cachedQuadViewport = new int[4];
   private boolean quadStateQueried = false;
 
@@ -128,14 +128,17 @@ public final class IOSurfaceBlitter {
       }
       """;
   private static final float[] QUAD_VERTICES = {
-      -1.0f, -1.0f, 0.0f, 0.0f, 1.0f,  -1.0f, 1.0f, 0.0f,
-      1.0f,  1.0f,  1.0f, 1.0f, -1.0f, -1.0f, 0.0f, 0.0f,
-      1.0f,  1.0f,  1.0f, 1.0f, -1.0f, 1.0f,  0.0f, 1.0f,
+      -1.0f, -1.0f, 0.0f, 0.0f, 1.0f, -1.0f, 1.0f, 0.0f,
+      1.0f, 1.0f, 1.0f, 1.0f, -1.0f, -1.0f, 0.0f, 0.0f,
+      1.0f, 1.0f, 1.0f, 1.0f, -1.0f, 1.0f, 0.0f, 1.0f,
   };
 
-  public IOSurfaceBlitter() {}
+  public IOSurfaceBlitter() {
+  }
 
-  public boolean blit(long metalHandle) { return blit(metalHandle, false); }
+  public boolean blit(long metalHandle) {
+    return blit(metalHandle, false);
+  }
 
   public boolean blit(long metalHandle, boolean skipWait) {
     if (destroyed)
@@ -208,10 +211,10 @@ public final class IOSurfaceBlitter {
       buf.put(QUAD_VERTICES).flip();
       GL15.glBufferData(GL15.GL_ARRAY_BUFFER, buf, GL15.GL_STATIC_DRAW);
       GL20.glVertexAttribPointer(0, 2, GL11.GL_FLOAT, false, 4 * Float.BYTES,
-                                 0);
+          0);
       GL20.glEnableVertexAttribArray(0);
       GL20.glVertexAttribPointer(1, 2, GL11.GL_FLOAT, false, 4 * Float.BYTES,
-                                 2L * Float.BYTES);
+          2L * Float.BYTES);
       GL20.glEnableVertexAttribArray(1);
       GL30.glBindVertexArray(0);
       GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
@@ -226,7 +229,7 @@ public final class IOSurfaceBlitter {
   }
 
   private boolean blitGPUComposite(long metalHandle, int width, int height,
-                                   boolean skipWait) {
+      boolean skipWait) {
     try {
       long t0 = System.nanoTime();
       if (!skipWait) {
@@ -238,8 +241,7 @@ public final class IOSurfaceBlitter {
         if (glTextureRect == 0) {
           glTextureRect = GL11.glGenTextures();
         }
-        boolean bound =
-            NativeBridge.nBindIOSurfaceToTexture(metalHandle, glTextureRect);
+        boolean bound = NativeBridge.nBindIOSurfaceToTexture(metalHandle, glTextureRect);
         long t2 = System.nanoTime();
         if (bound && blitToIntermediateTexture(width, height)) {
           long t3 = System.nanoTime();
@@ -271,8 +273,8 @@ public final class IOSurfaceBlitter {
           consecutiveFastPathFailures++;
           if (blitFrameCount <= 10) {
             MetalLogger.warn("[IOSurfaceBlitter] Fast path failed (attempt "
-                                 + "%d), falling back to slow path",
-                             consecutiveFastPathFailures);
+                + "%d), falling back to slow path",
+                consecutiveFastPathFailures);
           }
           if (consecutiveFastPathFailures >= MAX_FAST_PATH_FAILURES) {
             MetalLogger.warn(
@@ -286,7 +288,7 @@ public final class IOSurfaceBlitter {
     } catch (Exception e) {
       if (blitFrameCount <= 10) {
         MetalLogger.error("[IOSurfaceBlitter] GPU composite exception: %s",
-                          e.getMessage());
+            e.getMessage());
       }
       while (GL11.glGetError() != GL11.GL_NO_ERROR) {
       }
@@ -331,13 +333,13 @@ public final class IOSurfaceBlitter {
       GL11.glDisable(GL11.GL_SCISSOR_TEST);
       GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, ioSurfaceFbo);
       GL30.glFramebufferTexture2D(GL30.GL_READ_FRAMEBUFFER,
-                                  GL30.GL_COLOR_ATTACHMENT0,
-                                  GL_TEXTURE_RECTANGLE, glTextureRect, 0);
+          GL30.GL_COLOR_ATTACHMENT0,
+          GL_TEXTURE_RECTANGLE, glTextureRect, 0);
       if (!readFboVerified) {
         int status = GL30.glCheckFramebufferStatus(GL30.GL_READ_FRAMEBUFFER);
         if (status != GL30.GL_FRAMEBUFFER_COMPLETE) {
           MetalLogger.error("[IOSurfaceBlitter] Read FBO incomplete: 0x%X",
-                            status);
+              status);
           return false;
         }
         readFboVerified = true;
@@ -355,26 +357,26 @@ public final class IOSurfaceBlitter {
       GL11.glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
       GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
       GL30.glBlitFramebuffer(0, height, width, 0, 0, 0, width, height,
-                             GL11.GL_COLOR_BUFFER_BIT, GL11.GL_NEAREST);
+          GL11.GL_COLOR_BUFFER_BIT, GL11.GL_NEAREST);
       if (blitFrameCount <= 10) {
         int err = GL11.glGetError();
         if (err != GL11.GL_NO_ERROR) {
           MetalLogger.error("[IOSurfaceBlitter] glBlitFramebuffer error: 0x%X",
-                            err);
+              err);
         }
       }
       return true;
     } finally {
       GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, ioSurfaceFbo);
       GL30.glFramebufferTexture2D(GL30.GL_READ_FRAMEBUFFER,
-                                  GL30.GL_COLOR_ATTACHMENT0,
-                                  GL_TEXTURE_RECTANGLE, 0, 0);
+          GL30.GL_COLOR_ATTACHMENT0,
+          GL_TEXTURE_RECTANGLE, 0, 0);
       GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevReadFbo);
       GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, prevDrawFbo);
       if (scissor)
         GL11.glEnable(GL11.GL_SCISSOR_TEST);
       GL11.glClearColor(prevClearColor[0], prevClearColor[1], prevClearColor[2],
-                        prevClearColor[3]);
+          prevClearColor[3]);
     }
   }
 
@@ -394,17 +396,17 @@ public final class IOSurfaceBlitter {
     intermediateTexture = GL11.glGenTextures();
     GL11.glBindTexture(GL11.GL_TEXTURE_2D, intermediateTexture);
     GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER,
-                         GL11.GL_NEAREST);
+        GL11.GL_NEAREST);
     GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER,
-                         GL11.GL_NEAREST);
+        GL11.GL_NEAREST);
     GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S,
-                         GL12.GL_CLAMP_TO_EDGE);
+        GL12.GL_CLAMP_TO_EDGE);
     GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T,
-                         GL12.GL_CLAMP_TO_EDGE);
+        GL12.GL_CLAMP_TO_EDGE);
     GL42.glTexStorage2D(GL11.GL_TEXTURE_2D, 1, GL11.GL_RGBA8, width, height);
     GL30.glBindFramebuffer(GL30.GL_FRAMEBUFFER, intermediateFbo);
     GL30.glFramebufferTexture2D(GL30.GL_FRAMEBUFFER, GL30.GL_COLOR_ATTACHMENT0,
-                                GL11.GL_TEXTURE_2D, intermediateTexture, 0);
+        GL11.GL_TEXTURE_2D, intermediateTexture, 0);
     int status = GL30.glCheckFramebufferStatus(GL30.GL_FRAMEBUFFER);
     if (status != GL30.GL_FRAMEBUFFER_COMPLETE) {
       MetalLogger.error(
@@ -417,7 +419,7 @@ public final class IOSurfaceBlitter {
     boundWidth = width;
     boundHeight = height;
     MetalLogger.info("[IOSurfaceBlitter] Created intermediate texture: %dx%d",
-                     width, height);
+        width, height);
   }
 
   private boolean blitSlowPath(long metalHandle, int width, int height) {
@@ -441,13 +443,13 @@ public final class IOSurfaceBlitter {
       glTexture = GL11.glGenTextures();
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, glTexture);
       GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER,
-                           GL11.GL_NEAREST);
+          GL11.GL_NEAREST);
       GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER,
-                           GL11.GL_NEAREST);
+          GL11.GL_NEAREST);
       GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S,
-                           GL12.GL_CLAMP_TO_EDGE);
+          GL12.GL_CLAMP_TO_EDGE);
       GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T,
-                           GL12.GL_CLAMP_TO_EDGE);
+          GL12.GL_CLAMP_TO_EDGE);
       GL42.glTexStorage2D(GL11.GL_TEXTURE_2D, 1, GL11.GL_RGBA8, width, height);
       boundWidth = width;
       boundHeight = height;
@@ -459,7 +461,7 @@ public final class IOSurfaceBlitter {
     GL11.glPixelStorei(GL11.GL_UNPACK_SKIP_ROWS, 0);
     GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 4);
     GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, width, height, GL_BGRA,
-                         GL11.GL_UNSIGNED_BYTE, pixelBuffer);
+        GL11.GL_UNSIGNED_BYTE, pixelBuffer);
   }
 
   private boolean drawDirectRect(int width, int height) {
@@ -489,14 +491,14 @@ public final class IOSurfaceBlitter {
       GL11.glDepthMask(false);
       GL11.glEnable(GL11.GL_BLEND);
       GL14.glBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
-                               GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
+          GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
       GL11.glDisable(GL11.GL_CULL_FACE);
       GL11.glDisable(GL11.GL_SCISSOR_TEST);
       GL11.glDisable(GL11.GL_STENCIL_TEST);
       GL11.glColorMask(true, true, true, true);
       GL20.glUseProgram(rectShaderProgram);
       if (rectTexSizeLoc >= 0) {
-        GL20.glUniform2f(rectTexSizeLoc, (float)width, (float)height);
+        GL20.glUniform2f(rectTexSizeLoc, (float) width, (float) height);
       }
       GL13.glActiveTexture(GL13.GL_TEXTURE0);
       GL11.glBindTexture(GL_TEXTURE_RECTANGLE, glTextureRect);
@@ -507,7 +509,7 @@ public final class IOSurfaceBlitter {
       return true;
     } finally {
       GL11.glViewport(prevViewport[0], prevViewport[1], prevViewport[2],
-                      prevViewport[3]);
+          prevViewport[3]);
       GL20.glUseProgram(prevProgram);
       GL30.glBindVertexArray(prevVao);
       GL11.glDepthMask(wasDepthMask);
@@ -545,7 +547,7 @@ public final class IOSurfaceBlitter {
     GL20.glDeleteShader(fs);
     if (GL20.glGetProgrami(prog, GL20.GL_LINK_STATUS) == GL11.GL_FALSE) {
       MetalLogger.error("[IOSurfaceBlitter] Rect shader link failed: %s",
-                        GL20.glGetProgramInfoLog(prog));
+          GL20.glGetProgramInfoLog(prog));
       GL20.glDeleteProgram(prog);
       return 0;
     }
@@ -639,7 +641,7 @@ public final class IOSurfaceBlitter {
       GL11.glDepthMask(false);
       GL11.glEnable(GL11.GL_BLEND);
       GL14.glBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
-                               GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
+          GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
       GL11.glDisable(GL11.GL_CULL_FACE);
       GL11.glDisable(GL11.GL_SCISSOR_TEST);
       GL11.glDisable(GL11.GL_STENCIL_TEST);
@@ -654,7 +656,7 @@ public final class IOSurfaceBlitter {
       return true;
     } finally {
       GL11.glViewport(prevViewport[0], prevViewport[1], prevViewport[2],
-                      prevViewport[3]);
+          prevViewport[3]);
       GL20.glUseProgram(prevProgram);
       GL30.glBindVertexArray(prevVao);
       GL13.glActiveTexture(prevActiveTexture);
@@ -704,7 +706,7 @@ public final class IOSurfaceBlitter {
     GL20.glDeleteShader(fs);
     if (GL20.glGetProgrami(prog, GL20.GL_LINK_STATUS) == GL11.GL_FALSE) {
       MetalLogger.error("[IOSurfaceBlitter] Shader link failed: %s",
-                        GL20.glGetProgramInfoLog(prog));
+          GL20.glGetProgramInfoLog(prog));
       GL20.glDeleteProgram(prog);
       return 0;
     }
@@ -717,8 +719,8 @@ public final class IOSurfaceBlitter {
     GL20.glCompileShader(s);
     if (GL20.glGetShaderi(s, GL20.GL_COMPILE_STATUS) == GL11.GL_FALSE) {
       MetalLogger.error("[IOSurfaceBlitter] %s shader compile failed: %s",
-                        type == GL20.GL_VERTEX_SHADER ? "vertex" : "fragment",
-                        GL20.glGetShaderInfoLog(s));
+          type == GL20.GL_VERTEX_SHADER ? "vertex" : "fragment",
+          GL20.glGetShaderInfoLog(s));
       GL20.glDeleteShader(s);
       return 0;
     }
@@ -734,7 +736,7 @@ public final class IOSurfaceBlitter {
     if (depthPixelBuffer == null ||
         depthPixelBuffer.capacity() < depthDataSize) {
       depthPixelBuffer = ByteBuffer.allocateDirect(depthDataSize)
-                             .order(ByteOrder.nativeOrder());
+          .order(ByteOrder.nativeOrder());
     }
     depthPixelBuffer.clear();
     boolean readOk = NativeBridge.nReadbackDepth(metalHandle, depthPixelBuffer);
@@ -773,23 +775,23 @@ public final class IOSurfaceBlitter {
       depthTexture = GL11.glGenTextures();
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, depthTexture);
       GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER,
-                           GL11.GL_NEAREST);
+          GL11.GL_NEAREST);
       GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER,
-                           GL11.GL_NEAREST);
+          GL11.GL_NEAREST);
       GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_S,
-                           GL12.GL_CLAMP_TO_EDGE);
+          GL12.GL_CLAMP_TO_EDGE);
       GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_WRAP_T,
-                           GL12.GL_CLAMP_TO_EDGE);
+          GL12.GL_CLAMP_TO_EDGE);
       GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL30.GL_R32F, width, height, 0,
-                        GL11.GL_RED, GL11.GL_FLOAT, (ByteBuffer)null);
+          GL11.GL_RED, GL11.GL_FLOAT, (ByteBuffer) null);
       depthTextureWidth = width;
       depthTextureHeight = height;
       MetalLogger.info("[IOSurfaceBlitter] Created depth texture: %d (%dx%d)",
-                       depthTexture, width, height);
+          depthTexture, width, height);
     }
     GL11.glBindTexture(GL11.GL_TEXTURE_2D, depthTexture);
     GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, width, height,
-                         GL11.GL_RED, GL11.GL_FLOAT, depthPixelBuffer);
+        GL11.GL_RED, GL11.GL_FLOAT, depthPixelBuffer);
     if (depthShaderProgram == 0) {
       depthShaderProgram = createDepthShaderProgram();
       if (depthShaderProgram == 0) {
@@ -803,7 +805,7 @@ public final class IOSurfaceBlitter {
         GL20.glUniform1i(loc, 0);
       GL20.glUseProgram(0);
       MetalLogger.info("[IOSurfaceBlitter] Created depth shader: %d",
-                       depthShaderProgram);
+          depthShaderProgram);
     }
     int prevProgram = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
     int prevVao = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING);
@@ -821,7 +823,7 @@ public final class IOSurfaceBlitter {
     GL11.glGetBooleanv(GL11.GL_COLOR_WRITEMASK, reusableCmBuf);
     ByteBuffer cmBuf = reusableCmBuf;
     boolean cmR = cmBuf.get(0) != 0, cmG = cmBuf.get(1) != 0,
-            cmB = cmBuf.get(2) != 0, cmA = cmBuf.get(3) != 0;
+        cmB = cmBuf.get(2) != 0, cmA = cmBuf.get(3) != 0;
     try {
       GL11.glViewport(0, 0, width, height);
       GL11.glEnable(GL11.GL_DEPTH_TEST);
@@ -843,10 +845,10 @@ public final class IOSurfaceBlitter {
         int depthBits = GL11.glGetInteger(GL11.GL_DEPTH_BITS);
         java.nio.FloatBuffer verifyBuf = BufferUtils.createFloatBuffer(1);
         GL11.glReadPixels(width / 2, height / 2, 1, 1, GL11.GL_DEPTH_COMPONENT,
-                          GL11.GL_FLOAT, verifyBuf);
+            GL11.GL_FLOAT, verifyBuf);
         float centerDepth = verifyBuf.get(0);
         GL11.glReadPixels(width / 4, height / 4, 1, 1, GL11.GL_DEPTH_COMPONENT,
-                          GL11.GL_FLOAT, verifyBuf);
+            GL11.GL_FLOAT, verifyBuf);
         float quarterDepth = verifyBuf.get(0);
         int glErr = GL11.glGetError();
         MetalLogger.info(
@@ -866,7 +868,7 @@ public final class IOSurfaceBlitter {
       GL30.glBindVertexArray(prevVao);
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTex);
       GL11.glViewport(prevViewport[0], prevViewport[1], prevViewport[2],
-                      prevViewport[3]);
+          prevViewport[3]);
       if (depth)
         GL11.glEnable(GL11.GL_DEPTH_TEST);
       else
@@ -894,7 +896,7 @@ public final class IOSurfaceBlitter {
   }
 
   public boolean uploadDepthDirect(long metalHandle, int mcDepthTexId,
-                                   int width, int height) {
+      int width, int height) {
     depthBlitFrameCount++;
     if (metalHandle == 0 || mcDepthTexId == 0 || width <= 0 || height <= 0) {
       return false;
@@ -903,7 +905,7 @@ public final class IOSurfaceBlitter {
     if (depthPixelBuffer == null ||
         depthPixelBuffer.capacity() < depthDataSize) {
       depthPixelBuffer = ByteBuffer.allocateDirect(depthDataSize)
-                             .order(java.nio.ByteOrder.nativeOrder());
+          .order(java.nio.ByteOrder.nativeOrder());
     }
     depthPixelBuffer.clear();
     boolean readOk = NativeBridge.nReadbackDepth(metalHandle, depthPixelBuffer);
@@ -951,8 +953,8 @@ public final class IOSurfaceBlitter {
     int prevTex = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
     GL11.glBindTexture(GL11.GL_TEXTURE_2D, mcDepthTexId);
     GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, width, height,
-                         GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT,
-                         depthPixelBuffer);
+        GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT,
+        depthPixelBuffer);
     int err = GL11.glGetError();
     if (err != GL11.GL_NO_ERROR && depthBlitFrameCount <= 5) {
       MetalLogger.error(
@@ -970,7 +972,7 @@ public final class IOSurfaceBlitter {
   }
 
   public boolean blitDepthViaFBO(long metalHandle, int mcDepthTexId,
-                                 int mcFboId, int width, int height) {
+      int mcFboId, int width, int height) {
     depthBlitFrameCount++;
     if (metalHandle == 0 || width <= 0 || height <= 0) {
       return false;
@@ -979,7 +981,7 @@ public final class IOSurfaceBlitter {
     if (depthPixelBuffer == null ||
         depthPixelBuffer.capacity() < depthDataSize) {
       depthPixelBuffer = ByteBuffer.allocateDirect(depthDataSize)
-                             .order(java.nio.ByteOrder.nativeOrder());
+          .order(java.nio.ByteOrder.nativeOrder());
     }
     depthPixelBuffer.clear();
     boolean readOk = NativeBridge.nReadbackDepth(metalHandle, depthPixelBuffer);
@@ -1029,12 +1031,12 @@ public final class IOSurfaceBlitter {
       depthTexture = GL11.glGenTextures();
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, depthTexture);
       GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MIN_FILTER,
-                           GL11.GL_NEAREST);
+          GL11.GL_NEAREST);
       GL11.glTexParameteri(GL11.GL_TEXTURE_2D, GL11.GL_TEXTURE_MAG_FILTER,
-                           GL11.GL_NEAREST);
+          GL11.GL_NEAREST);
       GL11.glTexImage2D(GL11.GL_TEXTURE_2D, 0, GL30.GL_DEPTH_COMPONENT32F,
-                        width, height, 0, GL11.GL_DEPTH_COMPONENT,
-                        GL11.GL_FLOAT, (ByteBuffer)null);
+          width, height, 0, GL11.GL_DEPTH_COMPONENT,
+          GL11.GL_FLOAT, (ByteBuffer) null);
       depthTextureWidth = width;
       depthTextureHeight = height;
       MetalLogger.info(
@@ -1045,8 +1047,8 @@ public final class IOSurfaceBlitter {
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, depthTexture);
     }
     GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, width, height,
-                         GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT,
-                         depthPixelBuffer);
+        GL11.GL_DEPTH_COMPONENT, GL11.GL_FLOAT,
+        depthPixelBuffer);
     int err = GL11.glGetError();
     if (err != GL11.GL_NO_ERROR && depthBlitFrameCount <= 5) {
       MetalLogger.error(
@@ -1062,8 +1064,8 @@ public final class IOSurfaceBlitter {
     int prevDrawFbo = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
     GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, depthSrcFbo);
     GL30.glFramebufferTexture2D(GL30.GL_READ_FRAMEBUFFER,
-                                GL30.GL_DEPTH_ATTACHMENT, GL11.GL_TEXTURE_2D,
-                                depthTexture, 0);
+        GL30.GL_DEPTH_ATTACHMENT, GL11.GL_TEXTURE_2D,
+        depthTexture, 0);
     int srcStatus = GL30.glCheckFramebufferStatus(GL30.GL_READ_FRAMEBUFFER);
     if (srcStatus != GL30.GL_FRAMEBUFFER_COMPLETE) {
       if (depthBlitFrameCount <= 3) {
@@ -1076,7 +1078,7 @@ public final class IOSurfaceBlitter {
     }
     GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, mcFboId);
     GL30.glBlitFramebuffer(0, 0, width, height, 0, 0, width, height,
-                           GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST);
+        GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST);
     err = GL11.glGetError();
     if (err != GL11.GL_NO_ERROR && depthBlitFrameCount <= 5) {
       MetalLogger.error(
@@ -1087,17 +1089,16 @@ public final class IOSurfaceBlitter {
     GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, prevDrawFbo);
     if (depthBlitFrameCount <= 3 || depthBlitFrameCount % 600 == 0) {
       MetalLogger.info("[IOSurfaceBlitter] blitDepthViaFBO complete (frame %d, "
-                           + "srcFBO=%d, dstFBO=%d, %dx%d)",
-                       depthBlitFrameCount, depthSrcFbo, mcFboId, width,
-                       height);
+          + "srcFBO=%d, dstFBO=%d, %dx%d)",
+          depthBlitFrameCount, depthSrcFbo, mcFboId, width,
+          height);
     }
     return err == GL11.GL_NO_ERROR;
   }
 
   private int createDepthShaderProgram() {
     int vertShader = compileShader(GL20.GL_VERTEX_SHADER, VERTEX_SHADER);
-    int fragShader =
-        compileShader(GL20.GL_FRAGMENT_SHADER, DEPTH_FRAGMENT_SHADER);
+    int fragShader = compileShader(GL20.GL_FRAGMENT_SHADER, DEPTH_FRAGMENT_SHADER);
     if (vertShader == 0 || fragShader == 0) {
       if (vertShader != 0)
         GL20.glDeleteShader(vertShader);
