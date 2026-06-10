@@ -18,10 +18,8 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
 import net.minecraft.client.Minecraft;
-import net.minecraft.client.color.block.BlockColors;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.block.BlockStateModelSet;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
@@ -51,6 +49,9 @@ public class CustomChunkMesher {
       .withInitial(() -> ByteBuffer.allocateDirect(VERTEX_BUF_SIZE)
           .order(ByteOrder.nativeOrder()));
   private static final ThreadLocal<ByteBuffer> WATER_BUF_POOL = ThreadLocal
+      .withInitial(() -> ByteBuffer.allocateDirect(VERTEX_BUF_SIZE)
+          .order(ByteOrder.nativeOrder()));
+  private static final ThreadLocal<ByteBuffer> SORT_BUF_POOL = ThreadLocal
       .withInitial(() -> ByteBuffer.allocateDirect(VERTEX_BUF_SIZE)
           .order(ByteOrder.nativeOrder()));
   private final Long2ObjectOpenHashMap<ChunkMeshData> meshCache;
@@ -114,6 +115,92 @@ public class CustomChunkMesher {
     final short[] vMax = new short[6];
     final boolean[] hasSprite = new boolean[6];
     final boolean[] hasTint = new boolean[6];
+  }
+
+  private static final java.util.concurrent.atomic.AtomicLong TASK_SEQUENCE = new java.util.concurrent.atomic.AtomicLong();
+
+  private static final class PrioritizedMeshTask implements Runnable, Comparable<PrioritizedMeshTask> {
+    final int priority;
+    final long sequence;
+    final Runnable task;
+
+    PrioritizedMeshTask(int priority, Runnable task) {
+      this.priority = priority;
+      this.sequence = TASK_SEQUENCE.getAndIncrement();
+      this.task = task;
+    }
+
+    @Override
+    public void run() {
+      task.run();
+    }
+
+    @Override
+    public int compareTo(PrioritizedMeshTask other) {
+      int byPriority = Integer.compare(priority, other.priority);
+      return byPriority != 0 ? byPriority : Long.compare(sequence, other.sequence);
+    }
+  }
+
+  private static final class MeshBuildContext {
+    final BlockStateModelSet blockModels;
+    final int[] biomeColors;
+    final int buildPlayerCX;
+    final int buildPlayerCY;
+    final int buildPlayerCZ;
+
+    MeshBuildContext(BlockStateModelSet blockModels, int[] biomeColors,
+        int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ) {
+      this.blockModels = blockModels;
+      this.biomeColors = biomeColors;
+      this.buildPlayerCX = buildPlayerCX;
+      this.buildPlayerCY = buildPlayerCY;
+      this.buildPlayerCZ = buildPlayerCZ;
+    }
+  }
+
+  private static final class SectionSnapshot {
+    final boolean valid;
+    final boolean empty;
+    final int[] blockStates;
+    final byte[] lightData;
+    final int[] nXNeg;
+    final int[] nXPos;
+    final int[] nYNeg;
+    final int[] nYPos;
+    final int[] nZNeg;
+    final int[] nZPos;
+    final byte[] nXNegLight;
+    final byte[] nXPosLight;
+    final byte[] nYNegLight;
+    final byte[] nYPosLight;
+    final byte[] nZNegLight;
+    final byte[] nZPosLight;
+    final MeshBuildContext context;
+
+    SectionSnapshot(boolean valid, boolean empty, int[] blockStates,
+        byte[] lightData, int[] nXNeg, int[] nXPos, int[] nYNeg,
+        int[] nYPos, int[] nZNeg, int[] nZPos, byte[] nXNegLight,
+        byte[] nXPosLight, byte[] nYNegLight, byte[] nYPosLight,
+        byte[] nZNegLight, byte[] nZPosLight, MeshBuildContext context) {
+      this.valid = valid;
+      this.empty = empty;
+      this.blockStates = blockStates;
+      this.lightData = lightData;
+      this.nXNeg = nXNeg;
+      this.nXPos = nXPos;
+      this.nYNeg = nYNeg;
+      this.nYPos = nYPos;
+      this.nZNeg = nZNeg;
+      this.nZPos = nZPos;
+      this.nXNegLight = nXNegLight;
+      this.nXPosLight = nXPosLight;
+      this.nYNegLight = nYNegLight;
+      this.nYPosLight = nYPosLight;
+      this.nZNegLight = nZNegLight;
+      this.nZPosLight = nZPosLight;
+      this.context = context;
+    }
   }
 
   private static final int[][] AO_BILINEAR = {
@@ -212,6 +299,8 @@ public class CustomChunkMesher {
     public final int chunkY;
     public final int chunkZ;
     public final int lodLevel;
+    public final long visibilityMask;
+    public final int[] facingQuadCounts;
 
     public final int buildPlayerCX, buildPlayerCY, buildPlayerCZ;
 
@@ -219,6 +308,14 @@ public class CustomChunkMesher {
         int chunkY, int chunkZ, int lodLevel,
         int buildPlayerCX, int buildPlayerCY,
         int buildPlayerCZ) {
+      this(bufferHandle, quadCount, chunkX, chunkY, chunkZ, lodLevel,
+          buildPlayerCX, buildPlayerCY, buildPlayerCZ, 0L, new int[7]);
+    }
+
+    public ChunkMeshData(long bufferHandle, int quadCount, int chunkX,
+        int chunkY, int chunkZ, int lodLevel,
+        int buildPlayerCX, int buildPlayerCY,
+        int buildPlayerCZ, long visibilityMask, int[] facingQuadCounts) {
       this.bufferHandle = bufferHandle;
       this.quadCount = quadCount;
       this.chunkX = chunkX;
@@ -228,6 +325,10 @@ public class CustomChunkMesher {
       this.buildPlayerCX = buildPlayerCX;
       this.buildPlayerCY = buildPlayerCY;
       this.buildPlayerCZ = buildPlayerCZ;
+      this.visibilityMask = visibilityMask;
+      this.facingQuadCounts = facingQuadCounts != null
+          ? java.util.Arrays.copyOf(facingQuadCounts, 14)
+          : new int[14];
     }
   }
 
@@ -261,7 +362,7 @@ public class CustomChunkMesher {
     this.builderPool = new java.util.concurrent.ThreadPoolExecutor(
         warmupThreadCount, warmupThreadCount, 10L,
         java.util.concurrent.TimeUnit.SECONDS,
-        new java.util.concurrent.LinkedBlockingQueue<>(), meshFactory);
+        new java.util.concurrent.PriorityBlockingQueue<>(), meshFactory);
     this.builderPool.allowCoreThreadTimeOut(true);
 
     java.util.concurrent.ScheduledExecutorService warmupTimer = java.util.concurrent.Executors
@@ -278,30 +379,8 @@ public class CustomChunkMesher {
     }, 30, java.util.concurrent.TimeUnit.SECONDS);
 
     this.dirtyRebuildPool = this.builderPool;
-
-    java.util.concurrent.ThreadFactory instantFactory = r -> {
-      Thread t = new Thread(r, "MetalRender-InstantRebuild");
-      t.setDaemon(true);
-      t.setPriority(Thread.MIN_PRIORITY);
-      return t;
-    };
-    this.instantRebuildPool = new java.util.concurrent.ThreadPoolExecutor(
-        steadyInstantThreads, steadyInstantThreads, 1L,
-        java.util.concurrent.TimeUnit.SECONDS,
-        new java.util.concurrent.LinkedBlockingQueue<>(), instantFactory);
-    this.instantRebuildPool.allowCoreThreadTimeOut(true);
-
-    java.util.concurrent.ThreadFactory interactiveFactory = r -> {
-      Thread t = new Thread(r, "MetalRender-InteractiveRebuild");
-      t.setDaemon(true);
-      t.setPriority(Thread.NORM_PRIORITY);
-      return t;
-    };
-    this.interactiveRebuildPool = new java.util.concurrent.ThreadPoolExecutor(
-        interactiveThreads, interactiveThreads, 1L,
-        java.util.concurrent.TimeUnit.SECONDS,
-        new java.util.concurrent.LinkedBlockingQueue<>(), interactiveFactory);
-    this.interactiveRebuildPool.allowCoreThreadTimeOut(true);
+    this.instantRebuildPool = this.builderPool;
+    this.interactiveRebuildPool = this.builderPool;
   }
 
   public long getGlobalIndexBuffer() {
@@ -357,6 +436,190 @@ public class CustomChunkMesher {
   private static long packChunkKey(int x, int y, int z) {
     return ((long) (x & 0x3FFFFF) << 42) | ((long) (y & 0xFFFFF) << 22) |
         (z & 0x3FFFFF);
+  }
+
+  private void submitMeshTask(int priority, Runnable task) {
+    builderPool.execute(new PrioritizedMeshTask(priority, task));
+  }
+
+  private boolean isTaskCancelled(long key, long generation) {
+    synchronized (dirtyGeneration) {
+      return dirtyGeneration.get(key) != generation;
+    }
+  }
+
+  private MeshBuildContext captureBuildContext(ClientLevel world, int chunkX,
+      int chunkY, int chunkZ) {
+    Minecraft mc = Minecraft.getInstance();
+    BlockStateModelSet blockModels = null;
+    int buildPCX = 0;
+    int buildPCY = 0;
+    int buildPCZ = 0;
+    if (mc != null) {
+      if (mc.getModelManager() != null) {
+        blockModels = mc.getModelManager().getBlockStateModelSet();
+      }
+      if (mc.player != null) {
+        buildPCX = mc.player.chunkPosition().x();
+        buildPCZ = mc.player.chunkPosition().z();
+        buildPCY = (int) Math.floor(mc.player.getY()) >> 4;
+      }
+    }
+    int[] biomeColors = java.util.Arrays.copyOf(
+        getSectionBiomeColors(world, chunkX, chunkY, chunkZ,
+            MetalRenderClient.getConfig().biomeTransitionDetail),
+        4);
+    return new MeshBuildContext(blockModels, biomeColors, buildPCX, buildPCY,
+        buildPCZ);
+  }
+
+  private void removeEmptyMesh(long key, int chunkX, int chunkY, int chunkZ) {
+    synchronized (meshCache) {
+      ChunkMeshData old = meshCache.remove(key);
+      if (old != null) {
+        NativeBridge.nUnregisterChunkMesh(chunkX, chunkY, chunkZ);
+        NativeBridge.nDestroyBuffer(old.bufferHandle);
+        meshCountAtomic.decrementAndGet();
+        vertexCountAtomic.addAndGet(-old.quadCount * 4);
+      }
+    }
+    synchronized (emptyKeys) {
+      emptyKeys.add(key);
+    }
+    synchronized (dirtyKeys) {
+      dirtyKeys.remove(key);
+    }
+    meshUpdateGeneration.incrementAndGet();
+    recordVisibleLatency(key);
+  }
+
+  private static int[] copyNeighborFace(LevelChunkSection section, int faceDir) {
+    int[] out = new int[SECTION_SIZE * SECTION_SIZE];
+    if (!readNeighborFaceStatic(section, faceDir, out)) {
+      return null;
+    }
+    return out;
+  }
+
+  private static byte[] copyNeighborLightFace(ClientLevel world, int baseX,
+      int baseY, int baseZ, LevelChunkSection section, int faceDir,
+      BlockPos.MutableBlockPos mutablePos) {
+    byte[] out = new byte[SECTION_SIZE * SECTION_SIZE];
+    if (!readNeighborLightFaceStatic(world, baseX, baseY, baseZ, section,
+        faceDir, out, mutablePos)) {
+      return null;
+    }
+    return out;
+  }
+
+  private SectionSnapshot captureSectionSnapshot(ClientLevel world, int chunkX,
+      int chunkY, int chunkZ, int lodLevel, boolean useApproximateLight) {
+    if (world == null) {
+      return new SectionSnapshot(false, false, null, null, null, null, null,
+          null, null, null, null, null, null, null, null, null,
+          captureBuildContext(null, chunkX, chunkY, chunkZ));
+    }
+    LevelChunk chunk = world.getChunkSource().getChunkNow(chunkX, chunkZ);
+    if (chunk == null) {
+      return new SectionSnapshot(false, false, null, null, null, null, null,
+          null, null, null, null, null, null, null, null, null,
+          captureBuildContext(world, chunkX, chunkY, chunkZ));
+    }
+    int sectionIdx = chunk.getSectionIndexFromSectionY(chunkY);
+    LevelChunkSection[] chunkSections = chunk.getSections();
+    if (sectionIdx < 0 || sectionIdx >= chunkSections.length) {
+      return new SectionSnapshot(false, false, null, null, null, null, null,
+          null, null, null, null, null, null, null, null, null,
+          captureBuildContext(world, chunkX, chunkY, chunkZ));
+    }
+    LevelChunkSection section = chunkSections[sectionIdx];
+    MeshBuildContext context = captureBuildContext(world, chunkX, chunkY, chunkZ);
+    if (section == null || section.hasOnlyAir()) {
+      return new SectionSnapshot(true, true, null, null, null, null, null,
+          null, null, null, null, null, null, null, null, null, context);
+    }
+    int[] blockStates = new int[SECTION_SIZE * SECTION_SIZE * SECTION_SIZE];
+    boolean hasAnyBlock = false;
+    for (int y = 0; y < SECTION_SIZE; y++) {
+      for (int z = 0; z < SECTION_SIZE; z++) {
+        for (int x = 0; x < SECTION_SIZE; x++) {
+          BlockState bs = section.getBlockState(x, y, z);
+          if (!bs.isAir()) {
+            blockStates[y * 256 + z * 16 + x] = Block.getId(bs);
+            hasAnyBlock = true;
+          }
+        }
+      }
+    }
+    if (!hasAnyBlock) {
+      return new SectionSnapshot(true, true, null, null, null, null, null,
+          null, null, null, null, null, null, null, null, null, context);
+    }
+    LevelChunkSection sectionXNeg = resolveSection(world, chunkX - 1, chunkY, chunkZ);
+    LevelChunkSection sectionXPos = resolveSection(world, chunkX + 1, chunkY, chunkZ);
+    LevelChunkSection sectionYNeg = sectionIdx > 0 ? chunkSections[sectionIdx - 1] : null;
+    LevelChunkSection sectionYPos = sectionIdx + 1 < chunkSections.length
+        ? chunkSections[sectionIdx + 1]
+        : null;
+    LevelChunkSection sectionZNeg = resolveSection(world, chunkX, chunkY, chunkZ - 1);
+    LevelChunkSection sectionZPos = resolveSection(world, chunkX, chunkY, chunkZ + 1);
+    int[] nXNeg = copyNeighborFace(sectionXNeg, 4);
+    int[] nXPos = copyNeighborFace(sectionXPos, 5);
+    int[] nYNeg = copyNeighborFace(sectionYNeg, 0);
+    int[] nYPos = copyNeighborFace(sectionYPos, 1);
+    int[] nZNeg = copyNeighborFace(sectionZNeg, 2);
+    int[] nZPos = copyNeighborFace(sectionZPos, 3);
+    byte[] lightData = new byte[SECTION_SIZE * SECTION_SIZE * SECTION_SIZE];
+    BlockPos.MutableBlockPos sharedMpos = MUTABLE_POS_POOL.get();
+    byte[] nXNegLight = null;
+    byte[] nXPosLight = null;
+    byte[] nYNegLight = null;
+    byte[] nYPosLight = null;
+    byte[] nZNegLight = null;
+    byte[] nZPosLight = null;
+    if (useApproximateLight) {
+      fillApproximateLightData(world, chunkX, chunkY, chunkZ, blockStates,
+          lightData, sharedMpos);
+    } else {
+      nXNegLight = copyNeighborLightFace(world, (chunkX - 1) * 16,
+          chunkY * 16, chunkZ * 16, sectionXNeg, 4, sharedMpos);
+      nXPosLight = copyNeighborLightFace(world, (chunkX + 1) * 16,
+          chunkY * 16, chunkZ * 16, sectionXPos, 5, sharedMpos);
+      nYNegLight = copyNeighborLightFace(world, chunkX * 16,
+          (chunkY - 1) * 16, chunkZ * 16, sectionYNeg, 0, sharedMpos);
+      nYPosLight = copyNeighborLightFace(world, chunkX * 16,
+          (chunkY + 1) * 16, chunkZ * 16, sectionYPos, 1, sharedMpos);
+      nZNegLight = copyNeighborLightFace(world, chunkX * 16,
+          chunkY * 16, (chunkZ - 1) * 16, sectionZNeg, 2, sharedMpos);
+      nZPosLight = copyNeighborLightFace(world, chunkX * 16,
+          chunkY * 16, (chunkZ + 1) * 16, sectionZPos, 3, sharedMpos);
+      try {
+        int baseX = chunkX * 16;
+        int baseY = chunkY * 16;
+        int baseZ = chunkZ * 16;
+        for (int y = 0; y < SECTION_SIZE; y++) {
+          for (int z = 0; z < SECTION_SIZE; z++) {
+            for (int x = 0; x < SECTION_SIZE; x++) {
+              int lightIdx = y * 256 + z * 16 + x;
+              if (blockStates[lightIdx] == 0) {
+                lightData[lightIdx] = 0;
+                continue;
+              }
+              sharedMpos.set(baseX + x, baseY + y, baseZ + z);
+              int bl = world.getBrightness(LightLayer.BLOCK, sharedMpos);
+              int sl = world.getBrightness(LightLayer.SKY, sharedMpos);
+              lightData[lightIdx] = (byte) ((bl & 0xF) | ((sl & 0xF) << 4));
+            }
+          }
+        }
+      } catch (Exception e) {
+        recordLightSampleFallback("snapshot_fill", e);
+        java.util.Arrays.fill(lightData, (byte) 0x00);
+      }
+    }
+    return new SectionSnapshot(true, false, blockStates, lightData, nXNeg,
+        nXPos, nYNeg, nYPos, nZNeg, nZPos, nXNegLight, nXPosLight,
+        nYNegLight, nYPosLight, nZNegLight, nZPosLight, context);
   }
 
   private static final byte OPACITY_OPAQUE = 0;
@@ -958,86 +1221,37 @@ public class CustomChunkMesher {
     if (!initialized)
       return;
     long key = packChunkKey(chunkX, chunkY, chunkZ);
+    final long genAtSubmit;
+    synchronized (dirtyGeneration) {
+      genAtSubmit = dirtyGeneration.get(key);
+    }
+    int[] blockSnapshot = blockStates != null
+        ? java.util.Arrays.copyOf(blockStates, blockStates.length)
+        : null;
+    byte[] lightSnapshot = lightData != null
+        ? java.util.Arrays.copyOf(lightData, lightData.length)
+        : null;
+    MeshBuildContext context = captureBuildContext(null, chunkX, chunkY, chunkZ);
     synchronized (pendingKeys) {
       pendingKeys.add(key);
     }
-    builderPool.submit(() -> {
+    submitMeshTask(2, () -> {
       try {
-        doMeshBuild(chunkX, chunkY, chunkZ, blockStates, lightData, key);
+        if (isTaskCancelled(key, genAtSubmit)) {
+          return;
+        }
+        doMeshBuild(chunkX, chunkY, chunkZ, blockSnapshot, lightSnapshot, key,
+            genAtSubmit, 0, null, null, null, null, null, null, null, null,
+            null, null, null, null, context);
       } catch (Exception e) {
+        MetalLogger.error("Meshing error for chunk [%d,%d,%d]", chunkX, chunkY,
+            chunkZ);
+      } finally {
         synchronized (pendingKeys) {
           pendingKeys.remove(key);
         }
-        MetalLogger.error("Meshing error for chunk [%d,%d,%d]", chunkX, chunkY,
-            chunkZ);
       }
     });
-  }
-
-  private void doMeshBuild(int chunkX, int chunkY, int chunkZ,
-      int[] blockStates, byte[] lightData, long key) {
-    int[] nXNeg = null, nXPos = null, nYNeg = null, nYPos = null, nZNeg = null,
-        nZPos = null;
-    byte[] nXNegLight = null, nXPosLight = null, nYNegLight = null,
-        nYPosLight = null, nZNegLight = null, nZPosLight = null;
-    try {
-      Minecraft mc = Minecraft.getInstance();
-      ClientLevel world = mc != null ? mc.level : null;
-      if (world != null) {
-
-        int[] poolXNeg = N_XNEG_FACE_POOL.get(), poolXPos = N_XPOS_FACE_POOL.get();
-        int[] poolYNeg = N_YNEG_FACE_POOL.get(), poolYPos = N_YPOS_FACE_POOL.get();
-        int[] poolZNeg = N_ZNEG_FACE_POOL.get(), poolZPos = N_ZPOS_FACE_POOL.get();
-        nXNeg = readNeighborFace(world, chunkX - 1, chunkY, chunkZ, 4, poolXNeg)
-            ? poolXNeg
-            : null;
-        nXPos = readNeighborFace(world, chunkX + 1, chunkY, chunkZ, 5, poolXPos)
-            ? poolXPos
-            : null;
-        nYNeg = readNeighborFace(world, chunkX, chunkY - 1, chunkZ, 0, poolYNeg)
-            ? poolYNeg
-            : null;
-        nYPos = readNeighborFace(world, chunkX, chunkY + 1, chunkZ, 1, poolYPos)
-            ? poolYPos
-            : null;
-        nZNeg = readNeighborFace(world, chunkX, chunkY, chunkZ - 1, 2, poolZNeg)
-            ? poolZNeg
-            : null;
-        nZPos = readNeighborFace(world, chunkX, chunkY, chunkZ + 1, 3, poolZPos)
-            ? poolZPos
-            : null;
-
-        BlockPos.MutableBlockPos nLightMpos = MUTABLE_POS_POOL.get();
-        nXNegLight = N_XNEG_LIGHT_POOL.get();
-        if (!readNeighborLightFace(world, chunkX - 1, chunkY, chunkZ, 4,
-            nXNegLight, nLightMpos))
-          nXNegLight = null;
-        nXPosLight = N_XPOS_LIGHT_POOL.get();
-        if (!readNeighborLightFace(world, chunkX + 1, chunkY, chunkZ, 5,
-            nXPosLight, nLightMpos))
-          nXPosLight = null;
-        nYNegLight = N_YNEG_LIGHT_POOL.get();
-        if (!readNeighborLightFace(world, chunkX, chunkY - 1, chunkZ, 0,
-            nYNegLight, nLightMpos))
-          nYNegLight = null;
-        nYPosLight = N_YPOS_LIGHT_POOL.get();
-        if (!readNeighborLightFace(world, chunkX, chunkY + 1, chunkZ, 1,
-            nYPosLight, nLightMpos))
-          nYPosLight = null;
-        nZNegLight = N_ZNEG_LIGHT_POOL.get();
-        if (!readNeighborLightFace(world, chunkX, chunkY, chunkZ - 1, 2,
-            nZNegLight, nLightMpos))
-          nZNegLight = null;
-        nZPosLight = N_ZPOS_LIGHT_POOL.get();
-        if (!readNeighborLightFace(world, chunkX, chunkY, chunkZ + 1, 3,
-            nZPosLight, nLightMpos))
-          nZPosLight = null;
-      }
-    } catch (Exception ignored) {
-    }
-    doMeshBuild(chunkX, chunkY, chunkZ, blockStates, lightData, key, 0, nXNeg,
-        nXPos, nYNeg, nYPos, nZNeg, nZPos, nXNegLight, nXPosLight,
-        nYNegLight, nYPosLight, nZNegLight, nZPosLight);
   }
 
   private static boolean shouldRenderAtLod(BlockState state, int lodLevel) {
@@ -1240,7 +1454,7 @@ public class CustomChunkMesher {
   }
 
   private CoarseDetailMeshStats buildDistanceTierMesh(
-      ByteBuffer vertexBuffer, ByteBuffer waterBuffer, ClientLevel world,
+      ByteBuffer vertexBuffer, ByteBuffer waterBuffer, int[] sectionBiomeColors,
       BlockStateModelSet blockModels, int chunkX, int chunkY, int chunkZ,
       int[] blockStates, byte[] lightData, int detailTier, int[] nXNeg,
       int[] nXPos, int[] nYNeg, int[] nYPos, int[] nZNeg, int[] nZPos) {
@@ -1250,7 +1464,6 @@ public class CustomChunkMesher {
     int cellCount = gridSize * gridSize * gridSize;
     int[] coarseStates = new int[cellCount];
     byte[] coarseLights = new byte[cellCount];
-    int[] sectionBiomeColors = getSectionBiomeColors(world, chunkX, chunkY, chunkZ, 1);
 
     for (int cellY = 0; cellY < gridSize; cellY++) {
       int startY = cellY * scale;
@@ -1684,13 +1897,16 @@ public class CustomChunkMesher {
 
   private void doMeshBuild(int chunkX, int chunkY, int chunkZ,
       int[] blockStates, byte[] lightData, long key,
-      int lodLevel, int[] nXNeg, int[] nXPos, int[] nYNeg,
+      long generation, int lodLevel, int[] nXNeg, int[] nXPos, int[] nYNeg,
       int[] nYPos, int[] nZNeg, int[] nZPos,
       byte[] nXNegLight, byte[] nXPosLight,
       byte[] nYNegLight, byte[] nYPosLight,
-      byte[] nZNegLight, byte[] nZPosLight) {
+      byte[] nZNegLight, byte[] nZPosLight, MeshBuildContext context) {
     long buildStart = System.nanoTime();
     try {
+      if (isTaskCancelled(key, generation)) {
+        return;
+      }
       meshBuildCount++;
       ByteBuffer vertexBuffer = VERTEX_BUF_POOL.get();
       ByteBuffer waterBuffer = WATER_BUF_POOL.get();
@@ -1700,10 +1916,11 @@ public class CustomChunkMesher {
       int waterQuadCount = 0;
       int bakedQuadBlocks = 0;
       int fallbackBlocks = 0;
-      Minecraft mc = Minecraft.getInstance();
-      BlockStateModelSet blockModels = null;
-      if (mc != null && mc.getModelManager() != null) {
-        blockModels = mc.getModelManager().getBlockStateModelSet();
+      BlockStateModelSet blockModels = context != null ? context.blockModels : null;
+      int[] snapshotBiomeColors = context != null ? context.biomeColors : null;
+      if (snapshotBiomeColors == null || snapshotBiomeColors.length < 4) {
+        snapshotBiomeColors = new int[] { DEFAULT_BLOCK_COLOR, DEFAULT_BLOCK_COLOR,
+            DEFAULT_BLOCK_COLOR, DEFAULT_BLOCK_COLOR };
       }
       MetalRenderConfig leafCfg = MetalRenderClient.getConfig();
       int leafMode = (leafCfg != null) ? leafCfg.leafCullingMode : 0;
@@ -1715,15 +1932,12 @@ public class CustomChunkMesher {
       boolean useSmoothAO = false;
 
       boolean[] skipFace = null;
-      int buildPCX = 0, buildPCY = 0, buildPCZ = 0;
-      if (mc != null && mc.player != null) {
-        buildPCX = mc.player.chunkPosition().x();
-        buildPCZ = mc.player.chunkPosition().z();
-        buildPCY = (int) Math.floor(mc.player.getY()) >> 4;
-      }
+      int buildPCX = context != null ? context.buildPlayerCX : 0;
+      int buildPCY = context != null ? context.buildPlayerCY : 0;
+      int buildPCZ = context != null ? context.buildPlayerCZ : 0;
       if (useDistanceTier) {
         CoarseDetailMeshStats coarseStats = buildDistanceTierMesh(
-            vertexBuffer, waterBuffer, mc != null ? mc.level : null,
+            vertexBuffer, waterBuffer, snapshotBiomeColors,
             blockModels, chunkX, chunkY, chunkZ, blockStates, lightData,
             lodLevel, nXNeg, nXPos, nYNeg, nYPos, nZNeg, nZPos);
         opaqueQuadCount = coarseStats.opaqueQuadCount;
@@ -1731,9 +1945,7 @@ public class CustomChunkMesher {
         bakedQuadBlocks = coarseStats.cellsMeshed;
         fallbackBlocks = coarseStats.sampledCells;
       } else if (useFastPath) {
-        int[] fastBiomeColors = getSectionBiomeColors(
-            mc != null ? mc.level : null, chunkX, chunkY, chunkZ,
-            MetalRenderClient.getConfig().biomeTransitionDetail);
+        int[] fastBiomeColors = snapshotBiomeColors;
         int maxSid = 0;
         for (int i = 0; i < 4096; i++) {
           if (blockStates != null && blockStates[i] > maxSid)
@@ -2024,43 +2236,11 @@ public class CustomChunkMesher {
           if (_bsFT != null)
             sidTintTypeFast[fastSid] = getBiomeTintType(_bsFT.getBlock());
         }
-        int biomeDetailFast = MetalRenderClient.getConfig().biomeTransitionDetail;
         int[] colGrassLOD = null, colWaterLOD = null;
-        if (biomeDetailFast >= 1 && mc != null && mc.level != null) {
-          int blurR = Math.min(biomeDetailFast, 8);
-          int padded = 16 + 2 * blurR;
-          int syCol = Math.max(63, chunkY * 16 + 8);
-          int bxOrig = chunkX * 16 - blurR;
-          int bzOrig = chunkZ * 16 - blurR;
-          BlockPos.MutableBlockPos bpCol = BIOME_POS_POOL.get();
-          try {
-            int[] pgGrass = new int[padded * padded];
-            int[] pgWater = new int[padded * padded];
-            for (int lz = 0; lz < padded; lz++) {
-              for (int lx = 0; lx < padded; lx++) {
-                bpCol.set(bxOrig + lx, syCol, bzOrig + lz);
-                int ci = lz * padded + lx;
-                pgGrass[ci] = mc.level.getBlockTint(
-                    bpCol, net.minecraft.client.renderer.BiomeColors.GRASS_COLOR_RESOLVER);
-                pgWater[ci] = mc.level.getBlockTint(
-                    bpCol, net.minecraft.client.renderer.BiomeColors.WATER_COLOR_RESOLVER);
-              }
-            }
-            pgGrass = boxBlurColors(pgGrass, padded, padded, blurR);
-            pgWater = boxBlurColors(pgWater, padded, padded, blurR);
-            colGrassLOD = new int[256];
-            colWaterLOD = new int[256];
-            for (int lz = 0; lz < 16; lz++) {
-              for (int lx = 0; lx < 16; lx++) {
-                colGrassLOD[lz * 16 + lx] = pgGrass[(lz + blurR) * padded + (lx + blurR)];
-                colWaterLOD[lz * 16 + lx] = pgWater[(lz + blurR) * padded + (lx + blurR)];
-              }
-            }
-          } catch (Exception e) {
-            colGrassLOD = colWaterLOD = null;
-          }
-        }
         for (int y = 0; y < SECTION_SIZE; y++) {
+          if (isTaskCancelled(key, generation)) {
+            return;
+          }
           for (int z = 0; z < SECTION_SIZE; z++) {
             for (int x = 0; x < SECTION_SIZE; x++) {
               int idx = y * 256 + z * 16 + x;
@@ -2559,9 +2739,7 @@ public class CustomChunkMesher {
         boolean[] l0FaceHasSprite = _l1.l0FaceHasSprite;
         boolean[] l0FaceHasTint = _l1.l0FaceHasTint;
         RandomSource rand = REUSABLE_RANDOM.get();
-        int[] sectionBiomeColors = getSectionBiomeColors(
-            mc.level, chunkX, chunkY, chunkZ,
-            MetalRenderClient.getConfig().biomeTransitionDetail);
+        int[] sectionBiomeColors = snapshotBiomeColors;
         sidShouldSkip[0] = true;
         if (blockStates != null) {
           for (int i = 0; i < 4096; i++) {
@@ -2736,45 +2914,11 @@ public class CustomChunkMesher {
         float[] faceAO = FACE_AO_POOL.get();
         byte[] faceLight = FACE_LIGHT_POOL.get();
 
-        int biomeDetail = MetalRenderClient.getConfig().biomeTransitionDetail;
         int[] colGrass = null, colWater = null;
-        if (biomeDetail >= 1 && mc != null && mc.level != null) {
-          int blurR = Math.min(biomeDetail, 8);
-          int padded = 16 + 2 * blurR;
-          int syCol = Math.max(63, chunkY * 16 + 8);
-          int bxOrig = chunkX * 16 - blurR;
-          int bzOrig = chunkZ * 16 - blurR;
-          BlockPos.MutableBlockPos bpCol = BIOME_POS_POOL.get();
-          try {
-
-            int[] pgGrass = new int[padded * padded];
-            int[] pgWater = new int[padded * padded];
-            for (int lz = 0; lz < padded; lz++) {
-              for (int lx = 0; lx < padded; lx++) {
-                bpCol.set(bxOrig + lx, syCol, bzOrig + lz);
-                int ci = lz * padded + lx;
-                pgGrass[ci] = mc.level.getBlockTint(
-                    bpCol, net.minecraft.client.renderer.BiomeColors.GRASS_COLOR_RESOLVER);
-                pgWater[ci] = mc.level.getBlockTint(
-                    bpCol, net.minecraft.client.renderer.BiomeColors.WATER_COLOR_RESOLVER);
-              }
-            }
-
-            pgGrass = boxBlurColors(pgGrass, padded, padded, blurR);
-            pgWater = boxBlurColors(pgWater, padded, padded, blurR);
-            colGrass = new int[256];
-            colWater = new int[256];
-            for (int lz = 0; lz < 16; lz++) {
-              for (int lx = 0; lx < 16; lx++) {
-                colGrass[lz * 16 + lx] = pgGrass[(lz + blurR) * padded + (lx + blurR)];
-                colWater[lz * 16 + lx] = pgWater[(lz + blurR) * padded + (lx + blurR)];
-              }
-            }
-          } catch (Exception e) {
-            colGrass = colWater = null;
-          }
-        }
         for (int y = 0; y < SECTION_SIZE; y++) {
+          if (isTaskCancelled(key, generation)) {
+            return;
+          }
           for (int z = 0; z < SECTION_SIZE; z++) {
             for (int x = 0; x < SECTION_SIZE; x++) {
               int idx = y * 256 + z * 16 + x;
@@ -3285,7 +3429,13 @@ public class CustomChunkMesher {
         return;
       }
       vertexBuffer.flip();
+      int[] facingQuadCounts = bucketQuadsByFacing(vertexBuffer, opaqueQuadCount,
+          waterQuadCount);
+      long visibilityMask = computeVisibilityMask(blockStates);
       int dataLen = quadCount * 4 * VERTEX_STRIDE;
+      if (isTaskCancelled(key, generation)) {
+        return;
+      }
 
       UPLOAD_SEMAPHORE.acquireUninterruptibly();
       Semaphore uploadSemaphore = getUploadSemaphore();
@@ -3304,7 +3454,8 @@ public class CustomChunkMesher {
         uploadSemaphore.release();
       }
       ChunkMeshData mesh = new ChunkMeshData(bufferHandle, quadCount, chunkX, chunkY, chunkZ,
-          lodLevel, buildPCX, buildPCY, buildPCZ);
+          lodLevel, buildPCX, buildPCY, buildPCZ, visibilityMask,
+          facingQuadCounts);
       ChunkMeshData old;
       synchronized (meshCache) {
         old = meshCache.put(key, mesh);
@@ -3316,7 +3467,8 @@ public class CustomChunkMesher {
         vertexCountAtomic.addAndGet(mesh.quadCount * 4 - old.quadCount * 4);
       }
       NativeBridge.nRegisterChunkMesh(chunkX, chunkY, chunkZ, bufferHandle,
-          quadCount, opaqueQuadCount, lodLevel);
+          quadCount, opaqueQuadCount, lodLevel, visibilityMask,
+          facingQuadCounts);
       if (old != null) {
         NativeBridge.nDestroyBuffer(old.bufferHandle);
       }
@@ -3387,11 +3539,16 @@ public class CustomChunkMesher {
 
   private boolean readNeighborFace(ClientLevel world, int nCx, int nCy, int nCz,
       int faceDir, int[] out) {
-    return readNeighborFace(resolveSection(world, nCx, nCy, nCz), faceDir, out);
+    return readNeighborFaceStatic(resolveSection(world, nCx, nCy, nCz), faceDir, out);
   }
 
   private boolean readNeighborFace(LevelChunkSection section, int faceDir,
       int[] out) {
+    return readNeighborFaceStatic(section, faceDir, out);
+  }
+
+  private static boolean readNeighborFaceStatic(LevelChunkSection section,
+      int faceDir, int[] out) {
     if (section == null || section.hasOnlyAir())
       return false;
     java.util.Arrays.fill(out, 0);
@@ -3464,7 +3621,7 @@ public class CustomChunkMesher {
   private boolean readNeighborLightFace(ClientLevel world, int nCx, int nCy,
       int nCz, int faceDir, byte[] out,
       BlockPos.MutableBlockPos mutablePos) {
-    return readNeighborLightFace(world, nCx * 16, nCy * 16, nCz * 16,
+    return readNeighborLightFaceStatic(world, nCx * 16, nCy * 16, nCz * 16,
         resolveSection(world, nCx, nCy, nCz), faceDir,
         out, mutablePos);
   }
@@ -3472,6 +3629,13 @@ public class CustomChunkMesher {
   private boolean readNeighborLightFace(ClientLevel world, int baseX, int baseY,
       int baseZ, LevelChunkSection section,
       int faceDir, byte[] out,
+      BlockPos.MutableBlockPos mutablePos) {
+    return readNeighborLightFaceStatic(world, baseX, baseY, baseZ, section,
+        faceDir, out, mutablePos);
+  }
+
+  private static boolean readNeighborLightFaceStatic(ClientLevel world, int baseX,
+      int baseY, int baseZ, LevelChunkSection section, int faceDir, byte[] out,
       BlockPos.MutableBlockPos mutablePos) {
     if (world == null || section == null || section.hasOnlyAir())
       return false;
@@ -3658,11 +3822,7 @@ public class CustomChunkMesher {
       genAtSubmit = dirtyGeneration.get(key);
     }
     Runnable buildTask = () -> {
-      long genNow;
-      synchronized (dirtyGeneration) {
-        genNow = dirtyGeneration.get(key);
-      }
-      if (genNow != genAtSubmit) {
+      if (isTaskCancelled(key, genAtSubmit)) {
         synchronized (pendingKeys) {
           pendingKeys.remove(key);
         }
@@ -3671,189 +3831,28 @@ public class CustomChunkMesher {
       try {
         long pipelineStart = System.nanoTime();
         Minecraft mc = Minecraft.getInstance();
-        if (mc == null) {
+        SectionSnapshot snapshot = captureSectionSnapshot(
+            mc != null ? mc.level : null, chunkX, chunkY, chunkZ,
+            effectiveLodLevel, useApproximateLight);
+        if (!snapshot.valid) {
           synchronized (pendingKeys) {
             pendingKeys.remove(key);
           }
           return;
         }
-        ClientLevel world = mc.level;
-        if (world == null) {
+        if (snapshot.empty) {
+          removeEmptyMesh(key, chunkX, chunkY, chunkZ);
           synchronized (pendingKeys) {
             pendingKeys.remove(key);
           }
           return;
         }
-        LevelChunk chunk = world.getChunkSource().getChunkNow(chunkX, chunkZ);
-        if (chunk == null) {
-          synchronized (pendingKeys) {
-            pendingKeys.remove(key);
-          }
-          return;
-        }
-        int sectionIdx = chunk.getSectionIndexFromSectionY(chunkY);
-        LevelChunkSection[] chunkSections = chunk.getSections();
-        if (sectionIdx < 0 || sectionIdx >= chunkSections.length) {
-          synchronized (pendingKeys) {
-            pendingKeys.remove(key);
-          }
-          return;
-        }
-        LevelChunkSection section = chunkSections[sectionIdx];
-        if (section == null || section.hasOnlyAir()) {
-
-          synchronized (meshCache) {
-            ChunkMeshData old = meshCache.remove(key);
-            if (old != null) {
-              NativeBridge.nUnregisterChunkMesh(chunkX, chunkY, chunkZ);
-              NativeBridge.nDestroyBuffer(old.bufferHandle);
-              meshCountAtomic.decrementAndGet();
-              vertexCountAtomic.addAndGet(-old.quadCount * 4);
-            }
-          }
-          synchronized (emptyKeys) {
-            emptyKeys.add(key);
-          }
-          synchronized (dirtyKeys) {
-            dirtyKeys.remove(key);
-          }
-          synchronized (pendingKeys) {
-            pendingKeys.remove(key);
-          }
-
-          meshUpdateGeneration.incrementAndGet();
-          recordVisibleLatency(key);
-          return;
-        }
-        int[] blockStates = BLOCK_STATES_POOL.get();
-        java.util.Arrays.fill(blockStates, 0);
-        boolean hasAnyBlock = false;
-        for (int y = 0; y < 16; y++) {
-          for (int z = 0; z < 16; z++) {
-            for (int x = 0; x < 16; x++) {
-              BlockState bs = section.getBlockState(x, y, z);
-              if (!bs.isAir()) {
-                blockStates[y * 256 + z * 16 + x] = Block.getId(bs);
-                hasAnyBlock = true;
-              }
-            }
-          }
-        }
-        if (!hasAnyBlock) {
-
-          synchronized (meshCache) {
-            ChunkMeshData old = meshCache.remove(key);
-            if (old != null) {
-              NativeBridge.nUnregisterChunkMesh(chunkX, chunkY, chunkZ);
-              NativeBridge.nDestroyBuffer(old.bufferHandle);
-              meshCountAtomic.decrementAndGet();
-              vertexCountAtomic.addAndGet(-old.quadCount * 4);
-            }
-          }
-          synchronized (emptyKeys) {
-            emptyKeys.add(key);
-          }
-          synchronized (dirtyKeys) {
-            dirtyKeys.remove(key);
-          }
-          synchronized (pendingKeys) {
-            pendingKeys.remove(key);
-          }
-
-          meshUpdateGeneration.incrementAndGet();
-          recordVisibleLatency(key);
-          return;
-        }
-        int[] neighborXNeg = null, neighborXPos = null;
-        int[] neighborYNeg = null, neighborYPos = null;
-        int[] neighborZNeg = null, neighborZPos = null;
-        byte[] nXNegLight = null, nXPosLight = null;
-        byte[] nYNegLight = null, nYPosLight = null;
-        byte[] nZNegLight = null, nZPosLight = null;
-        LevelChunkSection sectionXNeg = resolveSection(world, chunkX - 1, chunkY, chunkZ);
-        LevelChunkSection sectionXPos = resolveSection(world, chunkX + 1, chunkY, chunkZ);
-        LevelChunkSection sectionYNeg = sectionIdx > 0 ? chunkSections[sectionIdx - 1] : null;
-        LevelChunkSection sectionYPos = sectionIdx + 1 < chunkSections.length
-            ? chunkSections[sectionIdx + 1]
-            : null;
-        LevelChunkSection sectionZNeg = resolveSection(world, chunkX, chunkY, chunkZ - 1);
-        LevelChunkSection sectionZPos = resolveSection(world, chunkX, chunkY, chunkZ + 1);
-
-        int[] poolXNeg = N_XNEG_FACE_POOL.get(), poolXPos = N_XPOS_FACE_POOL.get();
-        int[] poolYNeg = N_YNEG_FACE_POOL.get(), poolYPos = N_YPOS_FACE_POOL.get();
-        int[] poolZNeg = N_ZNEG_FACE_POOL.get(), poolZPos = N_ZPOS_FACE_POOL.get();
-        neighborXNeg = readNeighborFace(sectionXNeg, 4, poolXNeg) ? poolXNeg : null;
-        neighborXPos = readNeighborFace(sectionXPos, 5, poolXPos) ? poolXPos : null;
-        neighborYNeg = readNeighborFace(sectionYNeg, 0, poolYNeg) ? poolYNeg : null;
-        neighborYPos = readNeighborFace(sectionYPos, 1, poolYPos) ? poolYPos : null;
-        neighborZNeg = readNeighborFace(sectionZNeg, 2, poolZNeg) ? poolZNeg : null;
-        neighborZPos = readNeighborFace(sectionZPos, 3, poolZPos) ? poolZPos : null;
-
-        BlockPos.MutableBlockPos sharedMpos = MUTABLE_POS_POOL.get();
-        if (!useApproximateLight) {
-          nXNegLight = N_XNEG_LIGHT_POOL.get();
-          if (!readNeighborLightFace(world, (chunkX - 1) * 16, chunkY * 16,
-              chunkZ * 16, sectionXNeg, 4, nXNegLight,
-              sharedMpos))
-            nXNegLight = null;
-          nXPosLight = N_XPOS_LIGHT_POOL.get();
-          if (!readNeighborLightFace(world, (chunkX + 1) * 16, chunkY * 16,
-              chunkZ * 16, sectionXPos, 5, nXPosLight,
-              sharedMpos))
-            nXPosLight = null;
-          nYNegLight = N_YNEG_LIGHT_POOL.get();
-          if (!readNeighborLightFace(world, chunkX * 16, (chunkY - 1) * 16,
-              chunkZ * 16, sectionYNeg, 0, nYNegLight,
-              sharedMpos))
-            nYNegLight = null;
-          nYPosLight = N_YPOS_LIGHT_POOL.get();
-          if (!readNeighborLightFace(world, chunkX * 16, (chunkY + 1) * 16,
-              chunkZ * 16, sectionYPos, 1, nYPosLight,
-              sharedMpos))
-            nYPosLight = null;
-          nZNegLight = N_ZNEG_LIGHT_POOL.get();
-          if (!readNeighborLightFace(world, chunkX * 16, chunkY * 16,
-              (chunkZ - 1) * 16, sectionZNeg, 2,
-              nZNegLight, sharedMpos))
-            nZNegLight = null;
-          nZPosLight = N_ZPOS_LIGHT_POOL.get();
-          if (!readNeighborLightFace(world, chunkX * 16, chunkY * 16,
-              (chunkZ + 1) * 16, sectionZPos, 3,
-              nZPosLight, sharedMpos))
-            nZPosLight = null;
-        }
-        byte[] lightData = LIGHT_DATA_POOL.get();
-
-        try {
-          if (useApproximateLight) {
-            fillApproximateLightData(world, chunkX, chunkY, chunkZ, blockStates,
-                lightData, sharedMpos);
-          } else {
-            int baseX = chunkX * 16, baseY = chunkY * 16, baseZ = chunkZ * 16;
-            for (int y = 0; y < 16; y++) {
-              for (int z = 0; z < 16; z++) {
-                for (int x = 0; x < 16; x++) {
-                  int lightIdx = y * 256 + z * 16 + x;
-                  if (blockStates[lightIdx] == 0) {
-                    lightData[lightIdx] = 0;
-                    continue;
-                  }
-                  sharedMpos.set(baseX + x, baseY + y, baseZ + z);
-                  int bl = world.getBrightness(LightLayer.BLOCK, sharedMpos);
-                  int sl = world.getBrightness(LightLayer.SKY, sharedMpos);
-                  lightData[lightIdx] = (byte) ((bl & 0xF) | ((sl & 0xF) << 4));
-                }
-              }
-            }
-          }
-        } catch (Exception e) {
-          recordLightSampleFallback("lod0_fill", e);
-          java.util.Arrays.fill(lightData, (byte) 0x00);
-        }
-        doMeshBuild(chunkX, chunkY, chunkZ, blockStates, lightData, key,
-            effectiveLodLevel, neighborXNeg, neighborXPos, neighborYNeg,
-            neighborYPos, neighborZNeg, neighborZPos, nXNegLight,
-            nXPosLight, nYNegLight, nYPosLight, nZNegLight, nZPosLight);
+        doMeshBuild(chunkX, chunkY, chunkZ, snapshot.blockStates,
+            snapshot.lightData, key, genAtSubmit, effectiveLodLevel,
+            snapshot.nXNeg, snapshot.nXPos, snapshot.nYNeg, snapshot.nYPos,
+            snapshot.nZNeg, snapshot.nZPos, snapshot.nXNegLight,
+            snapshot.nXPosLight, snapshot.nYNegLight, snapshot.nYPosLight,
+            snapshot.nZNegLight, snapshot.nZPosLight, snapshot.context);
         long pipeElapsed = System.nanoTime() - pipelineStart;
         pipelineTimeAcc += pipeElapsed;
         pipelineCount++;
@@ -3865,39 +3864,8 @@ public class CustomChunkMesher {
             chunkY, chunkZ, e.getMessage());
       }
     };
-    if (interactivePriority) {
-      int interactiveQueueDepth = interactiveRebuildPool != null
-          ? interactiveRebuildPool.getQueue().size()
-          : 0;
-      int interactiveActive = interactiveRebuildPool != null
-          ? interactiveRebuildPool.getActiveCount()
-          : 0;
-      int interactiveMax = interactiveRebuildPool != null
-          ? interactiveRebuildPool.getMaximumPoolSize()
-          : 0;
-      boolean interactiveHasHeadroom = interactiveActive < interactiveMax &&
-          interactiveQueueDepth < INTERACTIVE_PRIORITY_QUEUE_SPILLOVER_THRESHOLD;
-      if (interactiveHasHeadroom) {
-        interactiveRebuildPool.submit(buildTask);
-        return;
-      }
-    }
-    ExecutorService pool = wasDirty ? dirtyRebuildPool : builderPool;
-    if (highPriority) {
-      int instantQueueDepth = instantRebuildPool != null ? instantRebuildPool.getQueue().size() : 0;
-      int instantActive = instantRebuildPool != null ? instantRebuildPool.getActiveCount() : 0;
-      int instantMax = instantRebuildPool != null
-          ? instantRebuildPool.getMaximumPoolSize()
-          : 0;
-      boolean instantHasHeadroom = instantActive < instantMax;
-      if (instantQueueDepth < HIGH_PRIORITY_QUEUE_SPILLOVER_THRESHOLD &&
-          instantHasHeadroom) {
-        instantRebuildPool.submit(buildTask);
-        return;
-      }
-    }
-
-    pool.submit(buildTask);
+    int priority = interactivePriority ? 0 : (highPriority || wasDirty ? 1 : 2);
+    submitMeshTask(priority, buildTask);
   }
 
   private int emitBakedQuad(ByteBuffer buf, BakedQuad quad, int blockX,
@@ -4498,6 +4466,131 @@ public class CustomChunkMesher {
     int block = Math.max(first & 0xF, second & 0xF);
     int sky = Math.max((first >> 4) & 0xF, (second >> 4) & 0xF);
     return (byte) ((block & 0xF) | ((sky & 0xF) << 4));
+  }
+
+  private static long computeVisibilityMask(int[] blockStates) {
+    if (blockStates == null) {
+      return 0x3F3F3F3FL;
+    }
+    boolean[] visited = new boolean[4096];
+    int[] queue = new int[4096];
+    long mask = 0L;
+    for (int startFace = 0; startFace < 6; startFace++) {
+      int head = 0;
+      int tail = 0;
+      for (int y = 0; y < SECTION_SIZE; y++) {
+        for (int z = 0; z < SECTION_SIZE; z++) {
+          for (int x = 0; x < SECTION_SIZE; x++) {
+            if (!isOnFace(x, y, z, startFace)) {
+              continue;
+            }
+            int idx = y * 256 + z * 16 + x;
+            if (visited[idx] || isOccludingState(blockStates[idx])) {
+              continue;
+            }
+            visited[idx] = true;
+            queue[tail++] = idx;
+          }
+        }
+      }
+      while (head < tail) {
+        int idx = queue[head++];
+        int y = idx >> 8;
+        int z = (idx >> 4) & 15;
+        int x = idx & 15;
+        for (int face = 0; face < 6; face++) {
+          if (isOnFace(x, y, z, face)) {
+            mask |= 1L << (startFace * 8 + face);
+          }
+        }
+        tail = enqueueVisibleNeighbor(blockStates, visited, queue, tail, x + 1, y, z);
+        tail = enqueueVisibleNeighbor(blockStates, visited, queue, tail, x - 1, y, z);
+        tail = enqueueVisibleNeighbor(blockStates, visited, queue, tail, x, y + 1, z);
+        tail = enqueueVisibleNeighbor(blockStates, visited, queue, tail, x, y - 1, z);
+        tail = enqueueVisibleNeighbor(blockStates, visited, queue, tail, x, y, z + 1);
+        tail = enqueueVisibleNeighbor(blockStates, visited, queue, tail, x, y, z - 1);
+      }
+      java.util.Arrays.fill(visited, false);
+    }
+    return mask;
+  }
+
+  private static int enqueueVisibleNeighbor(int[] blockStates, boolean[] visited,
+      int[] queue, int tail, int x, int y, int z) {
+    if (x < 0 || x >= SECTION_SIZE || y < 0 || y >= SECTION_SIZE || z < 0 ||
+        z >= SECTION_SIZE) {
+      return tail;
+    }
+    int idx = y * 256 + z * 16 + x;
+    if (visited[idx] || isOccludingState(blockStates[idx])) {
+      return tail;
+    }
+    visited[idx] = true;
+    queue[tail++] = idx;
+    return tail;
+  }
+
+  private static boolean isOnFace(int x, int y, int z, int face) {
+    return switch (face) {
+      case 0 -> y == 0;
+      case 1 -> y == 15;
+      case 2 -> z == 0;
+      case 3 -> z == 15;
+      case 4 -> x == 0;
+      case 5 -> x == 15;
+      default -> false;
+    };
+  }
+
+  private static boolean isOccludingState(int stateId) {
+    if (stateId == 0) {
+      return false;
+    }
+    BlockState state = Block.stateById(stateId);
+    return state != null && state.isSolidRender() && state.canOcclude();
+  }
+
+  private static int quadNormalIndex(ByteBuffer buffer, int quadIndex) {
+    int base = quadIndex * 4 * VERTEX_STRIDE;
+    long w1 = buffer.getLong(base + 8);
+    int normal = (int) ((w1 >>> 56) & 0xFF);
+    return normal >= 0 && normal < 6 ? normal : 6;
+  }
+
+  private static void putQuad(ByteBuffer dst, ByteBuffer src, int quadIndex) {
+    int base = quadIndex * 4 * VERTEX_STRIDE;
+    for (int i = 0; i < 4 * VERTEX_STRIDE; i++) {
+      dst.put(src.get(base + i));
+    }
+  }
+
+  private static int[] bucketQuadsByFacing(ByteBuffer vertexBuffer,
+      int opaqueQuadCount, int waterQuadCount) {
+    int totalQuads = opaqueQuadCount + waterQuadCount;
+    int[] counts = new int[14];
+    ByteBuffer sorted = SORT_BUF_POOL.get();
+    sorted.clear();
+    for (int bucket = 0; bucket < 7; bucket++) {
+      for (int q = 0; q < opaqueQuadCount; q++) {
+        if (quadNormalIndex(vertexBuffer, q) == bucket) {
+          putQuad(sorted, vertexBuffer, q);
+          counts[bucket]++;
+        }
+      }
+    }
+    for (int bucket = 0; bucket < 7; bucket++) {
+      for (int q = opaqueQuadCount; q < totalQuads; q++) {
+        if (quadNormalIndex(vertexBuffer, q) == bucket) {
+          putQuad(sorted, vertexBuffer, q);
+          counts[7 + bucket]++;
+        }
+      }
+    }
+    sorted.flip();
+    vertexBuffer.clear();
+    vertexBuffer.put(sorted);
+    vertexBuffer.flip();
+    return counts;
   }
 
   private static void computeSmoothLighting(int x, int y, int z, int face, int[] blockStates,
@@ -5247,37 +5340,6 @@ public class CustomChunkMesher {
     type = DYNAMIC_TINT_CACHE.get(block);
     if (type != null)
       return type;
-    try {
-      Minecraft mc = Minecraft.getInstance();
-      if (mc != null) {
-        BlockColors blockColors = mc.getBlockColors();
-        if (blockColors != null) {
-          net.minecraft.client.color.block.BlockTintSource tintSrc = blockColors
-              .getTintSource(block.defaultBlockState(), 0);
-          if (tintSrc != null) {
-            int color = tintSrc.color(block.defaultBlockState());
-            if (color != -1 && color != 0xFFFFFF) {
-
-              int r = (color >> 16) & 0xFF;
-              int g = (color >> 8) & 0xFF;
-              int b = color & 0xFF;
-              byte detectedTint;
-              if (b > r && b > g) {
-                detectedTint = TINT_WATER;
-              } else if (g > r * 1.2) {
-
-                detectedTint = TINT_FOLIAGE;
-              } else {
-                detectedTint = TINT_FOLIAGE;
-              }
-              DYNAMIC_TINT_CACHE.put(block, detectedTint);
-              return detectedTint;
-            }
-          }
-        }
-      }
-    } catch (Exception ignored) {
-    }
     DYNAMIC_TINT_CACHE.put(block, TINT_NONE);
     return TINT_NONE;
   }

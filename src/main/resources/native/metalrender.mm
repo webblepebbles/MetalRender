@@ -101,6 +101,19 @@ static void megaCoalesceFreeList() {
   }
   g_megaFreeList.resize(write + 1);
 }
+
+static void megaTrimFreeTail() {
+  megaCoalesceFreeList();
+  for (size_t i = 0; i < g_megaFreeList.size(); i++) {
+    MegaSubAlloc &freeBlock = g_megaFreeList[i];
+    if (freeBlock.offset + freeBlock.size == g_megaVBHead) {
+      g_megaVBHead = freeBlock.offset;
+      g_megaFreeList[i] = g_megaFreeList.back();
+      g_megaFreeList.pop_back();
+      return;
+    }
+  }
+}
 struct DeferredDeletion {
   uint64_t handle;
   int frameQueued;
@@ -190,8 +203,13 @@ static void megaFree(uint64_t handle) {
   g_megaFreeList.push_back(it->second);
   g_megaAllocs.erase(it);
 
-  if (g_megaFreeList.size() > 64) {
-    megaCoalesceFreeList();
+  size_t freeBytes = 0;
+  for (const MegaSubAlloc &freeBlock : g_megaFreeList) {
+    freeBytes += freeBlock.size;
+  }
+  if (g_megaFreeList.size() > 64 ||
+      freeBytes > (MEGA_VB_CAPACITY / 5)) {
+    megaTrimFreeTail();
   }
 }
 static size_t megaGetOffset(uint64_t handle) {
@@ -205,6 +223,14 @@ static void *megaGetPointer(uint64_t handle) {
   if (it == g_megaAllocs.end() || !g_megaVB)
     return nullptr;
   return (char *)[g_megaVB contents] + it->second.offset;
+}
+static bool megaGetAlloc(uint64_t handle, MegaSubAlloc &out) {
+  std::shared_lock<std::shared_mutex> lock(g_megaMutex);
+  auto it = g_megaAllocs.find(handle);
+  if (it == g_megaAllocs.end() || !g_megaVB)
+    return false;
+  out = it->second;
+  return true;
 }
 static id<MTLRenderPipelineState> g_pipelineOpaque = nil;
 static id<MTLRenderPipelineState> g_pipelineInhouse = nil;
@@ -335,6 +361,7 @@ struct StaleDrawCmd {
   uint64_t bufferHandle;
   int idxCount;
   int opaqueIdxCount;
+  int opaqueFaceCounts[7];
   float ox, oy, oz;
   bool isMega;
 };
@@ -402,8 +429,50 @@ struct NativeMesh {
   int32_t quadCount;
   int32_t opaqueQuadCount;
   int32_t lodLevel;
+  uint64_t visibilityMask;
+  int32_t facingQuadCounts[14];
   bool active;
 };
+
+static inline uint32_t visibleFacingMaskForAabb(float ox, float oy, float oz) {
+  uint32_t mask = 1u << 6;
+  if (0.0f < oy)
+    mask |= 1u << 0;
+  else if (0.0f > oy + 16.0f)
+    mask |= 1u << 1;
+  else
+    mask |= (1u << 0) | (1u << 1);
+  if (0.0f < oz)
+    mask |= 1u << 2;
+  else if (0.0f > oz + 16.0f)
+    mask |= 1u << 3;
+  else
+    mask |= (1u << 2) | (1u << 3);
+  if (0.0f < ox)
+    mask |= 1u << 4;
+  else if (0.0f > ox + 16.0f)
+    mask |= 1u << 5;
+  else
+    mask |= (1u << 4) | (1u << 5);
+  return mask;
+}
+
+static inline int opaqueBucketStartQuad(const int counts[7], int bucket) {
+  int start = 0;
+  for (int i = 0; i < bucket; i++)
+    start += counts[i];
+  return start;
+}
+
+static inline int visibleOpaqueBucketCount(const int counts[7],
+                                           uint32_t mask) {
+  int total = 0;
+  for (int i = 0; i < 7; i++) {
+    if ((mask & (1u << i)) != 0 && counts[i] > 0)
+      total++;
+  }
+  return total;
+}
 
 struct CameraUniformsCPU {
   float viewProjection[16];
@@ -1966,12 +2035,17 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUploadBufferData(
     jint length) {
   uint64_t h = (uint64_t)bufferHandle;
   if (isMegaHandle(h)) {
+    MegaSubAlloc alloc;
     void *dst = megaGetPointer(h);
     if (!dst || !data || length <= 0)
       return;
     jbyte *bytes = env->GetByteArrayElements(data, nullptr);
     if (bytes) {
       memcpy((uint8_t *)dst + offset, bytes, (size_t)length);
+      if (megaGetAlloc(h, alloc)) {
+        [g_megaVB didModifyRange:NSMakeRange((NSUInteger)(alloc.offset + offset),
+                                             (NSUInteger)length)];
+      }
       env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
     }
     return;
@@ -1991,12 +2065,17 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUploadBufferDataDi
     jint length) {
   uint64_t h = (uint64_t)bufferHandle;
   if (isMegaHandle(h)) {
+    MegaSubAlloc alloc;
     void *dst = megaGetPointer(h);
     if (!dst || !directBuffer || length <= 0)
       return;
     void *ptr = env->GetDirectBufferAddress(directBuffer);
     if (ptr) {
       memcpy((uint8_t *)dst, (uint8_t *)ptr + offset, (size_t)length);
+      if (megaGetAlloc(h, alloc)) {
+        [g_megaVB didModifyRange:NSMakeRange((NSUInteger)alloc.offset,
+                                             (NSUInteger)length)];
+      }
     }
     return;
   }
@@ -2471,9 +2550,23 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBatch(
 }
 extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMesh(
-    JNIEnv *, jclass, jint cx, jint cy, jint cz, jlong bufferHandle,
-    jint quadCount, jint opaqueQuadCount, jint lodLevel) {
+    JNIEnv *env, jclass, jint cx, jint cy, jint cz, jlong bufferHandle,
+    jint quadCount, jint opaqueQuadCount, jint lodLevel, jlong visibilityMask,
+    jintArray facingQuadCounts) {
   int64_t key = packMeshKey(cx, cy, cz);
+  int32_t faceCounts[14] = {};
+  if (facingQuadCounts) {
+    jsize len = env->GetArrayLength(facingQuadCounts);
+    jsize copyLen = len < 14 ? len : 14;
+    env->GetIntArrayRegion(facingQuadCounts, 0, copyLen, faceCounts);
+  }
+  int opaqueFaceTotal = 0;
+  for (int i = 0; i < 7; i++)
+    opaqueFaceTotal += faceCounts[i];
+  if (opaqueFaceTotal != opaqueQuadCount) {
+    memset(faceCounts, 0, sizeof(faceCounts));
+    faceCounts[6] = opaqueQuadCount;
+  }
   std::unique_lock<std::shared_mutex> lock(g_meshRegMutex);
   auto it = g_meshKeyToIdx.find(key);
   if (it != g_meshKeyToIdx.end()) {
@@ -2482,6 +2575,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMesh(
     m.quadCount = quadCount;
     m.opaqueQuadCount = opaqueQuadCount;
     m.lodLevel = lodLevel;
+    m.visibilityMask = (uint64_t)visibilityMask;
+    memcpy(m.facingQuadCounts, faceCounts, sizeof(faceCounts));
     m.active = true;
 
     return;
@@ -2494,10 +2589,18 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMesh(
     idx = g_nativeMeshes.size();
     g_nativeMeshes.push_back({});
   }
-  g_nativeMeshes[idx] = {(int32_t)cx,        (int32_t)cy,
-                         (int32_t)cz,        (uint64_t)bufferHandle,
-                         (int32_t)quadCount, (int32_t)opaqueQuadCount,
-                         (int32_t)lodLevel,  true};
+  NativeMesh mesh = {};
+  mesh.chunkX = (int32_t)cx;
+  mesh.chunkY = (int32_t)cy;
+  mesh.chunkZ = (int32_t)cz;
+  mesh.bufferHandle = (uint64_t)bufferHandle;
+  mesh.quadCount = (int32_t)quadCount;
+  mesh.opaqueQuadCount = (int32_t)opaqueQuadCount;
+  mesh.lodLevel = (int32_t)lodLevel;
+  mesh.visibilityMask = (uint64_t)visibilityMask;
+  memcpy(mesh.facingQuadCounts, faceCounts, sizeof(faceCounts));
+  mesh.active = true;
+  g_nativeMeshes[idx] = mesh;
   g_meshKeyToIdx[key] = idx;
 
   g_activeMeshIndices.push_back((int)idx);
@@ -2658,6 +2761,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
 
       int idxCount;
       int opaqueIdxCount;
+      int opaqueFaceCounts[7];
       float distSq;
       float ox, oy, oz;
       bool isMega;
@@ -2688,6 +2792,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       uint64_t bufferHandle;
       int quadCount;
       int opaqueQuadCount;
+      int opaqueFaceCounts[7];
     };
     static MeshSnapshot *s_snapshots = nullptr;
     static int s_snapshotsCap = 0;
@@ -2708,8 +2813,16 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         float ox = nm.chunkX * 16.0f - camX;
         float oy = nm.chunkY * 16.0f - camY;
         float oz = nm.chunkZ * 16.0f - camZ;
-        s_snapshots[totalActive++] = {
-            i, ox, oy, oz, nm.bufferHandle, nm.quadCount, nm.opaqueQuadCount};
+        MeshSnapshot &snap = s_snapshots[totalActive++];
+        snap.meshIdx = i;
+        snap.ox = ox;
+        snap.oy = oy;
+        snap.oz = oz;
+        snap.bufferHandle = nm.bufferHandle;
+        snap.quadCount = nm.quadCount;
+        snap.opaqueQuadCount = nm.opaqueQuadCount;
+        memcpy(snap.opaqueFaceCounts, nm.facingQuadCounts,
+               sizeof(snap.opaqueFaceCounts));
       }
     }
 
@@ -2743,25 +2856,38 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           auto it = g_megaAllocs.find(ms.bufferHandle);
           if (__builtin_expect(it == g_megaAllocs.end(), 0))
             return;
-          s_cmds[validCount] = {ms.bufferHandle,
-                                it->second.offset,
-                                nil,
-                                idxCount,
-                                opaqueIdxCount,
-                                distSq,
-                                ms.ox,
-                                ms.oy,
-                                ms.oz,
-                                true};
+          DrawCmd &cmd = s_cmds[validCount];
+          cmd.bufHandle = ms.bufferHandle;
+          cmd.megaOffset = it->second.offset;
+          cmd.resolvedBuf = nil;
+          cmd.idxCount = idxCount;
+          cmd.opaqueIdxCount = opaqueIdxCount;
+          memcpy(cmd.opaqueFaceCounts, ms.opaqueFaceCounts,
+                 sizeof(cmd.opaqueFaceCounts));
+          cmd.distSq = distSq;
+          cmd.ox = ms.ox;
+          cmd.oy = ms.oy;
+          cmd.oz = ms.oz;
+          cmd.isMega = true;
           megaCount++;
         } else {
           id<MTLBuffer> rb = nil;
           auto bit = g_buffers.find(ms.bufferHandle);
           if (bit != g_buffers.end())
             rb = bit->second;
-          s_cmds[validCount] = {ms.bufferHandle, 0,      rb,    idxCount,
-                                opaqueIdxCount,  distSq, ms.ox, ms.oy,
-                                ms.oz,           false};
+          DrawCmd &cmd = s_cmds[validCount];
+          cmd.bufHandle = ms.bufferHandle;
+          cmd.megaOffset = 0;
+          cmd.resolvedBuf = rb;
+          cmd.idxCount = idxCount;
+          cmd.opaqueIdxCount = opaqueIdxCount;
+          memcpy(cmd.opaqueFaceCounts, ms.opaqueFaceCounts,
+                 sizeof(cmd.opaqueFaceCounts));
+          cmd.distSq = distSq;
+          cmd.ox = ms.ox;
+          cmd.oy = ms.oy;
+          cmd.oz = ms.oz;
+          cmd.isMega = false;
         }
         validCount++;
       };
@@ -2816,10 +2942,16 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
             (StaleDrawCmd *)malloc(sizeof(StaleDrawCmd) * g_staleCapacity);
       }
       for (int i = 0; i < validCount; i++) {
-        g_staleDrawCmds[i] = {
-            s_cmds[i].bufHandle, s_cmds[i].idxCount, s_cmds[i].opaqueIdxCount,
-            s_cmds[i].ox,        s_cmds[i].oy,       s_cmds[i].oz,
-            s_cmds[i].isMega};
+        StaleDrawCmd &stale = g_staleDrawCmds[i];
+        stale.bufferHandle = s_cmds[i].bufHandle;
+        stale.idxCount = s_cmds[i].idxCount;
+        stale.opaqueIdxCount = s_cmds[i].opaqueIdxCount;
+        memcpy(stale.opaqueFaceCounts, s_cmds[i].opaqueFaceCounts,
+               sizeof(stale.opaqueFaceCounts));
+        stale.ox = s_cmds[i].ox;
+        stale.oy = s_cmds[i].oy;
+        stale.oz = s_cmds[i].oz;
+        stale.isMega = s_cmds[i].isMega;
       }
       g_staleDrawCount = validCount;
       g_staleMegaCount = megaCount;
@@ -2847,11 +2979,19 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         ResolvedBuf staleRes = resolve_buffer(sc.bufferHandle);
         if (!staleRes.buf)
           continue;
-        s_cmds[reusedCount++] = {sc.bufferHandle,   staleRes.offset,
-                                 staleRes.buf,      sc.idxCount,
-                                 sc.opaqueIdxCount, 0.0f,
-                                 sc.ox - dcx,       sc.oy - dcy,
-                                 sc.oz - dcz,       sc.isMega};
+        DrawCmd &cmd = s_cmds[reusedCount++];
+        cmd.bufHandle = sc.bufferHandle;
+        cmd.megaOffset = staleRes.offset;
+        cmd.resolvedBuf = staleRes.buf;
+        cmd.idxCount = sc.idxCount;
+        cmd.opaqueIdxCount = sc.opaqueIdxCount;
+        memcpy(cmd.opaqueFaceCounts, sc.opaqueFaceCounts,
+               sizeof(cmd.opaqueFaceCounts));
+        cmd.distSq = 0.0f;
+        cmd.ox = sc.ox - dcx;
+        cmd.oy = sc.oy - dcy;
+        cmd.oz = sc.oz - dcz;
+        cmd.isMega = sc.isMega;
         if (sc.isMega)
           reusedMegaCount++;
       }
@@ -3261,7 +3401,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       } else if (!s_cmds[i].resolvedBuf) {
         continue;
       }
-      icbCandidateCount++;
+      icbCandidateCount += visibleOpaqueBucketCount(
+          s_cmds[i].opaqueFaceCounts,
+          visibleFacingMaskForAabb(s_cmds[i].ox, s_cmds[i].oy, s_cmds[i].oz));
     }
     bool canICB =
         (g_gpuDrivenEnabled && g_useArgumentBuffers && icbCandidateCount > 0 &&
@@ -3329,23 +3471,37 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           if (__builtin_expect(s_cmds[i].resolvedBuf == nil, 0))
             continue;
         }
-        id<MTLIndirectRenderCommand> icmd = [g_icb[g_renderSlot]
-            indirectRenderCommandAtIndex:(NSUInteger)icbIdx];
-        if (!s_cmds[i].isMega) {
-          [icmd setVertexBuffer:s_cmds[i].resolvedBuf offset:0 atIndex:0];
+        uint32_t faceMask = visibleFacingMaskForAabb(
+            s_cmds[i].ox, s_cmds[i].oy, s_cmds[i].oz);
+        int baseQuad = 0;
+        for (int face = 0; face < 7; face++) {
+          int quadCount = s_cmds[i].opaqueFaceCounts[face];
+          if (quadCount <= 0) {
+            continue;
+          }
+          if ((faceMask & (1u << face)) == 0) {
+            baseQuad += quadCount;
+            continue;
+          }
+          id<MTLIndirectRenderCommand> icmd = [g_icb[g_renderSlot]
+              indirectRenderCommandAtIndex:(NSUInteger)icbIdx];
+          if (!s_cmds[i].isMega) {
+            [icmd setVertexBuffer:s_cmds[i].resolvedBuf offset:0 atIndex:0];
+          }
+          NSInteger baseVertex =
+              (NSInteger)(s_cmds[i].isMega ? (s_cmds[i].megaOffset / VERTEX_STRIDE) : 0) +
+              baseQuad * 4;
+          [icmd drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                           indexCount:(NSUInteger)(quadCount * 6)
+                            indexType:MTLIndexTypeUInt32
+                          indexBuffer:ib
+                    indexBufferOffset:ibOffset
+                        instanceCount:1
+                           baseVertex:baseVertex
+                         baseInstance:(NSUInteger)i];
+          icbIdx++;
+          baseQuad += quadCount;
         }
-        [icmd drawIndexedPrimitives:MTLPrimitiveTypeTriangle
-                         indexCount:(NSUInteger)opaqueIdx
-                          indexType:MTLIndexTypeUInt32
-                        indexBuffer:ib
-                  indexBufferOffset:ibOffset
-                      instanceCount:1
-                         baseVertex:(NSInteger)(s_cmds[i].isMega
-                                                    ? (s_cmds[i].megaOffset /
-                                                       VERTEX_STRIDE)
-                                                    : 0)
-                       baseInstance:(NSUInteger)i];
-        icbIdx++;
       }
       [g_currentEncoder
           executeCommandsInBuffer:g_icb[g_renderSlot]
@@ -3376,37 +3532,64 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         int opaqueIdx = s_cmds[i].opaqueIdxCount;
         if (__builtin_expect(opaqueIdx <= 0, 0))
           continue;
+        uint32_t faceMask = visibleFacingMaskForAabb(
+            s_cmds[i].ox, s_cmds[i].oy, s_cmds[i].oz);
+        int baseQuad = 0;
         if (__builtin_expect(s_cmds[i].isMega, 1)) {
-          [g_currentEncoder
-              drawIndexedPrimitives:MTLPrimitiveTypeTriangle
-                         indexCount:(NSUInteger)opaqueIdx
-                          indexType:MTLIndexTypeUInt32
-                        indexBuffer:ib
-                  indexBufferOffset:ibOffset
-                      instanceCount:1
-                         baseVertex:(NSInteger)(s_cmds[i].megaOffset /
-                                                VERTEX_STRIDE)
-                       baseInstance:(NSUInteger)i];
+          for (int face = 0; face < 7; face++) {
+            int quadCount = s_cmds[i].opaqueFaceCounts[face];
+            if (quadCount <= 0) {
+              continue;
+            }
+            if ((faceMask & (1u << face)) == 0) {
+              baseQuad += quadCount;
+              continue;
+            }
+            [g_currentEncoder
+                drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                           indexCount:(NSUInteger)(quadCount * 6)
+                            indexType:MTLIndexTypeUInt32
+                          indexBuffer:ib
+                    indexBufferOffset:ibOffset
+                        instanceCount:1
+                           baseVertex:(NSInteger)(s_cmds[i].megaOffset /
+                                                  VERTEX_STRIDE) +
+                                      baseQuad * 4
+                         baseInstance:(NSUInteger)i];
+            baseQuad += quadCount;
+            g_drawCallCount++;
+          }
         } else {
 
           if (__builtin_expect(s_cmds[i].resolvedBuf != nil, 1)) {
             [g_currentEncoder setVertexBuffer:s_cmds[i].resolvedBuf
                                        offset:0
                                       atIndex:0];
-            [g_currentEncoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
-                                         indexCount:(NSUInteger)opaqueIdx
-                                          indexType:MTLIndexTypeUInt32
-                                        indexBuffer:ib
-                                  indexBufferOffset:ibOffset
-                                      instanceCount:1
-                                         baseVertex:0
-                                       baseInstance:(NSUInteger)i];
+            for (int face = 0; face < 7; face++) {
+              int quadCount = s_cmds[i].opaqueFaceCounts[face];
+              if (quadCount <= 0) {
+                continue;
+              }
+              if ((faceMask & (1u << face)) == 0) {
+                baseQuad += quadCount;
+                continue;
+              }
+              [g_currentEncoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                                           indexCount:(NSUInteger)(quadCount * 6)
+                                            indexType:MTLIndexTypeUInt32
+                                          indexBuffer:ib
+                                    indexBufferOffset:ibOffset
+                                        instanceCount:1
+                                           baseVertex:baseQuad * 4
+                                         baseInstance:(NSUInteger)i];
+              baseQuad += quadCount;
+              g_drawCallCount++;
+            }
             if (g_megaVB) {
               [g_currentEncoder setVertexBuffer:g_megaVB offset:0 atIndex:0];
             }
           }
         }
-        g_drawCallCount++;
       }
     }
     int waterDraws =

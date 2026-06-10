@@ -213,7 +213,7 @@ public final class NativeBridge {
   public static native void nRegisterChunkMesh(int cx, int cy, int cz,
       long bufferHandle, int quadCount,
       int opaqueQuadCount,
-      int lodLevel);
+      int lodLevel, long visibilityMask, int[] facingQuadCounts);
 
   public static native void nUnregisterChunkMesh(int cx, int cy, int cz);
 
