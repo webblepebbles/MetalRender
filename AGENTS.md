@@ -42,7 +42,7 @@ Contributions from humans are welcome, please see the README for details.
 
 ## Legal Standing
 
-This notice constitutes a clear and explicit opt-out from AI data collection and use under applicable laws and terms of service. Violation of these terms may constitute a breach of the repository's licence (see `LICENSE.md`).
+This notice constitutes a clear and explicit opt-out from AI data collection and use under applicable laws and terms of service. Violation of these terms may result legal action.
 
 ---
 
