@@ -390,6 +390,10 @@ public class CustomChunkMesher {
   public void initialize(long device) {
     this.deviceHandle = device;
     refreshUploadPathMode();
+    MetalLogger.info("CustomChunkMesher initialize: device=%d loadingConfig=%s",
+        device, MetalRenderClient.getConfig() != null
+            ? MetalRenderClient.getConfig().enableMetalRendering
+            : false);
     int[] indices = new int[MAX_QUADS * 6];
     for (int i = 0; i < MAX_QUADS; i++) {
       indices[i * 6 + 0] = i * 4 + 0;
@@ -1038,9 +1042,13 @@ public class CustomChunkMesher {
     boolean fpsPriorityMode = config != null && config.prioritizeFpsOverTps;
     int approximateLightingThreshold = fpsPriorityMode ? 2048 : 256;
     aggressiveApproximateLighting = loadingMode || pending >= approximateLightingThreshold;
+    MetalLogger.info(
+        "THREAD_BUDGET: loading=%s pending=%d fpsPriority=%s approxLighting=%s",
+        loadingMode, pending, fpsPriorityMode, aggressiveApproximateLighting);
     if (pending <= 0) {
       updateThreadPoolSize(builderPool, 0);
       updateThreadPoolSize(instantRebuildPool, 0);
+      MetalLogger.info("THREAD_BUDGET: pools idled");
       return;
     }
     if (fpsPriorityMode) {
@@ -1087,6 +1095,9 @@ public class CustomChunkMesher {
     }
     instantTarget = Math.min(getInstantThreadCap(), instantTarget);
     updateThreadPoolSize(instantRebuildPool, instantTarget);
+    MetalLogger.info(
+        "THREAD_BUDGET: builder=%d instant=%d cap=%d backlogBoost=%d",
+        target, instantTarget, budgetCap, backlogBoost);
   }
 
   public void invalidateUVCache() {
@@ -1235,6 +1246,8 @@ public class CustomChunkMesher {
     synchronized (pendingKeys) {
       pendingKeys.add(key);
     }
+    MetalLogger.debug("ASYNC_QUEUE: chunk=[%d,%d,%d] pending=%d",
+        chunkX, chunkY, chunkZ, getPendingCount());
     submitMeshTask(2, () -> {
       try {
         if (isTaskCancelled(key, genAtSubmit)) {
@@ -1244,8 +1257,8 @@ public class CustomChunkMesher {
             genAtSubmit, 0, null, null, null, null, null, null, null, null,
             null, null, null, null, context);
       } catch (Exception e) {
-        MetalLogger.error("Meshing error for chunk [%d,%d,%d]", chunkX, chunkY,
-            chunkZ);
+        MetalLogger.error("Meshing error for chunk [%d,%d,%d]: %s", chunkX,
+            chunkY, chunkZ, e.getMessage());
       } finally {
         synchronized (pendingKeys) {
           pendingKeys.remove(key);
@@ -3814,6 +3827,12 @@ public class CustomChunkMesher {
     }
     synchronized (pendingKeys) {
       if (!pendingKeys.add(key)) {
+        if (MetalRenderConfig.isDeepDebugActive()) {
+          MetalLogger.debug(
+              "BUILD_SKIP_DUP: chunk=[%d,%d,%d] lod=%d high=%s interactive=%s",
+              chunkX, chunkY, chunkZ, effectiveLodLevel, highPriority,
+              interactivePriority);
+        }
         return;
       }
     }
@@ -3838,6 +3857,10 @@ public class CustomChunkMesher {
           synchronized (pendingKeys) {
             pendingKeys.remove(key);
           }
+          MetalLogger.debug(
+              "BUILD_SKIP_INVALID: chunk=[%d,%d,%d] lod=%d high=%s interactive=%s",
+              chunkX, chunkY, chunkZ, effectiveLodLevel, highPriority,
+              interactivePriority);
           return;
         }
         if (snapshot.empty) {
@@ -3845,6 +3868,10 @@ public class CustomChunkMesher {
           synchronized (pendingKeys) {
             pendingKeys.remove(key);
           }
+          MetalLogger.debug(
+              "BUILD_SKIP_EMPTY: chunk=[%d,%d,%d] lod=%d high=%s interactive=%s",
+              chunkX, chunkY, chunkZ, effectiveLodLevel, highPriority,
+              interactivePriority);
           return;
         }
         doMeshBuild(chunkX, chunkY, chunkZ, snapshot.blockStates,
@@ -3865,6 +3892,10 @@ public class CustomChunkMesher {
       }
     };
     int priority = interactivePriority ? 0 : (highPriority || wasDirty ? 1 : 2);
+    MetalLogger.debug(
+        "BUILD_SUBMIT: chunk=[%d,%d,%d] lod=%d priority=%d high=%s interactive=%s dirty=%s",
+        chunkX, chunkY, chunkZ, effectiveLodLevel, priority, highPriority,
+        interactivePriority, wasDirty);
     submitMeshTask(priority, buildTask);
   }
 

@@ -2,6 +2,7 @@ package com.pebbles_boon.metalrender.sodium.mixins;
 
 import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
+import com.pebbles_boon.metalrender.util.MetalLogger;
 import java.util.Map;
 import java.util.function.Consumer;
 import net.minecraft.client.multiplayer.ClientChunkCache;
@@ -23,11 +24,17 @@ public class ChunkLoadMixin {
     if (!MetalRenderClient.isEnabled())
       return;
     MetalWorldRenderer wr = MetalWorldRenderer.getInstance();
-    if (wr == null || !wr.isReady())
+    if (wr == null || !wr.isReady()) {
+      MetalLogger.debug(
+          "Chunk packet ignored because renderer is not ready for chunk [%d,%d]",
+          x, z);
       return;
+    }
     LevelChunk chunk = cir.getReturnValue();
     if (chunk != null) {
       wr.onChunkLoaded(x, z, chunk);
+    } else {
+      MetalLogger.warn("Chunk packet produced a null chunk for [%d,%d]", x, z);
     }
   }
 }

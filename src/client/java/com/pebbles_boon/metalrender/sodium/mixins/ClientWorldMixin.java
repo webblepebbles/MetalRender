@@ -2,6 +2,7 @@ package com.pebbles_boon.metalrender.sodium.mixins;
 
 import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
+import com.pebbles_boon.metalrender.util.MetalLogger;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
 import net.minecraft.world.level.block.state.BlockState;
@@ -24,8 +25,12 @@ public class ClientWorldMixin {
     if (!MetalRenderClient.getConfig().enableMetalRendering)
       return;
     MetalWorldRenderer worldRenderer = MetalWorldRenderer.getInstance();
-    if (worldRenderer == null || !worldRenderer.isReady())
+    if (worldRenderer == null || !worldRenderer.isReady()) {
+      MetalLogger.debug(
+          "Block update ignored because renderer is not ready at [%d,%d,%d]",
+          pos.getX(), pos.getY(), pos.getZ());
       return;
+    }
     worldRenderer.scheduleSectionRebuild(pos.getX(), pos.getY(), pos.getZ());
   }
 }
