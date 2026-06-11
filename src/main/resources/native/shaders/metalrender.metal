@@ -1,7 +1,7 @@
 #include <metal_stdlib>
 using namespace metal;
 
-struct SodiumVertex {
+struct ChunkVertex {
     uint posHi;
     uint posLo;
     uint color;
@@ -9,7 +9,7 @@ struct SodiumVertex {
     uint lightData;
 };
 
-float3 decodeSodiumPosition(uint posHi, uint posLo) {
+float3 decodePackedPosition(uint posHi, uint posLo) {
     uint xHi = (posHi >>  0) & 0x3FF;
     uint yHi = (posHi >> 10) & 0x3FF;
     uint zHi = (posHi >> 20) & 0x3FF;
@@ -22,7 +22,7 @@ float3 decodeSodiumPosition(uint posHi, uint posLo) {
     return float3(x, y, z);
 }
 
-float4 decodeSodiumColor(uint c) {
+float4 decodePackedColor(uint c) {
     float a = float((c >> 24) & 0xFF) / 255.0;
     float r = float((c >> 16) & 0xFF) / 255.0;
     float g = float((c >>  8) & 0xFF) / 255.0;
@@ -30,13 +30,13 @@ float4 decodeSodiumColor(uint c) {
     return float4(r, g, b, a);
 }
 
-float2 decodeSodiumTexCoord(uint tex) {
+float2 decodePackedTexCoord(uint tex) {
     float u = float(tex & 0x7FFF) / 32768.0;
     float v = float((tex >> 16) & 0x7FFF) / 32768.0;
     return float2(u, v);
 }
 
-float2 decodeSodiumLight(uint lightData) {
+float2 decodePackedLight(uint lightData) {
     uint light = lightData & 0xFFFF;
     float blockLight = float(light & 0xFF) / 256.0;
     float skyLight   = float((light >> 8) & 0xFF) / 256.0;
@@ -69,22 +69,22 @@ static inline half3 applyUnderwaterFog(half3 rgb, half fogDist, constant float4&
 }
 
 vertex SimpleVertexOut vertex_terrain(
-    device const SodiumVertex* vertices       [[buffer(0)]],
+    device const ChunkVertex* vertices        [[buffer(0)]],
     constant float4x4& projectionMatrix       [[buffer(1)]],
     constant float4x4& modelViewMatrix        [[buffer(2)]],
     constant float4& cameraPosition           [[buffer(3)]],
     constant float4& chunkOffset              [[buffer(4)]],
     uint vid [[vertex_id]]
 ) {
-    SodiumVertex v = vertices[vid];
+    ChunkVertex v = vertices[vid];
     SimpleVertexOut out;
-    float3 localPos = decodeSodiumPosition(v.posHi, v.posLo);
+    float3 localPos = decodePackedPosition(v.posHi, v.posLo);
     float3 worldPos = localPos + chunkOffset.xyz;
     float4 viewPos = modelViewMatrix * float4(worldPos, 1.0);
     out.position = projectionMatrix * viewPos;
-    out.texCoord = decodeSodiumTexCoord(v.texture);
-    out.color    = half4(decodeSodiumColor(v.color));
-    out.lightUV  = decodeSodiumLight(v.lightData);
+    out.texCoord = decodePackedTexCoord(v.texture);
+    out.color    = half4(decodePackedColor(v.color));
+    out.lightUV  = decodePackedLight(v.lightData);
     out.light    = half(max(max(out.lightUV.x,
                                 out.lightUV.y * cameraPosition.w), 0.15f));
 
