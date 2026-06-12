@@ -1,6 +1,5 @@
 package com.pebbles_boon.metalrender.render.gui;
 
-import com.pebbles_boon.metalrender.util.MetalLogger;
 import net.minecraft.resources.Identifier;
 
 public class MetalGuiRenderer {

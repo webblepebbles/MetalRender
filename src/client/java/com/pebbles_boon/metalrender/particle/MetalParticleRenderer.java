@@ -4,7 +4,6 @@ import com.mojang.blaze3d.opengl.GlTexture;
 import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.backend.MetalRenderer;
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
-import com.pebbles_boon.metalrender.render.CapturedMatrices;
 import com.pebbles_boon.metalrender.render.MetalTextureManager;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
 import com.pebbles_boon.metalrender.sodium.mixins.accessor.BillboardParticleAccessor;
@@ -26,10 +25,8 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.resources.Identifier;
 import net.minecraft.util.Mth;
 import net.minecraft.world.level.LightLayer;
-import org.joml.Matrix4f;
 import org.joml.Quaternionf;
 import org.joml.Vector3f;
-import org.lwjgl.BufferUtils;
 import org.lwjgl.opengl.GL11;
 
 public class MetalParticleRenderer {

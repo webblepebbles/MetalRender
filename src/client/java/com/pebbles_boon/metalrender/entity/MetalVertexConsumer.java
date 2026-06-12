@@ -2,7 +2,6 @@ package com.pebbles_boon.metalrender.entity;
 
 import com.mojang.blaze3d.vertex.VertexConsumer;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 
 public class MetalVertexConsumer implements VertexConsumer {
   private static final int VERTEX_STRIDE = 32;
