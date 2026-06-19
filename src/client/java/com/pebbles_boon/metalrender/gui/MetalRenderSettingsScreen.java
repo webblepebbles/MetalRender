@@ -542,7 +542,6 @@ public class MetalRenderSettingsScreen extends Screen {
     tog("Indirect CMD Buffers", config.enableIndirectCommandBuffers, v -> config.enableIndirectCommandBuffers = v);
     tog("Mesh Shaders", config.enableMeshShaders, v -> config.enableMeshShaders = v);
     tog("Programmable Blending", config.enableProgrammableBlending, v -> config.enableProgrammableBlending = v);
-    tog("Memoryless Targets", config.enableMemorylessTargets, v -> config.enableMemorylessTargets = v);
   }
 
   private void buildLod() {

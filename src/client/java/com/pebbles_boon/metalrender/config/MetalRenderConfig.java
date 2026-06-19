@@ -22,7 +22,6 @@ public final class MetalRenderConfig {
 
   public boolean enableProgrammableBlending = false;
   public boolean enableIndirectCommandBuffers = false;
-  public boolean enableMemorylessTargets = false;
   private static final int DEFAULT_ZONE0_RADIUS_CHUNKS = 32;
   private static final int DEFAULT_FAR_FIELD_RADIUS_CHUNKS = 256;
   private static final float DEFAULT_ZONE0_EXACT_BLOCK_PIXELS = 12.0f;
@@ -114,8 +113,7 @@ public final class MetalRenderConfig {
 
         if (obj.has("enableIndirectCommandBuffers"))
           cfg.enableIndirectCommandBuffers = obj.get("enableIndirectCommandBuffers").getAsBoolean();
-        if (obj.has("enableMemorylessTargets"))
-          cfg.enableMemorylessTargets = obj.get("enableMemorylessTargets").getAsBoolean();
+
 
         if (obj.has("lodZone0RadiusChunks")) {
           zone0RadiusChunks = obj.get("lodZone0RadiusChunks").getAsInt();
@@ -169,7 +167,7 @@ public final class MetalRenderConfig {
     System.setProperty("metalrender.feature.mesh", String.valueOf(enableMeshShaders));
     System.setProperty("metalrender.feature.argbuf", String.valueOf(enableArgumentBuffers));
     System.setProperty("metalrender.feature.oit", String.valueOf(enableProgrammableBlending));
-    System.setProperty("metalrender.feature.memoryless", String.valueOf(enableMemorylessTargets));
+
 
     try {
       com.google.gson.JsonObject obj = new com.google.gson.JsonObject();
@@ -193,7 +191,7 @@ public final class MetalRenderConfig {
       obj.addProperty("enableArgumentBuffers", enableArgumentBuffers);
       obj.addProperty("enableProgrammableBlending", enableProgrammableBlending);
       obj.addProperty("enableIndirectCommandBuffers", enableIndirectCommandBuffers);
-      obj.addProperty("enableMemorylessTargets", enableMemorylessTargets);
+  
 
       obj.addProperty("lodZone0RadiusChunks", zone0RadiusChunks);
       obj.addProperty("lodFarFieldRadiusChunks", farFieldRadiusChunks);
@@ -399,7 +397,7 @@ public final class MetalRenderConfig {
     enableMeshShaders = getBool("metalrender.feature.mesh", enableMeshShaders);
     enableArgumentBuffers = getBool("metalrender.feature.argbuf", enableArgumentBuffers);
     enableProgrammableBlending = getBool("metalrender.feature.oit", enableProgrammableBlending);
-    enableMemorylessTargets = getBool("metalrender.feature.memoryless", enableMemorylessTargets);
+
   }
 
   private static boolean getBool(String key, boolean def) {

@@ -1501,17 +1501,12 @@ public class MetalWorldRenderer {
     if (NativeBridge.isLibLoaded()) {
       NativeBridge.nSetFeatureFlags(
           config.enableIndirectCommandBuffers, config.enableMeshShaders,
-          requestArgumentBuffers, config.enableProgrammableBlending,
-          config.enableMemorylessTargets);
+          requestArgumentBuffers, config.enableProgrammableBlending);
       gpuDrivenEnabled = NativeBridge.nIsGPUDrivenActive();
       MetalLogger.info(
-          "RUNTIME_FEATURES: mesh=%s gpuDriven=%s argBuf=%s memoryless=%s "
-              + "requested(mesh=%s icb=%s argBuf=%s memoryless=%s)",
+          "RUNTIME_FEATURES: mesh=%s gpuDriven=%s argBuf=%s",
           NativeBridge.nAreMeshShadersActive(), gpuDrivenEnabled,
-          NativeBridge.nAreArgumentBuffersActive(),
-          NativeBridge.nAreMemorylessTargetsActive(), config.enableMeshShaders,
-          config.enableIndirectCommandBuffers, requestArgumentBuffers,
-          config.enableMemorylessTargets);
+          NativeBridge.nAreArgumentBuffersActive());
     }
     updateLoadingModeState();
   }
