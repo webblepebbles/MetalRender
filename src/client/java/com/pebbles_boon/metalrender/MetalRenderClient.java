@@ -93,8 +93,8 @@ public class MetalRenderClient implements ClientModInitializer {
       boolean useArgBufs = config.enableArgumentBuffers || config.enableIndirectCommandBuffers;
       NativeBridge.nSetFeatureFlags(config.enableIndirectCommandBuffers,
           config.enableMeshShaders, useArgBufs,
-          config.enableProgrammableBlending,
-          config.enableMemorylessTargets);
+          config.enableProgrammableBlending);
+      
     }
 
     MetalWorldRenderer wr = worldRenderer;

@@ -38,6 +38,7 @@ public final class MetalRenderProfiler {
   private final AtomicLong lodRebuildTimeAccNs = new AtomicLong(0);
   private final AtomicLong entityTimeAccNs = new AtomicLong(0);
   private final AtomicLong particleTimeAccNs = new AtomicLong(0);
+  private final AtomicLong gpuTimeAccNs = new AtomicLong(0);
 
   private final AtomicInteger meshesBuiltAcc = new AtomicInteger(0);
   private final AtomicInteger uploadsDoneAcc = new AtomicInteger(0);
@@ -52,6 +53,7 @@ public final class MetalRenderProfiler {
   private final double[] lodRebuildTimes = new double[HISTORY_SIZE];
   private final double[] entityTimes = new double[HISTORY_SIZE];
   private final double[] particleTimes = new double[HISTORY_SIZE];
+  private final double[] gpuTimes = new double[HISTORY_SIZE];
 
   private long lastLogTimeMs;
 
@@ -121,6 +123,11 @@ public final class MetalRenderProfiler {
   public void recordParticleTime(long nanos) {
     if (nanos > 0)
       particleTimeAccNs.addAndGet(nanos);
+  }
+
+  public void recordGpuTime(long nanos) {
+    if (nanos > 0)
+      gpuTimeAccNs.addAndGet(nanos);
   }
 
   public void incrementMeshesBuilt(int count) {
