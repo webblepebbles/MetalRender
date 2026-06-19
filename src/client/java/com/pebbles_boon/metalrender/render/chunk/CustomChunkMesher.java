@@ -36,6 +36,7 @@ import net.minecraft.world.level.chunk.LevelChunkSection;
 import org.joml.Vector3fc;
 
 public class CustomChunkMesher {
+  public enum PassType { SOLID, CUTOUT, TRANSLUCENT }
   private static final int VERTEX_STRIDE = 16;
   private static final int SECTION_SIZE = 16;
   private static final int MAX_QUADS = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE * 6;
@@ -64,16 +65,16 @@ public class CustomChunkMesher {
   private long deviceHandle;
   private boolean initialized;
   private long globalIndexBufferHandle;
-  private java.util.concurrent.ThreadPoolExecutor builderPool;
+  private final java.util.concurrent.ThreadPoolExecutor builderPool;
   private final int boostedBuilderThreadCount;
   private final int steadyBuilderThreadCount;
   private final int maxBuilderThreadCount;
   private final int steadyInstantThreadCount;
   private final int maxInstantThreadCount;
-  private ExecutorService dirtyRebuildPool;
 
-  private java.util.concurrent.ThreadPoolExecutor instantRebuildPool;
-  private java.util.concurrent.ThreadPoolExecutor interactiveRebuildPool;
+
+
+
 
   private static final Semaphore UPLOAD_SEMAPHORE = new Semaphore(6);
   private static final int FALLBACK_UPLOAD_PARALLELISM = 6;
@@ -341,7 +342,7 @@ public class CustomChunkMesher {
     int maxBuilderThreads = Math.max(warmupThreads, Math.min(20, processors + 2));
     int steadyInstantThreads = processors >= 10 ? 4 : 3;
     int maxInstantThreads = processors >= 16 ? 8 : (processors >= 10 ? 6 : 4);
-    int interactiveThreads = processors >= 12 ? 3 : 2;
+
     final int warmupThreadCount = warmupThreads;
     final int steadyThreadCount = steadyThreads;
     this.boostedBuilderThreadCount = warmupThreadCount;
@@ -374,9 +375,9 @@ public class CustomChunkMesher {
       warmupTimer.shutdown();
     }, 30, java.util.concurrent.TimeUnit.SECONDS);
 
-    this.dirtyRebuildPool = this.builderPool;
-    this.instantRebuildPool = this.builderPool;
-    this.interactiveRebuildPool = this.builderPool;
+
+
+
   }
 
   public long getGlobalIndexBuffer() {
@@ -959,26 +960,22 @@ public class CustomChunkMesher {
 
   public int getBuilderQueueDepth() {
     return builderPool != null ? builderPool.getQueue().size() : 0;
-  }
-
-  public int getInstantActiveCount() {
-    return instantRebuildPool != null ? instantRebuildPool.getActiveCount() : 0;
-  }
+  }  public int getInstantActiveCount() { return builderPool != null ? builderPool.getActiveCount() : 0; }
 
   public int getInstantQueueDepth() {
-    return instantRebuildPool != null ? instantRebuildPool.getQueue().size()
+    return builderPool != null ? builderPool.getQueue().size()
         : 0;
   }
 
   public int getInteractiveActiveCount() {
-    return interactiveRebuildPool != null
-        ? interactiveRebuildPool.getActiveCount()
+    return builderPool != null
+        ? builderPool.getActiveCount()
         : 0;
   }
 
   public int getInteractiveQueueDepth() {
-    return interactiveRebuildPool != null
-        ? interactiveRebuildPool.getQueue().size()
+    return builderPool != null
+        ? builderPool.getQueue().size()
         : 0;
   }
 
@@ -1043,13 +1040,13 @@ public class CustomChunkMesher {
         loadingMode, pending, fpsPriorityMode, aggressiveApproximateLighting);
     if (pending <= 0) {
       updateThreadPoolSize(builderPool, 0);
-      updateThreadPoolSize(instantRebuildPool, 0);
+      updateThreadPoolSize(builderPool, 0);
       MetalLogger.info("THREAD_BUDGET: pools idled");
       return;
     }
     if (fpsPriorityMode) {
       updateThreadPoolSize(builderPool, getBuilderThreadCap());
-      updateThreadPoolSize(instantRebuildPool, getInstantThreadCap());
+      updateThreadPoolSize(builderPool, getInstantThreadCap());
       return;
     }
     int baseTarget = loadingMode ? boostedBuilderThreadCount : steadyBuilderThreadCount;
@@ -1090,7 +1087,7 @@ public class CustomChunkMesher {
       instantTarget++;
     }
     instantTarget = Math.min(getInstantThreadCap(), instantTarget);
-    updateThreadPoolSize(instantRebuildPool, instantTarget);
+    updateThreadPoolSize(builderPool, instantTarget);
     MetalLogger.info(
         "THREAD_BUDGET: builder=%d instant=%d cap=%d backlogBoost=%d",
         target, instantTarget, budgetCap, backlogBoost);
