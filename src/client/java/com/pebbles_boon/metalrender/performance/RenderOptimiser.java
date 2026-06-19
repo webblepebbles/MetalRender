@@ -1,14 +1,14 @@
 package com.pebbles_boon.metalrender.performance;
 
 import com.pebbles_boon.metalrender.config.MetalRenderConfig;
-import com.pebbles_boon.metalrender.util.FrustumCuller;
-import com.pebbles_boon.metalrender.util.OcclusionCuller;
+import com.pebbles_boon.metalrender.culling.FrustumCuller;
+import com.pebbles_boon.metalrender.culling.OcclusionCuller;
 import net.minecraft.client.Camera;
 import net.minecraft.core.BlockPos;
 import org.joml.Matrix4f;
 
-public final class RenderOptimizer {
-  private static final RenderOptimizer INSTANCE = new RenderOptimizer();
+public final class RenderOptimiser {
+  private static final RenderOptimiser INSTANCE = new RenderOptimiser();
   private FrustumCuller frustumCuller;
   private OcclusionCuller occlusionCuller;
   private int frustumCulledThisFrame = 0;
@@ -17,10 +17,10 @@ public final class RenderOptimizer {
   private long currentFrame = 0;
   private boolean initialized = false;
 
-  private RenderOptimizer() {
+  private RenderOptimiser() {
   }
 
-  public static RenderOptimizer getInstance() {
+  public static RenderOptimiser getInstance() {
     return INSTANCE;
   }
 
@@ -33,10 +33,7 @@ public final class RenderOptimizer {
     currentFrame++;
     if (MetalRenderConfig.aggressiveFrustumCulling()) {
       frustumCuller.update(viewProjectionMatrix);
-    }
-    if (MetalRenderConfig.occlusionCulling()) {
-      occlusionCuller.beginFrame(camera);
-    }
+    }    if (MetalRenderConfig.occlusionCulling()) { occlusionCuller.update(camera); }
     frustumCulledThisFrame = 0;
     occlusionCulledThisFrame = 0;
     totalChunksThisFrame = 0;
