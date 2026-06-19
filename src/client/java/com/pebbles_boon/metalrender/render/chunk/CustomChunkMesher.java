@@ -36,7 +36,10 @@ import net.minecraft.world.level.chunk.LevelChunkSection;
 import org.joml.Vector3fc;
 
 public class CustomChunkMesher {
-  public enum PassType { SOLID, CUTOUT, TRANSLUCENT }
+  public enum PassType {
+    SOLID, CUTOUT, TRANSLUCENT
+  }
+
   private static final int VERTEX_STRIDE = 16;
   private static final int SECTION_SIZE = 16;
   private static final int MAX_QUADS = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE * 6;
@@ -71,11 +74,6 @@ public class CustomChunkMesher {
   private final int maxBuilderThreadCount;
   private final int steadyInstantThreadCount;
   private final int maxInstantThreadCount;
-
-
-
-
-
   private static final Semaphore UPLOAD_SEMAPHORE = new Semaphore(6);
   private static final int FALLBACK_UPLOAD_PARALLELISM = 6;
   private static final int FAST_UPLOAD_PARALLELISM = 8;
@@ -374,9 +372,6 @@ public class CustomChunkMesher {
       }
       warmupTimer.shutdown();
     }, 30, java.util.concurrent.TimeUnit.SECONDS);
-
-
-
 
   }
 
@@ -960,7 +955,11 @@ public class CustomChunkMesher {
 
   public int getBuilderQueueDepth() {
     return builderPool != null ? builderPool.getQueue().size() : 0;
-  }  public int getInstantActiveCount() { return builderPool != null ? builderPool.getActiveCount() : 0; }
+  }
+
+  public int getInstantActiveCount() {
+    return builderPool != null ? builderPool.getActiveCount() : 0;
+  }
 
   public int getInstantQueueDepth() {
     return builderPool != null ? builderPool.getQueue().size()
