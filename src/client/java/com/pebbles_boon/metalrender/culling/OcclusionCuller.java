@@ -5,6 +5,9 @@ import net.minecraft.core.BlockPos;
 import net.minecraft.world.phys.Vec3;
 
 public class OcclusionCuller {
+  public OcclusionCuller() {
+    this(new RegionManager());
+  }
   private final RegionManager regions;
 
   public OcclusionCuller(RegionManager regions) {

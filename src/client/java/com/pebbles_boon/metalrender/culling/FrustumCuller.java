@@ -11,10 +11,11 @@ public class FrustumCuller {
 
   private final float[][] planes = new float[6][4];
 
-  private final Matrix4f mvp = new Matrix4f();
+  private final Matrix4f mvp = new Matrix4f();  public void update(Matrix4f viewProjection) {
+    update(viewProjection, new Matrix4f(), new Vector3f());
+  }
 
-  public void updateFrustum(Camera camera, MovementState movement, float aspect,
-      float zNear, float zFar) {
+  public void updateFrustum(Camera camera, MovementState movement, float aspect, float zNear, float zFar) {
   }
 
   public void update(Matrix4f projection, Matrix4f modelView,

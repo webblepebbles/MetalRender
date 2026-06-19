@@ -197,6 +197,11 @@ public final class NativeBridge {
   public static native void nGetGPUCullStats(int[] outStats);
 
   public static native int nGetThermalState();
+  public static native float nGetGpuFrameTimeMs();
+  public static native void nSetTemporalScale(float scale);
+  public static native boolean nAreResidencySetsSupported();
+  public static native long nCreateResidencySet(long device);
+  public static native void nUpdateResidencySet(long set, long[] textures);
 
   public static native int nGetThermalLODReduction();
 
@@ -244,8 +249,8 @@ public final class NativeBridge {
 
   public static native void nSetFeatureFlags(boolean enableIndirectCommandBuffers,
       boolean enableMeshShaders, boolean enableArgumentBuffers,
-      boolean enableProgrammableBlending,
-      boolean enableMemorylessTargets);
+      boolean enableProgrammableBlending);
+
 
   public static native void nDrawOITPass(long frameContext);
 }
