@@ -8,7 +8,8 @@
 
 ## Owner
 
-**Pebbles_Boon** — sole owner, maintainer and creator of this repository and all of its contents. 
+**Pebbles_Boon** — sole owner, maintainer and creator of this repository and all of its contents.
+
 ---
 
 ## Explicit Restrictions
