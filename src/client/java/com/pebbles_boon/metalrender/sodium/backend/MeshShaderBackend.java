@@ -125,6 +125,25 @@ public class MeshShaderBackend {
     }
   }
 
+  public void dispatchTerrainMultiPass(long frameContext, long handle, long argumentBuffer) {
+    if (!active || frameContext == 0)
+      return;
+    if (argumentBuffer == 0) {
+      return;
+    }
+    int visibleCount = NativeBridge.nGetGPUVisibleCount(handle);
+    lastVisibleCount = visibleCount;
+    if (visibleCount <= 0)
+      return;
+    int threadgroups = (visibleCount + 255) / 256;
+    for (int pass = 0; pass < 3; pass++) {
+      long pipeline = getPipeline(pass);
+      if (pipeline != 0) {
+        MeshShaderNative.drawMeshThreadgroups(frameContext, pipeline, threadgroups, 256, argumentBuffer);
+      }
+    }
+  }
+
   private long getPipeline(int passIndex) {
     if (passIndex >= 0 && passIndex < 3 &&
         terrainPipelineHandles[passIndex] != 0) {

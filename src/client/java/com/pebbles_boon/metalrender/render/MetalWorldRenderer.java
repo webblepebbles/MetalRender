@@ -6,6 +6,7 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.backend.MetalRenderer;
 import com.pebbles_boon.metalrender.config.MetalRenderConfig;
+import com.pebbles_boon.metalrender.culling.AsyncCullTask;
 import com.pebbles_boon.metalrender.culling.FrustumCuller;
 import com.pebbles_boon.metalrender.entity.MetalEntityRenderer;
 import com.pebbles_boon.metalrender.nativebridge.MetalHardwareChecker;
@@ -146,6 +147,7 @@ public class MetalWorldRenderer {
   private final float[] frustumPlanesFlat = new float[24];
   private final int[] gpuCullStats = new int[5];
   private int lastGPUVisibleCount;
+  private final TranslucencyTrigger translucencyTrigger = new TranslucencyTrigger();
   private long lastThermalLogMs;
   private boolean loadingMode;
   private int loadingModePendingCount;
@@ -241,6 +243,7 @@ public class MetalWorldRenderer {
     gpuDrivenEnabled = false;
     subChunkUploadBuffer = null;
     chunkUniformsBuffer = null;
+    com.pebbles_boon.metalrender.nativebridge.ResidencySetManager.shutdown();
     updateLoadingModeState();
   }
 
@@ -345,6 +348,10 @@ public class MetalWorldRenderer {
     updateLoadingModeState();
   }
 
+  private volatile FrustumCuller asyncCullResult = new FrustumCuller();
+  private volatile FrustumCuller asyncCullPending = new FrustumCuller();
+  private volatile boolean asyncCullReady = false;
+
   public void beginFrame(Camera camera, float tickDelta, Matrix4f projection,
       Matrix4f modelView) {
     MetalRenderer renderer = MetalRenderClient.getRenderer();
@@ -354,9 +361,26 @@ public class MetalWorldRenderer {
     modelViewMatrix.set(modelView);
     Vector3f camPos = new Vector3f((float) camera.position().x, (float) camera.position().y,
         (float) camera.position().z);
+
     long cullStart = System.nanoTime();
-    frustumCuller.update(projectionMatrix, modelViewMatrix, camPos);
+    if (asyncCullReady) {
+      frustumCuller.copyFrom(asyncCullResult);
+      asyncCullReady = false;
+    } else {
+      frustumCuller.update(projectionMatrix, modelViewMatrix, camPos);
+    }
+    final Matrix4f asyncProj = new Matrix4f(projectionMatrix);
+    final Matrix4f asyncMV = new Matrix4f(modelViewMatrix);
+    final Vector3f asyncCam = new Vector3f(camPos);
+    AsyncCullTask.submit(() -> {
+      asyncCullPending.update(asyncProj, asyncMV, asyncCam);
+      FrustumCuller tmp = asyncCullResult;
+      asyncCullResult = asyncCullPending;
+      asyncCullPending = tmp;
+      asyncCullReady = true;
+    });
     MetalRenderProfiler.getInstance().recordCullTime(System.nanoTime() - cullStart);
+
     lastDrawnChunkCount = 0;
     renderer.beginFrame(tickDelta);
     Matrix4f metalProj = new Matrix4f(projectionMatrix);
@@ -394,17 +418,36 @@ public class MetalWorldRenderer {
         float skyFactor = resolveSkyLightFactor(camera, tickDelta);
         NativeBridge.nSetSkyBrightness(frameCtx, skyFactor);
         if (!skipTerrainDraw) {
-          long ibHandle = chunkMesher.getGlobalIndexBuffer();
-          if (ibHandle != 0) {
-            int drawn = NativeBridge.nDrawAllVisibleChunks(frameCtx, ibHandle);
-            lastDrawnChunkCount = drawn;
-            MetalRenderProfiler.getInstance().incrementChunksDrawn(drawn);
-            if (frameCount < 10 || frameCount % 1000 == 0) {
-              MetalLogger.info("Frame %d: V18 native drew %d chunks",
-                  frameCount, drawn);
+          boolean useMeshShaderOpaque = meshShaderBackend != null &&
+              meshShaderBackend.areMeshShadersAvailable() &&
+              meshShaderBackend.isActive();
+          if (useMeshShaderOpaque && meshShaderBackend.isGPUDrivenEnabled()) {
+            long ibHandle = chunkMesher.getGlobalIndexBuffer();
+            if (ibHandle != 0) {
+              meshShaderBackend.dispatchTerrainMultiPass(frameCtx, renderer.getHandle(), 0);
+              int visible = meshShaderBackend.getLastVisibleCount();
+              if (visible > 0) {
+                lastDrawnChunkCount = visible;
+                MetalRenderProfiler.getInstance().incrementChunksDrawn(visible);
+              } else {
+                int drawn = NativeBridge.nDrawAllVisibleChunks(frameCtx, ibHandle);
+                lastDrawnChunkCount = drawn;
+                MetalRenderProfiler.getInstance().incrementChunksDrawn(drawn);
+              }
             }
           } else {
-            lastDrawnChunkCount = 0;
+            long ibHandle = chunkMesher.getGlobalIndexBuffer();
+            if (ibHandle != 0) {
+              int drawn = NativeBridge.nDrawAllVisibleChunks(frameCtx, ibHandle);
+              lastDrawnChunkCount = drawn;
+              MetalRenderProfiler.getInstance().incrementChunksDrawn(drawn);
+              if (frameCount < 10 || frameCount % 1000 == 0) {
+                MetalLogger.info("Frame %d: V18 native drew %d chunks",
+                    frameCount, drawn);
+              }
+            } else {
+              lastDrawnChunkCount = 0;
+            }
           }
         }
       }
@@ -691,6 +734,13 @@ public class MetalWorldRenderer {
       int playerChunkX = mc.player.chunkPosition().x();
       int playerChunkZ = mc.player.chunkPosition().z();
       int playerSectionY = mc.player.getBlockY() >> 4;
+      boolean shouldSortTranslucent = translucencyTrigger.shouldReSort(
+          new Vector3f((float) mc.player.getX(), (float) mc.player.getY(), (float) mc.player.getZ()),
+          mc.player.getYRot());
+      if (shouldSortTranslucent && MetalRenderConfig.isDeepDebugActive()) {
+        MetalLogger.debug("TranslucencyTrigger: re-sort triggered (stable=%s)",
+            translucencyTrigger.isStable());
+      }
       boolean turnBurstActive = turnPriorityFrames > 0;
       boolean startupSolidFill = loadingMode &&
           loadingModeMeshCount < STARTUP_SOLID_FILL_MESH_THRESHOLD;

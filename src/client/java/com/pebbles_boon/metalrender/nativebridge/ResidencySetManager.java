@@ -5,10 +5,10 @@ public class ResidencySetManager {
   private static long entityAtlasResidencySet = 0;
 
   public static void initialize(long deviceHandle) {
-    if (deviceHandle == 1) return;
+    if (deviceHandle == 0 || deviceHandle == 1) return;
     residencySetsAvailable = NativeBridge.nAreResidencySetsSupported();
     if (residencySetsAvailable) {
-      entityAtlasResidencySet = nCreateResidencySet(deviceHandle);
+      entityAtlasResidencySet = NativeBridge.nCreateResidencySet(deviceHandle);
     }
   }
 
@@ -20,7 +20,11 @@ public class ResidencySetManager {
     return entityAtlasResidencySet;
   }
 
-  public static native boolean nAreResidencySetsSupported();
-  public static native long nCreateResidencySet(long device);
-  public static native void nUpdateResidencySet(long set, long[] textures);
+  public static void shutdown() {
+    if (entityAtlasResidencySet != 0) {
+      NativeBridge.nDestroyResidencySet(entityAtlasResidencySet);
+      entityAtlasResidencySet = 0;
+    }
+    residencySetsAvailable = false;
+  }
 }

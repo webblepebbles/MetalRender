@@ -4,7 +4,9 @@ import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.config.MetalRenderConfig;
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
 import com.pebbles_boon.metalrender.nativebridge.NativeMemory;
+import com.pebbles_boon.metalrender.performance.BuildBudgetEstimator;
 import com.pebbles_boon.metalrender.performance.MetalRenderProfiler;
+import com.pebbles_boon.metalrender.performance.PerformanceController;
 import com.pebbles_boon.metalrender.util.MetalLogger;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
@@ -1034,22 +1036,31 @@ public class CustomChunkMesher {
     boolean fpsPriorityMode = config != null && config.prioritizeFpsOverTps;
     int approximateLightingThreshold = fpsPriorityMode ? 2048 : 256;
     aggressiveApproximateLighting = loadingMode || pending >= approximateLightingThreshold;
+
+    BuildBudgetEstimator estimator = PerformanceController.getBudgetEstimator();
+    int ewmaThreads = estimator != null ? estimator.recommendedThreadCount() : -1;
+    int ewmaInFlight = estimator != null ? estimator.recommendedInFlight() : -1;
+    boolean shouldThrottle = estimator != null && estimator.shouldThrottle();
+
     MetalLogger.info(
-        "THREAD_BUDGET: loading=%s pending=%d fpsPriority=%s approxLighting=%s",
-        loadingMode, pending, fpsPriorityMode, aggressiveApproximateLighting);
+        "THREAD_BUDGET: loading=%s pending=%d fpsPriority=%s approxLighting=%s ewmaThreads=%d ewmaInFlight=%d throttle=%s",
+        loadingMode, pending, fpsPriorityMode, aggressiveApproximateLighting,
+        ewmaThreads, ewmaInFlight, shouldThrottle);
     if (pending <= 0) {
-      updateThreadPoolSize(builderPool, 0);
       updateThreadPoolSize(builderPool, 0);
       MetalLogger.info("THREAD_BUDGET: pools idled");
       return;
     }
-    if (fpsPriorityMode) {
-      updateThreadPoolSize(builderPool, getBuilderThreadCap());
-      updateThreadPoolSize(builderPool, getInstantThreadCap());
+    if (fpsPriorityMode && !shouldThrottle) {
+      int target = Math.min(getBuilderThreadCap(), ewmaThreads > 0 ? Math.max(getBuilderThreadCap(), ewmaThreads) : getBuilderThreadCap());
+      updateThreadPoolSize(builderPool, target);
       return;
     }
     int baseTarget = loadingMode ? boostedBuilderThreadCount : steadyBuilderThreadCount;
-    if (isBurstThreadModeEnabled()) {
+    if (ewmaThreads > 0) {
+      baseTarget = Math.max(2, Math.min(ewmaThreads, getBuilderThreadCap()));
+    }
+    if (isBurstThreadModeEnabled() && !shouldThrottle) {
       baseTarget += loadingMode ? 2 : 1;
     }
     int backlogBoost = 0;
@@ -1067,29 +1078,15 @@ public class CustomChunkMesher {
       backlogBoost = 1;
     }
     int budgetCap = Math.min(getBuilderThreadCap(), getThreadBudgetCap());
+    if (shouldThrottle) {
+      budgetCap = Math.max(2, budgetCap / 2);
+      backlogBoost = 0;
+    }
     int target = Math.min(budgetCap, baseTarget + backlogBoost);
     updateThreadPoolSize(builderPool, target);
-
-    int instantTarget = loadingMode ? steadyInstantThreadCount + 2 : steadyInstantThreadCount;
-    if (isBurstThreadModeEnabled()) {
-      instantTarget++;
-    }
-    if (pending >= 8192) {
-      instantTarget += 5;
-    } else if (pending >= 4096) {
-      instantTarget += 4;
-    } else if (pending >= 2048) {
-      instantTarget += 3;
-    } else if (pending >= 1024) {
-      instantTarget += 2;
-    } else if (pending >= 512) {
-      instantTarget++;
-    }
-    instantTarget = Math.min(getInstantThreadCap(), instantTarget);
-    updateThreadPoolSize(builderPool, instantTarget);
     MetalLogger.info(
-        "THREAD_BUDGET: builder=%d instant=%d cap=%d backlogBoost=%d",
-        target, instantTarget, budgetCap, backlogBoost);
+        "THREAD_BUDGET: builder=%d cap=%d backlogBoost=%d ewma=%d",
+        target, budgetCap, backlogBoost, ewmaThreads);
   }
 
   public void invalidateUVCache() {

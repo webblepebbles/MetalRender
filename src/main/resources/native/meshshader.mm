@@ -293,7 +293,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_uploadMeshletBu
   if (!g_subChunkBuffer || g_subChunkBuffer.length < totalSize) {
     g_subChunkBuffer =
         [g_device newBufferWithLength:totalSize
-                              options:MTLResourceStorageModeShared];
+                              options:MTLStorageModeShared];
   }
   memcpy([g_subChunkBuffer contents], ptr, totalSize);
   g_gpuSubChunkCount = (uint32_t)count;

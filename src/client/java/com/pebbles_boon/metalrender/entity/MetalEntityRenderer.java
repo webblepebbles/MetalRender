@@ -6,6 +6,7 @@ import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.backend.MetalRenderer;
 import com.pebbles_boon.metalrender.config.MetalRenderConfig;
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
+import com.pebbles_boon.metalrender.nativebridge.ResidencySetManager;
 import com.pebbles_boon.metalrender.render.CapturedMatrices;
 import com.pebbles_boon.metalrender.util.MetalLogger;
 import java.lang.reflect.Field;
@@ -61,6 +62,7 @@ public class MetalEntityRenderer {
   private final long[] vbufs = new long[3];
   private int vtxCount;
   private long cachedEntityPipeline;
+  private boolean residencySetsInitialized;
   private final MetalVertexConsumer metalVertexConsumer;
   private final ArrayList<EntityDrawCommand> pendingDrawPool = new ArrayList<>();
   private int pendingDrawCount;
@@ -89,6 +91,10 @@ public class MetalEntityRenderer {
       for (int i = 0; i < 3; i++) {
         vbufs[i] = NativeBridge.nCreateBuffer(
             device, MAX_BATCH_VERTICES * ENTITY_VERTEX_STRIDE, 0);
+      }
+      if (!residencySetsInitialized) {
+        ResidencySetManager.initialize(device);
+        residencySetsInitialized = true;
       }
       MetalLogger.info(
           "MetalEntityRenderer initialized: device=%d vb0=%d vb1=%d vb2=%d",
@@ -959,6 +965,10 @@ public class MetalEntityRenderer {
         if (metalTexture != 0 && metalTexture != lastBoundTexture) {
           NativeBridge.nBindEntityTexture(ctx, metalTexture);
           lastBoundTexture = metalTexture;
+          if (ResidencySetManager.isAvailable() && ResidencySetManager.getEntityAtlasSet() != 0) {
+            NativeBridge.nUpdateResidencySet(ResidencySetManager.getEntityAtlasSet(),
+                new long[]{metalTexture});
+          }
         }
       }
       NativeBridge.nDrawEntityBuffer(ctx, activeVertexBuffer,
@@ -1073,6 +1083,8 @@ public class MetalEntityRenderer {
         vbufs[i] = 0;
       }
     }
+    ResidencySetManager.shutdown();
+    residencySetsInitialized = false;
     device = 0;
     MetalLogger.info("MetalEntityRenderer shut down");
   }

@@ -202,6 +202,7 @@ public final class NativeBridge {
   public static native boolean nAreResidencySetsSupported();
   public static native long nCreateResidencySet(long device);
   public static native void nUpdateResidencySet(long set, long[] textures);
+  public static native void nDestroyResidencySet(long set);
 
   public static native int nGetThermalLODReduction();
 

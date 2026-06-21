@@ -5624,3 +5624,75 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nMegaDefragment(
     return (jint)afterBlocks;
   }
 }
+
+extern "C" JNIEXPORT jfloat JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetGpuFrameTimeMs(
+    JNIEnv *, jclass) {
+  return g_lastGpuMs.load(std::memory_order_relaxed);
+}
+
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nAreResidencySetsSupported(
+    JNIEnv *, jclass) {
+#if defined(__aarch64__) && (__MAC_OS_X_VERSION_MAX_ALLOWED >= 140000)
+  if (@available(macOS 14.0, *)) {
+    return g_device != nil && [g_device supportsFamily:MTLGPUFamilyApple6] ? JNI_TRUE : JNI_FALSE;
+  }
+#endif
+  return JNI_FALSE;
+}
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateResidencySet(
+    JNIEnv *, jclass, jlong device) {
+#if defined(__aarch64__) && (__MAC_OS_X_VERSION_MAX_ALLOWED >= 140000)
+  if (@available(macOS 14.0, *)) {
+    id<MTLDevice> dev = (__bridge id<MTLDevice>)(void *)device;
+    if (dev != nil && [dev respondsToSelector:@selector(newResidencySet:)]) {
+      MTLResidencySetDescriptor *desc = [[MTLResidencySetDescriptor alloc] init];
+      desc.label = @"entity_atlas_residency";
+      NSError *error = nil;
+      id<MTLResidencySet> set = [dev newResidencySet:desc error:&error];
+      if (set != nil) {
+        return (jlong)(void *)CFBridgingRetain(set);
+      }
+    }
+  }
+#endif
+  return 0;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUpdateResidencySet(
+    JNIEnv *env, jclass, jlong setHandle, jlongArray textureHandles) {
+#if defined(__aarch64__) && (__MAC_OS_X_VERSION_MAX_ALLOWED >= 140000)
+  if (@available(macOS 14.0, *)) {
+    id<MTLResidencySet> set = (__bridge id<MTLResidencySet>)(void *)setHandle;
+    if (set == nil) return;
+    jsize count = env->GetArrayLength(textureHandles);
+    jlong *handles = env->GetLongArrayElements(textureHandles, nullptr);
+    NSMutableArray<id<MTLTexture>> *textures = [NSMutableArray arrayWithCapacity:count];
+    for (jsize i = 0; i < count; i++) {
+      id<MTLTexture> tex = (__bridge id<MTLTexture>)(void *)handles[i];
+      if (tex != nil) [textures addObject:tex];
+    }
+    env->ReleaseLongArrayElements(textureHandles, handles, JNI_ABORT);
+    if (textures.count > 0) {
+      [set setResources:textures];
+      [set commit];
+    }
+  }
+#endif
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDestroyResidencySet(
+    JNIEnv *, jclass, jlong setHandle) {
+#if defined(__aarch64__) && (__MAC_OS_X_VERSION_MAX_ALLOWED >= 140000)
+  if (@available(macOS 14.0, *)) {
+    if (setHandle != 0) {
+      CFRelease((CFTypeRef)(void *)setHandle);
+    }
+  }
+#endif
+}

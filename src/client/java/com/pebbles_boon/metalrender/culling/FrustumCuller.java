@@ -80,4 +80,11 @@ public class FrustumCuller {
     float maxZ = minZ + 16.0f;
     return testBoundingBox(minX, (float) minY, minZ, maxX, (float) maxY, maxZ);
   }
+
+  public void copyFrom(FrustumCuller other) {
+    for (int i = 0; i < 6; i++) {
+      System.arraycopy(other.planes[i], 0, this.planes[i], 0, 4);
+    }
+    this.mvp.set(other.mvp);
+  }
 }
