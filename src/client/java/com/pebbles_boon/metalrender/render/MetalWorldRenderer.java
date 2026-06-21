@@ -15,6 +15,8 @@ import com.pebbles_boon.metalrender.nativebridge.NativeMemory;
 import com.pebbles_boon.metalrender.particle.MetalParticleRenderer;
 import com.pebbles_boon.metalrender.render.chunk.CustomChunkMesher;
 import com.pebbles_boon.metalrender.sodium.backend.MeshShaderBackend;
+import com.pebbles_boon.metalrender.performance.BuildBudgetEstimator;
+import com.pebbles_boon.metalrender.performance.PerformanceController;
 import com.pebbles_boon.metalrender.performance.MetalRenderProfiler;
 import com.pebbles_boon.metalrender.util.MetalLogger;
 import java.nio.ByteBuffer;
@@ -1183,6 +1185,23 @@ public class MetalWorldRenderer {
     }
     long deadline = budgetNanos > 0 ? System.nanoTime() + budgetNanos : Long.MAX_VALUE;
     int maxSubmit = 500;
+    BuildBudgetEstimator estimator = PerformanceController.getBudgetEstimator();
+    boolean throttle = estimator != null && estimator.shouldThrottle();
+    int meshCount = chunkMesher.getMeshCount();
+    float meshUtil = maxMeshes > 0 ? (float) meshCount / maxMeshes : 0f;
+    if (throttle || meshUtil > 0.75f) {
+      budgetNanos = Math.min(budgetNanos, 2_000_000L);
+      maxSubmit = Math.min(maxSubmit, 40);
+      if (meshUtil > 0.90f) {
+        maxSubmit = Math.min(maxSubmit, 15);
+      }
+    }
+    int thermalState = NativeBridge.isLibLoaded() ? NativeBridge.nGetThermalState() : 0;
+    if (thermalState >= 2) {
+      budgetNanos = Math.min(budgetNanos, 1_500_000L);
+      maxSubmit = Math.min(maxSubmit, 25);
+    }
+    // Upload parallelism is fixed; throttling handled via build caps above
     int built = 0;
     int importantSubmitted = 0;
     int backgroundSubmissions = 0;
