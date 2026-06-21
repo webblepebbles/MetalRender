@@ -1,6 +1,7 @@
 package com.pebbles_boon.metalrender.performance;
 
 import com.pebbles_boon.metalrender.MetalRenderClient;
+import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
 import com.pebbles_boon.metalrender.util.MetalLogger;
 import java.util.ArrayList;
@@ -172,6 +173,13 @@ public final class MetalRenderProfiler {
     double lodMs = lodRebuildTimeAccNs.getAndSet(0) / 1_000_000.0;
     double entityMs = entityTimeAccNs.getAndSet(0) / 1_000_000.0;
     double particleMs = particleTimeAccNs.getAndSet(0) / 1_000_000.0;
+    double gpuMs = gpuTimeAccNs.getAndSet(0) / 1_000_000.0;
+    if (gpuMs <= 0.0) {
+      try {
+        gpuMs = NativeBridge.nGetGpuFrameTimeMs();
+      } catch (Throwable ignored) {
+      }
+    }
 
     int meshesBuilt = meshesBuiltAcc.getAndSet(0);
     int uploadsDone = uploadsDoneAcc.getAndSet(0);
@@ -190,6 +198,7 @@ public final class MetalRenderProfiler {
     lodRebuildTimes[idx] = lodMs;
     entityTimes[idx] = entityMs;
     particleTimes[idx] = particleMs;
+    gpuTimes[idx] = gpuMs;
     writeIndex++;
     if (sampleCount < HISTORY_SIZE) {
       sampleCount++;
@@ -438,8 +447,9 @@ public final class MetalRenderProfiler {
     entries.add(new TimeEntry("Entity", s.currentEntityMs));
     entries.add(new TimeEntry("Particle", s.currentParticleMs));
     double tracked = s.currentMeshMs + s.currentUploadMs + s.currentCullMs + s.currentScanMs
-        + s.currentTextureMs + s.currentLodMs + s.currentEntityMs + s.currentParticleMs;
+        + s.currentTextureMs + s.currentLodMs + s.currentEntityMs + s.currentParticleMs + s.currentGpuMs;
     double other = Math.max(0.0, s.currentFrameMs - tracked);
+    entries.add(new TimeEntry("GPU", s.currentGpuMs));
     entries.add(new TimeEntry("Other", other));
     Collections.sort(entries);
     s.breakdown = entries;
@@ -516,6 +526,10 @@ public final class MetalRenderProfiler {
     public double avgParticleMs;
     public double minParticleMs;
     public double maxParticleMs;
+    public double currentGpuMs;
+    public double avgGpuMs;
+    public double minGpuMs;
+    public double maxGpuMs;
 
     public int meshesBuilt;
     public int uploadsDone;
