@@ -76,7 +76,7 @@ public class CustomChunkMesher {
   private final int maxBuilderThreadCount;
   private final int steadyInstantThreadCount;
   private final int maxInstantThreadCount;
-  private static final int UPLOAD_PARALLELISM = Math.max(16, Runtime.getRuntime().availableProcessors() * 2);
+  private static final int UPLOAD_PARALLELISM = Math.max(12, Runtime.getRuntime().availableProcessors());
   private static final java.util.concurrent.Semaphore UPLOAD_SEMAPHORE = new java.util.concurrent.Semaphore(UPLOAD_PARALLELISM);
   private volatile boolean fastUploadPathActive;
   private static final int NORMAL_TOTAL_THREAD_BUDGET = 64;
@@ -407,7 +407,7 @@ public class CustomChunkMesher {
         ibData.length);
     refreshUploadPathMode();
     this.initialized = true;
-    MetalLogger.info("Chunk mesh uploads using %s path (unthrottled, parallelism=%d)",
+    MetalLogger.info("Chunk mesh uploads using %s path (parallelism=%d)",
         fastUploadPathActive ? "mega-buffer" : "fallback",
         UPLOAD_PARALLELISM);
     MetalLogger.info("CustomChunkMesher initialized (maxQuads=%d, ibSize=%d)",
@@ -1043,7 +1043,7 @@ public class CustomChunkMesher {
       return;
     }
     if (fpsPriorityMode && !shouldThrottle) {
-      int target = Math.min(getBuilderThreadCap(), ewmaThreads > 0 ? Math.max(getBuilderThreadCap(), ewmaThreads) : getBuilderThreadCap());
+      int target = Math.min(getBuilderThreadCap(), ewmaThreads > 0 ? Math.min(getBuilderThreadCap(), ewmaThreads) : getBuilderThreadCap());
       updateThreadPoolSize(builderPool, target);
       return;
     }
@@ -1054,17 +1054,18 @@ public class CustomChunkMesher {
     if (isBurstThreadModeEnabled() && !shouldThrottle) {
       baseTarget += loadingMode ? 2 : 1;
     }
+    int maxBacklogBoost = Math.max(2, Runtime.getRuntime().availableProcessors() / 4);
     int backlogBoost = 0;
     if (pending >= 8192) {
-      backlogBoost = 10;
+      backlogBoost = Math.min(10, maxBacklogBoost + 4);
     } else if (pending >= 4096) {
-      backlogBoost = 8;
+      backlogBoost = Math.min(8, maxBacklogBoost + 3);
     } else if (pending >= 2048) {
-      backlogBoost = 6;
+      backlogBoost = Math.min(6, maxBacklogBoost + 2);
     } else if (pending >= 1024) {
-      backlogBoost = 4;
+      backlogBoost = Math.min(4, maxBacklogBoost + 1);
     } else if (pending >= 512) {
-      backlogBoost = 2;
+      backlogBoost = Math.min(2, maxBacklogBoost);
     } else if (pending >= 256) {
       backlogBoost = 1;
     }
