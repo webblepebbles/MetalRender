@@ -13,11 +13,13 @@ public class BuildBudgetEstimator {
   }
 
   public int recommendedThreadCount() {
+    int processors = Runtime.getRuntime().availableProcessors();
+    int maxThreads = Math.min(processors + 2, 32);
     double total = ewmaMeshMs + ewmaUploadMs;
-    if (total < 2.1) return 2;
-    if (total < 4.1) return 4;
-    if (total < 8.1) return 6;
-    return 8;
+    if (total < 2.1) return Math.min(Math.max(2, processors / 4), maxThreads);
+    if (total < 4.1) return Math.min(Math.max(4, processors / 2), maxThreads);
+    if (total < 8.1) return Math.min(Math.max(6, processors * 2 / 3), maxThreads);
+    return Math.min(Math.max(8, processors), maxThreads);
   }
 
   public int recommendedInFlight() {
