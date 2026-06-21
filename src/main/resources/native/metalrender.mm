@@ -1824,13 +1824,13 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nBeginFrame(
   (void)fogEnd;
   ensure_device();
   ensure_offscreen();
-  if (g_lodSelectPipeline && g_subChunkBuffer && g_camUniformsBuffer) {
+  if (g_lodSelectPipeline && g_subChunkBuffer && g_cameraUniformsBuffer) {
     id<MTLCommandBuffer> lodCb = [g_queue commandBuffer];
     if (lodCb) {
       id<MTLComputeCommandEncoder> lodEnc = [lodCb computeCommandEncoder];
       if (lodEnc) {
         [lodEnc setComputePipelineState:g_lodSelectPipeline];
-        [lodEnc setBuffer:g_camUniformsBuffer offset:0 atIndex:1];
+        [lodEnc setBuffer:g_cameraUniformsBuffer offset:0 atIndex:1];
         [lodEnc setBuffer:g_subChunkBuffer offset:0 atIndex:2];
         MTLSize threads = MTLSizeMake(256, 1, 1);
         MTLSize groups = MTLSizeMake(1, 1, 1);
@@ -5648,7 +5648,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateResidencySet
 #if defined(__aarch64__) && (__MAC_OS_X_VERSION_MAX_ALLOWED >= 140000)
   if (@available(macOS 14.0, *)) {
     id<MTLDevice> dev = (__bridge id<MTLDevice>)(void *)device;
-    if (dev != nil && [dev respondsToSelector:@selector(newResidencySet:)]) {
+    if (dev != nil && [dev respondsToSelector:@selector(newResidencySet:error:)]) {
       MTLResidencySetDescriptor *desc = [[MTLResidencySetDescriptor alloc] init];
       desc.label = @"entity_atlas_residency";
       NSError *error = nil;
