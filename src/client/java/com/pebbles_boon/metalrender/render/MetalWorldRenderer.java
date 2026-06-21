@@ -302,7 +302,6 @@ public class MetalWorldRenderer {
         (float) camera.position().z);
     if (MetalRenderClient.getConfig().enableMetalRendering) {
       long t0 = System.nanoTime();
-      // Pruning scales with mesh count: iterating 3K+ meshes is expensive.
       int pruneInterval = chunkMesher.getMeshCount() > 3000 ? 120
           : (chunkMesher.getMeshCount() > 1500 ? 60 : 30);
       boolean nearMeshLimit = chunkMesher.getMeshCount() >= maxMeshes - 500;
@@ -1127,8 +1126,6 @@ public class MetalWorldRenderer {
       return 0;
     if (sortedListDirty) {
       int currentSize = pendingBuildSet.size();
-      // Scale sort interval with pending count: sorting 27K items is expensive.
-      // When heavily backlogged, we only need rough front-of-queue ordering.
       int sortInterval = currentSize > 15000 ? 20
           : (currentSize > 5000 ? 10
               : (currentSize > 1000 ? 5 : 3));
@@ -1214,7 +1211,6 @@ public class MetalWorldRenderer {
       budgetNanos = Math.min(budgetNanos, 1_500_000L);
       maxSubmit = Math.min(maxSubmit, 25);
     }
-    // Upload parallelism is fixed; throttling handled via build caps above
     int built = 0;
     int importantSubmitted = 0;
     int backgroundSubmissions = 0;
@@ -1248,8 +1244,6 @@ public class MetalWorldRenderer {
       PendingBuildCandidate importantCandidate = null;
       PendingBuildCandidate normalCandidate = null;
       int index = 0;
-      // Limit scan to first 128 items per submission; list is distance-sorted,
-      // so best candidates are at the front. Prevents O(n×maxSubmit) blow-up.
       int scanLimit = Math.min(128, sortedBuildList.size());
       while (true) {
         while (index < scanLimit) {
@@ -1270,9 +1264,6 @@ public class MetalWorldRenderer {
           boolean bypassReadiness = chunkDist <= IMPORTANT_REBUILD_CHUNK_RANGE ||
               (loadingMode && chunkDist <= HOT_LOAD_REBUILD_RANGE);
           if (!bypassReadiness && lodLevel > 0) {
-            // LOD chunks must at least have the center chunk present;
-            // otherwise builder threads waste time in captureSectionSnapshot
-            // and the chunk loops forever in pendingBuildSet.
             if (world.getChunkSource().getChunkNow(cx, cz) == null) {
               index++;
               continue;
@@ -1306,16 +1297,16 @@ public class MetalWorldRenderer {
           break;
         }
         if (scanLimit >= sortedBuildList.size()) {
-          break; // truly nothing ready in the entire list
+          break;
         }
-        // Expand scan when first batch had no ready chunks;
-        // prevents starvation when nearby frontier is waiting on neighbors.
         scanLimit = Math.min(scanLimit + 128, sortedBuildList.size());
       }
 
       if (importantCandidate == null && normalCandidate == null) {
         break;
       }
+      pendingBuildSet.remove(candidate.key);
+      sortedBuildList.remove(candidate.index);
 
       PendingBuildCandidate candidate;
       boolean highPriority;
@@ -1390,13 +1381,12 @@ public class MetalWorldRenderer {
 
   private void rebuildLodMeshes(Minecraft mc) {
     if (mc.player == null || mc.level == null)
-      return;      // Skip LOD rebuild when under pressure — iterating 3K+ meshes every
-      // 2 frames burns render-thread time that should go to building new chunks.
-      if (loadingMode ||
-          pendingBuildSet.size() > DETAIL_TIER_REBUILD_SCAN_LIMIT / 2 ||
-          chunkMesher.getPendingCount() > 512) {
-        return;
-      }
+      return;
+    if (loadingMode ||
+        pendingBuildSet.size() > DETAIL_TIER_REBUILD_SCAN_LIMIT / 2 ||
+        chunkMesher.getPendingCount() > 512) {
+      return;
+    }
     boolean fpsPriorityMode = MetalRenderClient.getConfig() != null &&
         MetalRenderClient.getConfig().prioritizeFpsOverTps;
     int maxInFlightBuildTasks = fpsPriorityMode
@@ -1837,10 +1827,10 @@ public class MetalWorldRenderer {
       int chunkZ) {
     var source = world.getChunkSource();
     return source.getChunkNow(chunkX, chunkZ) != null &&
-           source.getChunkNow(chunkX - 1, chunkZ) != null &&
-           source.getChunkNow(chunkX + 1, chunkZ) != null &&
-           source.getChunkNow(chunkX, chunkZ - 1) != null &&
-           source.getChunkNow(chunkX, chunkZ + 1) != null;
+        source.getChunkNow(chunkX - 1, chunkZ) != null &&
+        source.getChunkNow(chunkX + 1, chunkZ) != null &&
+        source.getChunkNow(chunkX, chunkZ - 1) != null &&
+        source.getChunkNow(chunkX, chunkZ + 1) != null;
   }
 
   private void enqueueSectionBuild(int chunkX, int worldY, int chunkZ) {
