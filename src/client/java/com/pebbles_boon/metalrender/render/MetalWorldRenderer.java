@@ -654,6 +654,8 @@ public class MetalWorldRenderer {
   private final java.util.LinkedHashSet<Long> pendingBuildSet = new java.util.LinkedHashSet<>();
   private final java.util.ArrayList<Long> sortedBuildList = new java.util.ArrayList<>();
   private boolean sortedListDirty = true;
+  private int lastSortedSize = 0;
+  private int framesSinceLastSort = 0;
   private float cachedForwardX = 0, cachedForwardZ = 1;
   private int lastScanPlayerCX = Integer.MIN_VALUE, lastScanPlayerCZ = Integer.MIN_VALUE;
   private int lastScanRenderDist = -1;
@@ -1118,48 +1120,60 @@ public class MetalWorldRenderer {
     if (pendingBuildSet.isEmpty())
       return 0;
     if (sortedListDirty) {
-      sortedBuildList.clear();
-      sortedBuildList.addAll(pendingBuildSet);
-      final int pcx = playerChunkX;
-      final int pcy = playerSectionY;
-      final int pcz = playerChunkZ;
-      final float fwdX = cachedForwardX;
-      final float fwdZ = cachedForwardZ;
-      final boolean startupSolidFill = loadingMode &&
-          loadingModeMeshCount < STARTUP_SOLID_FILL_MESH_THRESHOLD;
-      sortedBuildList.sort((a, b) -> {
-        int ax = (int) ((a >> 42) & 0x3FFFFF);
-        if ((ax & 0x200000) != 0)
-          ax |= ~0x3FFFFF;
-        int ay = (int) ((a >> 22) & 0xFFFFF);
-        if ((ay & 0x80000) != 0)
-          ay |= ~0xFFFFF;
-        int az = (int) (a & 0x3FFFFF);
-        if ((az & 0x200000) != 0)
-          az |= ~0x3FFFFF;
-        int bx = (int) ((b >> 42) & 0x3FFFFF);
-        if ((bx & 0x200000) != 0)
-          bx |= ~0x3FFFFF;
-        int by = (int) ((b >> 22) & 0xFFFFF);
-        if ((by & 0x80000) != 0)
-          by |= ~0xFFFFF;
-        int bz = (int) (b & 0x3FFFFF);
-        if ((bz & 0x200000) != 0)
-          bz |= ~0x3FFFFF;
-        float dotA = (ax - pcx) * fwdX + (az - pcz) * fwdZ;
-        float dotB = (bx - pcx) * fwdX + (bz - pcz) * fwdZ;
-        boolean frontA = dotA >= 0;
-        boolean frontB = dotB >= 0;
-        if (!startupSolidFill && frontA != frontB)
-          return frontA ? -1 : 1;
-        int distA = Math.abs(ax - pcx) + Math.abs(az - pcz);
-        int distB = Math.abs(bx - pcx) + Math.abs(bz - pcz);
-        if (distA != distB)
-          return Integer.compare(distA, distB);
-        int verticalDistA = Math.abs(ay - pcy);
-        int verticalDistB = Math.abs(by - pcy);
-        return Integer.compare(verticalDistA, verticalDistB);
-      });
+      int currentSize = pendingBuildSet.size();
+      boolean shouldSort = turnPriorityFrames > 0
+          || currentSize > lastSortedSize + 64
+          || currentSize < lastSortedSize * 3 / 4
+          || framesSinceLastSort >= 3
+          || sortedBuildList.isEmpty();
+      if (shouldSort) {
+        sortedBuildList.clear();
+        sortedBuildList.addAll(pendingBuildSet);
+        final int pcx = playerChunkX;
+        final int pcy = playerSectionY;
+        final int pcz = playerChunkZ;
+        final float fwdX = cachedForwardX;
+        final float fwdZ = cachedForwardZ;
+        final boolean startupSolidFill = loadingMode &&
+            loadingModeMeshCount < STARTUP_SOLID_FILL_MESH_THRESHOLD;
+        sortedBuildList.sort((a, b) -> {
+          int ax = (int) ((a >> 42) & 0x3FFFFF);
+          if ((ax & 0x200000) != 0)
+            ax |= ~0x3FFFFF;
+          int ay = (int) ((a >> 22) & 0xFFFFF);
+          if ((ay & 0x80000) != 0)
+            ay |= ~0xFFFFF;
+          int az = (int) (a & 0x3FFFFF);
+          if ((az & 0x200000) != 0)
+            az |= ~0x3FFFFF;
+          int bx = (int) ((b >> 42) & 0x3FFFFF);
+          if ((bx & 0x200000) != 0)
+            bx |= ~0x3FFFFF;
+          int by = (int) ((b >> 22) & 0xFFFFF);
+          if ((by & 0x80000) != 0)
+            by |= ~0xFFFFF;
+          int bz = (int) (b & 0x3FFFFF);
+          if ((bz & 0x200000) != 0)
+            bz |= ~0x3FFFFF;
+          float dotA = (ax - pcx) * fwdX + (az - pcz) * fwdZ;
+          float dotB = (bx - pcx) * fwdX + (bz - pcz) * fwdZ;
+          boolean frontA = dotA >= 0;
+          boolean frontB = dotB >= 0;
+          if (!startupSolidFill && frontA != frontB)
+            return frontA ? -1 : 1;
+          int distA = Math.abs(ax - pcx) + Math.abs(az - pcz);
+          int distB = Math.abs(bx - pcx) + Math.abs(bz - pcz);
+          if (distA != distB)
+            return Integer.compare(distA, distB);
+          int verticalDistA = Math.abs(ay - pcy);
+          int verticalDistB = Math.abs(by - pcy);
+          return Integer.compare(verticalDistA, verticalDistB);
+        });
+        lastSortedSize = sortedBuildList.size();
+        framesSinceLastSort = 0;
+      } else {
+        framesSinceLastSort++;
+      }
       sortedListDirty = false;
     }
     Minecraft mc = Minecraft.getInstance();
