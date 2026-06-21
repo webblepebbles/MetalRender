@@ -662,6 +662,7 @@ public class MetalWorldRenderer {
   private int framesSinceLastSort = 0;
   private float cachedForwardX = 0, cachedForwardZ = 1;
   private int lastScanPlayerCX = Integer.MIN_VALUE, lastScanPlayerCZ = Integer.MIN_VALUE;
+  private int lastSortedPlayerCX = Integer.MIN_VALUE, lastSortedPlayerCZ = Integer.MIN_VALUE;
   private int lastScanRenderDist = -1;
   private int turnPriorityFrames = 0;
   private int remainingPrioritizedBuilds = PRIORITIZED_BUILD_STREAK_LIMIT;
@@ -735,7 +736,10 @@ public class MetalWorldRenderer {
       }
     }
     long scanStart = System.nanoTime();
-    scanForPendingChunks(mc);
+    if (pendingBuildSet.size() < CHUNK_SCAN_SATURATED_THRESHOLD ||
+        (frameCount & 1) == 0) {
+      scanForPendingChunks(mc);
+    }
     MetalRenderProfiler.getInstance().recordScanTime(System.nanoTime() - scanStart);
     if (mc.player != null && chunkMesher.getMeshCount() < maxMeshes) {
       int playerChunkX = mc.player.chunkPosition().x();
@@ -836,10 +840,13 @@ public class MetalWorldRenderer {
     int playerChunkZ = mc.player.chunkPosition().z();
     int playerSectionY = mc.player.getBlockY() >> 4;
     if (scanPressured && !coverageFillActive) {
-      trimPendingBuildSet(playerChunkX, playerChunkZ, closeRange);
-      visibleBacklog = pendingBuildSet.size() + mesherPending;
-      scanPressured = visibleBacklog >= CHUNK_SCAN_PRESSURE_THRESHOLD;
-      scanSaturated = visibleBacklog >= CHUNK_SCAN_SATURATED_THRESHOLD;
+      if (visibleBacklog < CHUNK_SCAN_SATURATED_THRESHOLD ||
+          (frameCount % 3) == 0) {
+        trimPendingBuildSet(playerChunkX, playerChunkZ, closeRange);
+        visibleBacklog = pendingBuildSet.size() + mesherPending;
+        scanPressured = visibleBacklog >= CHUNK_SCAN_PRESSURE_THRESHOLD;
+        scanSaturated = visibleBacklog >= CHUNK_SCAN_SATURATED_THRESHOLD;
+      }
     }
     boolean playerMovedChunk = (playerChunkX != lastScanPlayerCX || playerChunkZ != lastScanPlayerCZ);
     boolean renderDistChanged = (renderDist != lastScanRenderDist);
@@ -1126,13 +1133,18 @@ public class MetalWorldRenderer {
       return 0;
     if (sortedListDirty) {
       int currentSize = pendingBuildSet.size();
-      int sortInterval = currentSize > 15000 ? 20
-          : (currentSize > 5000 ? 10
-              : (currentSize > 1000 ? 5 : 3));
+      int sortInterval = currentSize > 25000 ? 30
+          : (currentSize > 15000 ? 20
+              : (currentSize > 5000 ? 10
+                  : (currentSize > 1000 ? 5 : 3)));
+      int playerMovedSinceSort = Math.max(
+          Math.abs(playerChunkX - lastSortedPlayerCX),
+          Math.abs(playerChunkZ - lastSortedPlayerCZ));
       boolean shouldSort = turnPriorityFrames > 0
           || currentSize > lastSortedSize + 64
           || currentSize < lastSortedSize * 3 / 4
           || framesSinceLastSort >= sortInterval
+          || playerMovedSinceSort > 4
           || sortedBuildList.isEmpty();
       if (shouldSort) {
         sortedBuildList.clear();
@@ -1178,6 +1190,8 @@ public class MetalWorldRenderer {
           return Integer.compare(verticalDistA, verticalDistB);
         });
         lastSortedSize = sortedBuildList.size();
+        lastSortedPlayerCX = playerChunkX;
+        lastSortedPlayerCZ = playerChunkZ;
         framesSinceLastSort = 0;
       } else {
         framesSinceLastSort++;
@@ -1190,7 +1204,7 @@ public class MetalWorldRenderer {
       return 0;
     }
     long deadline = budgetNanos > 0 ? System.nanoTime() + budgetNanos : Long.MAX_VALUE;
-    int maxSubmit = 500;
+    int maxSubmit = pendingBuildSet.size() > 20000 ? 200 : 500;
     BuildBudgetEstimator estimator = PerformanceController.getBudgetEstimator();
     boolean throttle = estimator != null && estimator.shouldThrottle();
     int meshCount = chunkMesher.getMeshCount();
@@ -1244,7 +1258,8 @@ public class MetalWorldRenderer {
       PendingBuildCandidate importantCandidate = null;
       PendingBuildCandidate normalCandidate = null;
       int index = 0;
-      int scanLimit = Math.min(128, sortedBuildList.size());
+      final int baseScanLimit = (pendingBuildSet.size() > 10000 && budgetNanos > 3_000_000L) ? 256 : 128;
+      int scanLimit = Math.min(baseScanLimit, sortedBuildList.size());
       while (true) {
         while (index < scanLimit) {
           long key = sortedBuildList.get(index);
@@ -1254,7 +1269,7 @@ public class MetalWorldRenderer {
           if (chunkMesher.hasMesh(cx, cy, cz)) {
             pendingBuildSet.remove(key);
             sortedBuildList.remove(index);
-            scanLimit = Math.min(128, sortedBuildList.size());
+            scanLimit = Math.min(baseScanLimit, sortedBuildList.size());
             continue;
           }
           int dx = cx - playerChunkX;
@@ -1305,11 +1320,9 @@ public class MetalWorldRenderer {
       if (importantCandidate == null && normalCandidate == null) {
         break;
       }
-      pendingBuildSet.remove(candidate.key);
-      sortedBuildList.remove(candidate.index);
 
-      PendingBuildCandidate candidate;
-      boolean highPriority;
+      final PendingBuildCandidate candidate;
+      final boolean highPriority;
       if (importantCandidate == null) {
         candidate = normalCandidate;
         highPriority = false;
@@ -1331,6 +1344,9 @@ public class MetalWorldRenderer {
         highPriority = false;
         remainingPrioritizedBuilds = PRIORITIZED_BUILD_STREAK_LIMIT;
       }
+
+      pendingBuildSet.remove(candidate.key);
+      sortedBuildList.remove(candidate.index);
 
       boolean interactivePriority = candidate.lodLevel == 0 && highPriority &&
           candidate.chunkDist <= INTERACTIVE_PRIORITY_CHUNK_RANGE &&
