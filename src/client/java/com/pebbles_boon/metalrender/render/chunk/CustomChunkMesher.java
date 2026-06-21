@@ -76,11 +76,8 @@ public class CustomChunkMesher {
   private final int maxBuilderThreadCount;
   private final int steadyInstantThreadCount;
   private final int maxInstantThreadCount;
-  private static final Semaphore UPLOAD_SEMAPHORE = new Semaphore(6);
-  private static final int FALLBACK_UPLOAD_PARALLELISM = 6;
-  private static final int FAST_UPLOAD_PARALLELISM = 8;
-  private static final Semaphore FALLBACK_UPLOAD_SEMAPHORE = new Semaphore(FALLBACK_UPLOAD_PARALLELISM);
-  private static final Semaphore FAST_UPLOAD_SEMAPHORE = new Semaphore(FAST_UPLOAD_PARALLELISM);
+  private static final int UPLOAD_PARALLELISM = Math.max(16, Runtime.getRuntime().availableProcessors() * 2);
+  private static final java.util.concurrent.Semaphore UPLOAD_SEMAPHORE = new java.util.concurrent.Semaphore(UPLOAD_PARALLELISM);
   private volatile boolean fastUploadPathActive;
   private static final int NORMAL_TOTAL_THREAD_BUDGET = 64;
   private static final int BURST_TOTAL_THREAD_BUDGET = 128;
@@ -353,7 +350,7 @@ public class CustomChunkMesher {
     java.util.concurrent.ThreadFactory meshFactory = r -> {
       Thread t = new Thread(r, "MetalRender-MeshBuilder");
       t.setDaemon(true);
-      t.setPriority(Thread.MIN_PRIORITY);
+      t.setPriority(Thread.NORM_PRIORITY);
       return t;
     };
     this.builderPool = new java.util.concurrent.ThreadPoolExecutor(
@@ -410,10 +407,9 @@ public class CustomChunkMesher {
         ibData.length);
     refreshUploadPathMode();
     this.initialized = true;
-    MetalLogger.info("Chunk mesh uploads using %s path (%d concurrent)",
+    MetalLogger.info("Chunk mesh uploads using %s path (unthrottled, parallelism=%d)",
         fastUploadPathActive ? "mega-buffer" : "fallback",
-        fastUploadPathActive ? FAST_UPLOAD_PARALLELISM
-            : FALLBACK_UPLOAD_PARALLELISM);
+        UPLOAD_PARALLELISM);
     MetalLogger.info("CustomChunkMesher initialized (maxQuads=%d, ibSize=%d)",
         MAX_QUADS, ibData.length);
   }
@@ -424,11 +420,6 @@ public class CustomChunkMesher {
     } catch (Throwable ignored) {
       fastUploadPathActive = false;
     }
-  }
-
-  private Semaphore getUploadSemaphore() {
-    return fastUploadPathActive ? FAST_UPLOAD_SEMAPHORE
-        : FALLBACK_UPLOAD_SEMAPHORE;
   }
 
   private static long packChunkKey(int x, int y, int z) {
@@ -3439,10 +3430,8 @@ public class CustomChunkMesher {
         return;
       }
 
-      UPLOAD_SEMAPHORE.acquireUninterruptibly();
-      Semaphore uploadSemaphore = getUploadSemaphore();
-      uploadSemaphore.acquireUninterruptibly();
       long bufferHandle;
+      UPLOAD_SEMAPHORE.acquireUninterruptibly();
       try {
         bufferHandle = NativeBridge.nCreateBuffer(
             deviceHandle, dataLen, NativeMemory.STORAGE_MODE_SHARED);
@@ -3453,7 +3442,6 @@ public class CustomChunkMesher {
         MetalRenderProfiler.getInstance().incrementUploadsDone(1);
       } finally {
         UPLOAD_SEMAPHORE.release();
-        uploadSemaphore.release();
       }
       ChunkMeshData mesh = new ChunkMeshData(bufferHandle, quadCount, chunkX, chunkY, chunkZ,
           lodLevel, buildPCX, buildPCY, buildPCZ, visibilityMask,
