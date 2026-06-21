@@ -1029,7 +1029,7 @@ public class CustomChunkMesher {
     aggressiveApproximateLighting = loadingMode || pending >= approximateLightingThreshold;
 
     BuildBudgetEstimator estimator = PerformanceController.getBudgetEstimator();
-    int ewmaThreads = estimator != null ? estimator.recommendedThreadCount() : -1;
+    int ewmaThreads = estimator != null ? estimator.recommendedThreadCount(pending) : -1;
     int ewmaInFlight = estimator != null ? estimator.recommendedInFlight() : -1;
     boolean shouldThrottle = estimator != null && estimator.shouldThrottle();
 
@@ -1044,6 +1044,11 @@ public class CustomChunkMesher {
     }
     if (fpsPriorityMode && !shouldThrottle) {
       int target = Math.min(getBuilderThreadCap(), ewmaThreads > 0 ? Math.min(getBuilderThreadCap(), ewmaThreads) : getBuilderThreadCap());
+      updateThreadPoolSize(builderPool, target);
+      return;
+    }
+    if (fpsPriorityMode && shouldThrottle) {
+      int target = Math.max(2, Math.min(getBuilderThreadCap(), ewmaThreads > 0 ? ewmaThreads / 2 : 2));
       updateThreadPoolSize(builderPool, target);
       return;
     }

@@ -302,8 +302,11 @@ public class MetalWorldRenderer {
         (float) camera.position().z);
     if (MetalRenderClient.getConfig().enableMetalRendering) {
       long t0 = System.nanoTime();
+      // Pruning scales with mesh count: iterating 3K+ meshes is expensive.
+      int pruneInterval = chunkMesher.getMeshCount() > 3000 ? 120
+          : (chunkMesher.getMeshCount() > 1500 ? 60 : 30);
       boolean nearMeshLimit = chunkMesher.getMeshCount() >= maxMeshes - 500;
-      if (frameCount % 30 == 0 ||
+      if (frameCount % pruneInterval == 0 ||
           (nearMeshLimit && !pendingBuildSet.isEmpty())) {
         pruneFarMeshes(mc, camPos);
       }
@@ -663,6 +666,7 @@ public class MetalWorldRenderer {
   private int lastScanRenderDist = -1;
   private int turnPriorityFrames = 0;
   private int remainingPrioritizedBuilds = PRIORITIZED_BUILD_STREAK_LIMIT;
+  private int cachedThermalState = 0;
 
   private static final class PendingBuildCandidate {
     final long key;
@@ -1123,10 +1127,15 @@ public class MetalWorldRenderer {
       return 0;
     if (sortedListDirty) {
       int currentSize = pendingBuildSet.size();
+      // Scale sort interval with pending count: sorting 27K items is expensive.
+      // When heavily backlogged, we only need rough front-of-queue ordering.
+      int sortInterval = currentSize > 15000 ? 20
+          : (currentSize > 5000 ? 10
+              : (currentSize > 1000 ? 5 : 3));
       boolean shouldSort = turnPriorityFrames > 0
           || currentSize > lastSortedSize + 64
           || currentSize < lastSortedSize * 3 / 4
-          || framesSinceLastSort >= 3
+          || framesSinceLastSort >= sortInterval
           || sortedBuildList.isEmpty();
       if (shouldSort) {
         sortedBuildList.clear();
@@ -1196,7 +1205,11 @@ public class MetalWorldRenderer {
         maxSubmit = Math.min(maxSubmit, 15);
       }
     }
-    int thermalState = NativeBridge.isLibLoaded() ? NativeBridge.nGetThermalState() : 0;
+    int thermalState = 0;
+    if ((frameCount & 31) == 0) {
+      cachedThermalState = NativeBridge.isLibLoaded() ? NativeBridge.nGetThermalState() : 0;
+    }
+    thermalState = cachedThermalState;
     if (thermalState >= 2) {
       budgetNanos = Math.min(budgetNanos, 1_500_000L);
       maxSubmit = Math.min(maxSubmit, 25);
@@ -1222,56 +1235,82 @@ public class MetalWorldRenderer {
           loadingMode ? FPS_PRIORITY_LOADING_BACKGROUND_SUBMISSIONS_PER_PASS
               : FPS_PRIORITY_NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS);
     }
+    int currentMeshCount = chunkMesher.getMeshCount();
     while (!sortedBuildList.isEmpty() && built < maxSubmit &&
-        chunkMesher.getMeshCount() < maxMeshes) {
+        currentMeshCount < maxMeshes) {
       if (budgetNanos > 0 && built >= minBuilds &&
           System.nanoTime() >= deadline)
         break;
-      if (chunkMesher.getPendingCount() >= maxInFlightBuildTasks) {
+      int currentPending = chunkMesher.getPendingCount();
+      if (currentPending >= maxInFlightBuildTasks) {
         break;
       }
       PendingBuildCandidate importantCandidate = null;
       PendingBuildCandidate normalCandidate = null;
       int index = 0;
-      while (index < sortedBuildList.size()) {
-        long key = sortedBuildList.get(index);
-        int cx = unpackChunkX(key);
-        int cy = unpackChunkY(key);
-        int cz = unpackChunkZ(key);
-        if (chunkMesher.hasMesh(cx, cy, cz)) {
-          pendingBuildSet.remove(key);
-          sortedBuildList.remove(index);
-          continue;
-        }
-        int dx = cx - playerChunkX;
-        int dz = cz - playerChunkZ;
-        int chunkDist = Math.max(Math.abs(dx), Math.abs(dz));
-        int lodLevel = getDistanceDetailTier(chunkDist);
-        boolean bypassReadiness = chunkDist <= IMPORTANT_REBUILD_CHUNK_RANGE ||
-            (loadingMode && chunkDist <= HOT_LOAD_REBUILD_RANGE) ||
-            lodLevel > 0;
-        if (!bypassReadiness && !isSectionBuildReady(world, cx, cy, cz)) {
-          if (MetalRenderConfig.isDeepDebugActive()) {
-            MetalLogger.debug(
-                "BUILD_DEFER: chunk=[%d,%d,%d] dist=%d lod=%d readiness=false",
-                cx, cy, cz, chunkDist, lodLevel);
+      // Limit scan to first 128 items per submission; list is distance-sorted,
+      // so best candidates are at the front. Prevents O(n×maxSubmit) blow-up.
+      int scanLimit = Math.min(128, sortedBuildList.size());
+      while (true) {
+        while (index < scanLimit) {
+          long key = sortedBuildList.get(index);
+          int cx = unpackChunkX(key);
+          int cy = unpackChunkY(key);
+          int cz = unpackChunkZ(key);
+          if (chunkMesher.hasMesh(cx, cy, cz)) {
+            pendingBuildSet.remove(key);
+            sortedBuildList.remove(index);
+            scanLimit = Math.min(128, sortedBuildList.size());
+            continue;
+          }
+          int dx = cx - playerChunkX;
+          int dz = cz - playerChunkZ;
+          int chunkDist = Math.max(Math.abs(dx), Math.abs(dz));
+          int lodLevel = getDistanceDetailTier(chunkDist);
+          boolean bypassReadiness = chunkDist <= IMPORTANT_REBUILD_CHUNK_RANGE ||
+              (loadingMode && chunkDist <= HOT_LOAD_REBUILD_RANGE);
+          if (!bypassReadiness && lodLevel > 0) {
+            // LOD chunks must at least have the center chunk present;
+            // otherwise builder threads waste time in captureSectionSnapshot
+            // and the chunk loops forever in pendingBuildSet.
+            if (world.getChunkSource().getChunkNow(cx, cz) == null) {
+              index++;
+              continue;
+            }
+            bypassReadiness = true;
+          }
+          if (!bypassReadiness && !isSectionBuildReady(world, cx, cy, cz)) {
+            if (MetalRenderConfig.isDeepDebugActive()) {
+              MetalLogger.debug(
+                  "BUILD_DEFER: chunk=[%d,%d,%d] dist=%d lod=%d readiness=false",
+                  cx, cy, cz, chunkDist, lodLevel);
+            }
+            index++;
+            continue;
+          }
+          PendingBuildCandidate candidate = new PendingBuildCandidate(
+              key, index, cx, cy, cz, chunkDist, lodLevel);
+          boolean importantBuild = importantSubmitted < highPrioritySubmissions &&
+              isImportantPendingBuild(dx, dz, chunkDist);
+          if (importantBuild) {
+            importantCandidate = candidate;
+          } else if (normalCandidate == null) {
+            normalCandidate = candidate;
+          }
+          if (importantCandidate != null && normalCandidate != null) {
+            break;
           }
           index++;
-          continue;
         }
-        PendingBuildCandidate candidate = new PendingBuildCandidate(
-            key, index, cx, cy, cz, chunkDist, lodLevel);
-        boolean importantBuild = importantSubmitted < highPrioritySubmissions &&
-            isImportantPendingBuild(dx, dz, chunkDist);
-        if (importantBuild) {
-          importantCandidate = candidate;
-        } else if (normalCandidate == null) {
-          normalCandidate = candidate;
-        }
-        if (importantCandidate != null && normalCandidate != null) {
+        if (importantCandidate != null || normalCandidate != null) {
           break;
         }
-        index++;
+        if (scanLimit >= sortedBuildList.size()) {
+          break; // truly nothing ready in the entire list
+        }
+        // Expand scan when first batch had no ready chunks;
+        // prevents starvation when nearby frontier is waiting on neighbors.
+        scanLimit = Math.min(scanLimit + 128, sortedBuildList.size());
       }
 
       if (importantCandidate == null && normalCandidate == null) {
@@ -1334,8 +1373,6 @@ public class MetalWorldRenderer {
       } else {
         backgroundSubmissions++;
       }
-      pendingBuildSet.remove(candidate.key);
-      sortedBuildList.remove(candidate.index);
       built++;
     }
     if (built > 0 && System.currentTimeMillis() - lastQueuePressureLogMs >= 1000) {
@@ -1353,11 +1390,13 @@ public class MetalWorldRenderer {
 
   private void rebuildLodMeshes(Minecraft mc) {
     if (mc.player == null || mc.level == null)
-      return;
-    if (loadingMode ||
-        pendingBuildSet.size() > DETAIL_TIER_REBUILD_SCAN_LIMIT / 2) {
-      return;
-    }
+      return;      // Skip LOD rebuild when under pressure — iterating 3K+ meshes every
+      // 2 frames burns render-thread time that should go to building new chunks.
+      if (loadingMode ||
+          pendingBuildSet.size() > DETAIL_TIER_REBUILD_SCAN_LIMIT / 2 ||
+          chunkMesher.getPendingCount() > 512) {
+        return;
+      }
     boolean fpsPriorityMode = MetalRenderClient.getConfig() != null &&
         MetalRenderClient.getConfig().prioritizeFpsOverTps;
     int maxInFlightBuildTasks = fpsPriorityMode
@@ -1796,20 +1835,12 @@ public class MetalWorldRenderer {
 
   private boolean isSectionBuildReady(ClientLevel world, int chunkX, int chunkY,
       int chunkZ) {
-    LevelChunk centerChunk = world.getChunkSource().getChunkNow(chunkX, chunkZ);
-    if (centerChunk == null) {
-      return false;
-    }
-    if (world.getChunkSource().getChunkNow(chunkX - 1, chunkZ) == null) {
-      return false;
-    }
-    if (world.getChunkSource().getChunkNow(chunkX + 1, chunkZ) == null) {
-      return false;
-    }
-    if (world.getChunkSource().getChunkNow(chunkX, chunkZ - 1) == null) {
-      return false;
-    }
-    return world.getChunkSource().getChunkNow(chunkX, chunkZ + 1) != null;
+    var source = world.getChunkSource();
+    return source.getChunkNow(chunkX, chunkZ) != null &&
+           source.getChunkNow(chunkX - 1, chunkZ) != null &&
+           source.getChunkNow(chunkX + 1, chunkZ) != null &&
+           source.getChunkNow(chunkX, chunkZ - 1) != null &&
+           source.getChunkNow(chunkX, chunkZ + 1) != null;
   }
 
   private void enqueueSectionBuild(int chunkX, int worldY, int chunkZ) {
