@@ -398,6 +398,9 @@ public final class MetalRenderConfig {
     enableArgumentBuffers = getBool("metalrender.feature.argbuf", enableArgumentBuffers);
     enableProgrammableBlending = getBool("metalrender.feature.oit", enableProgrammableBlending);
 
+    if (enableMeshShaders && com.pebbles_boon.metalrender.nativebridge.MetalHardwareChecker.supportsMeshShaders()) {
+      enableIndirectCommandBuffers = true;
+    }
   }
 
   private static boolean getBool(String key, boolean def) {
