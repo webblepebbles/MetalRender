@@ -51,7 +51,7 @@ public class MetalRenderSettingsScreen extends Screen {
   private static final int FPS_LIMIT_UNLIMITED = 241;
 
   private static final String[] TABS = {
-      "Video", "MetalRender", "Quality", "Performance", "Advanced", "LOD"
+      "Video", "MetalRender", "Quality", "Performance", "Advanced"
   };
 
   private final Screen parent;
@@ -459,7 +459,6 @@ public class MetalRenderSettingsScreen extends Screen {
       case 2 -> buildQuality();
       case 3 -> buildPerformance();
       case 4 -> buildAdvanced();
-      case 5 -> buildLod();
     }
     for (Row r : rows)
       if (r.type == RT.SLIDER && r.slider != null)
@@ -512,7 +511,6 @@ public class MetalRenderSettingsScreen extends Screen {
     sec("Rendering Style");
     cyc("Leaves Mode", config.leafCullingMode == 0 ? "Fast" : "Fancy",
         () -> config.leafCullingMode = config.leafCullingMode == 0 ? 1 : 0);
-    nfo("LOD Status", "Zone 0 active");
     sec("Biome Blending");
 
     sld("Biome Blend", 0, 10, 1, config.biomeTransitionDetail,
@@ -542,31 +540,6 @@ public class MetalRenderSettingsScreen extends Screen {
     tog("Indirect CMD Buffers", config.enableIndirectCommandBuffers, v -> config.enableIndirectCommandBuffers = v);
     tog("Mesh Shaders", config.enableMeshShaders, v -> config.enableMeshShaders = v);
     tog("Programmable Blending", config.enableProgrammableBlending, v -> config.enableProgrammableBlending = v);
-  }
-
-  private void buildLod() {
-    sec("Current Runtime");
-    nfo("Mode", "Zone 0 active");
-    nfo("Runtime", "Screen-space near-field LOD is active");
-    nfo("Renderer", "Zone 1+ still uses legacy coarse fallback");
-    sec("Zone 0");
-    nfo("Range", "0-" + MetalRenderConfig.zone0RadiusChunks() + " chunks");
-    nfo("Sub-tier A", "> " + fmtPx(MetalRenderConfig.zone0ExactBlockPixels()) + " px: exact terrain");
-    nfo("Sub-tier B",
-        fmtPx(MetalRenderConfig.zone0GreedyBlockPixels()) + "-"
-            + fmtPx(MetalRenderConfig.zone0ExactBlockPixels())
-            + " px: greedy textured spans");
-    nfo("Sub-tier C",
-        fmtPx(MetalRenderConfig.zone0ClusterBlockPixels()) + "-"
-            + fmtPx(MetalRenderConfig.zone0GreedyBlockPixels())
-            + " px: textured surface clusters");
-    nfo("Sub-tier D", "< " + fmtPx(MetalRenderConfig.zone0ClusterBlockPixels())
-        + " px: near-envelope descriptors");
-    sec("Zone 1+");
-    nfo("Range", MetalRenderConfig.zone0RadiusChunks() + "-"
-        + MetalRenderConfig.farFieldRadiusChunks() + " chunks");
-    nfo("Target", "Automatic fixed-budget far-field");
-    nfo("Runtime", "Descriptor path pending; legacy coarse fallback is active");
   }
 
   private void sec(String label) {

@@ -35,9 +35,9 @@ struct ChunkMeshlet {
     float worldX;
     float worldY;
     float worldZ;
-    uint  lodLevel;
     uint  _pad0;
     uint  _pad1;
+    uint  _pad2;
 };
 
 

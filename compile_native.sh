@@ -4,21 +4,16 @@ set -e
 echo "Compiling shaders..."
 SHADER_DIR="src/main/resources/native/shaders"
 
-# Standard shaders (Metal 2.x compatible)
 xcrun -sdk macosx metal -c $SHADER_DIR/metalrender.metal -o $SHADER_DIR/metalrender.air
 xcrun -sdk macosx metal -c $SHADER_DIR/entity.metal -o $SHADER_DIR/entity.air
 xcrun -sdk macosx metal -c $SHADER_DIR/culling.metal -o $SHADER_DIR/culling.air
 xcrun -sdk macosx metal -c $SHADER_DIR/hiz.metal -o $SHADER_DIR/hiz.air
 xcrun -sdk macosx metal -c $SHADER_DIR/occlusion_culling.metal -o $SHADER_DIR/occlusion_culling.air
-xcrun -sdk macosx metal -c $SHADER_DIR/lod_select.metal -o $SHADER_DIR/lod_select.air
 xcrun -sdk macosx metal -c $SHADER_DIR/visibility_buffer.metal -o $SHADER_DIR/visibility_buffer.air
 xcrun -sdk macosx metal -c $SHADER_DIR/oit_transparency.metal -o $SHADER_DIR/oit_transparency.air
-xcrun -sdk macosx metal -c $SHADER_DIR/lod_terrain_extended.metal -o $SHADER_DIR/lod_terrain_extended.air
-xcrun -sdk macosx metal -c $SHADER_DIR/lod_compute_mesher.metal -o $SHADER_DIR/lod_compute_mesher.air
 xcrun -sdk macosx metal -c $SHADER_DIR/cull_and_encode.metal -o $SHADER_DIR/cull_and_encode.air
 
-# Mesh shader (Metal 3.0 — requires Apple GPU Family 7+ / macOS 13+)
-echo "Compiling mesh shaders (Metal 3.0)..."
+echo "compelling shaders"
 xcrun -sdk macosx metal -std=metal3.0 -c $SHADER_DIR/mesh_terrain.metal -o $SHADER_DIR/mesh_terrain.air
 
 xcrun -sdk macosx metallib \
@@ -27,11 +22,8 @@ xcrun -sdk macosx metallib \
     $SHADER_DIR/culling.air \
     $SHADER_DIR/hiz.air \
     $SHADER_DIR/occlusion_culling.air \
-    $SHADER_DIR/lod_select.air \
     $SHADER_DIR/visibility_buffer.air \
     $SHADER_DIR/oit_transparency.air \
-    $SHADER_DIR/lod_terrain_extended.air \
-    $SHADER_DIR/lod_compute_mesher.air \
     $SHADER_DIR/cull_and_encode.air \
     $SHADER_DIR/mesh_terrain.air \
     -o src/main/resources/shaders.metallib

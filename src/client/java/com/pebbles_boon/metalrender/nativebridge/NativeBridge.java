@@ -204,8 +204,6 @@ public final class NativeBridge {
   public static native void nUpdateResidencySet(long set, long[] textures);
   public static native void nDestroyResidencySet(long set);
 
-  public static native int nGetThermalLODReduction();
-
   public static native void nSetRenderDistance(int distanceBlocks);
 
   public static native long nGetAvailableMemory();
@@ -219,7 +217,7 @@ public final class NativeBridge {
   public static native void nRegisterChunkMesh(int cx, int cy, int cz,
       long bufferHandle, int quadCount,
       int opaqueQuadCount,
-      int lodLevel, long visibilityMask, int[] facingQuadCounts);
+      long visibilityMask, int[] facingQuadCounts);
 
   public static native void nUnregisterChunkMesh(int cx, int cy, int cz);
 

@@ -85,9 +85,6 @@ public class CustomChunkMesher {
   private static final int BURST_MAX_INSTANT_THREADS = 12;
   private static final int HIGH_PRIORITY_QUEUE_SPILLOVER_THRESHOLD = 24;
   private static final int INTERACTIVE_PRIORITY_QUEUE_SPILLOVER_THRESHOLD = 48;
-  private static final int DETAIL_TIER_SCALE_MEDIUM = 2;
-  private static final int DETAIL_TIER_SCALE_FAR = 4;
-  private static final int DETAIL_TIER_SCALE_EXTREME = 8;
   private volatile boolean aggressiveApproximateLighting;
   private final java.util.concurrent.atomic.AtomicLong visibleSectionLatencyAccNs = new java.util.concurrent.atomic.AtomicLong(
       0L);
@@ -292,22 +289,21 @@ public class CustomChunkMesher {
     public final int chunkX;
     public final int chunkY;
     public final int chunkZ;
-    public final int lodLevel;
     public final long visibilityMask;
     public final int[] facingQuadCounts;
 
     public final int buildPlayerCX, buildPlayerCY, buildPlayerCZ;
 
     public ChunkMeshData(long bufferHandle, int quadCount, int chunkX,
-        int chunkY, int chunkZ, int lodLevel,
+        int chunkY, int chunkZ,
         int buildPlayerCX, int buildPlayerCY,
         int buildPlayerCZ) {
-      this(bufferHandle, quadCount, chunkX, chunkY, chunkZ, lodLevel,
+      this(bufferHandle, quadCount, chunkX, chunkY, chunkZ,
           buildPlayerCX, buildPlayerCY, buildPlayerCZ, 0L, new int[7]);
     }
 
     public ChunkMeshData(long bufferHandle, int quadCount, int chunkX,
-        int chunkY, int chunkZ, int lodLevel,
+        int chunkY, int chunkZ,
         int buildPlayerCX, int buildPlayerCY,
         int buildPlayerCZ, long visibilityMask, int[] facingQuadCounts) {
       this.bufferHandle = bufferHandle;
@@ -315,7 +311,6 @@ public class CustomChunkMesher {
       this.chunkX = chunkX;
       this.chunkY = chunkY;
       this.chunkZ = chunkZ;
-      this.lodLevel = lodLevel;
       this.buildPlayerCX = buildPlayerCX;
       this.buildPlayerCY = buildPlayerCY;
       this.buildPlayerCZ = buildPlayerCZ;
@@ -502,7 +497,7 @@ public class CustomChunkMesher {
   }
 
   private SectionSnapshot captureSectionSnapshot(ClientLevel world, int chunkX,
-      int chunkY, int chunkZ, int lodLevel, boolean useApproximateLight) {
+      int chunkY, int chunkZ, boolean useApproximateLight) {
     if (world == null) {
       return new SectionSnapshot(false, false, null, null, null, null, null,
           null, null, null, null, null, null, null, null, null,
@@ -1138,35 +1133,7 @@ public class CustomChunkMesher {
     }
   }
 
-  public boolean needsLodRebuild(int cx, int cy, int cz, int desiredLod) {
-    long key = packChunkKey(cx, cy, cz);
-    ChunkMeshData mesh;
-    synchronized (meshCache) {
-      mesh = meshCache.get(key);
-    }
-    if (mesh == null)
-      return false;
-    synchronized (pendingKeys) {
-      return mesh.lodLevel != desiredLod && !pendingKeys.contains(key);
-    }
-  }
 
-  public boolean needsFaceCullRebuild(int cx, int cy, int cz, int playerCX,
-      int playerCY, int playerCZ) {
-    long key = packChunkKey(cx, cy, cz);
-    ChunkMeshData mesh;
-    synchronized (meshCache) {
-      mesh = meshCache.get(key);
-    }
-    if (mesh == null || mesh.lodLevel < 1)
-      return false;
-    synchronized (pendingKeys) {
-      if (pendingKeys.contains(key))
-        return false;
-    }
-    return mesh.buildPlayerCX != playerCX || mesh.buildPlayerCY != playerCY ||
-        mesh.buildPlayerCZ != playerCZ;
-  }
 
   public void markDirty(int cx, int cy, int cz) {
     long key = packChunkKey(cx, cy, cz);
@@ -1240,7 +1207,7 @@ public class CustomChunkMesher {
           return;
         }
         doMeshBuild(chunkX, chunkY, chunkZ, blockSnapshot, lightSnapshot, key,
-            genAtSubmit, 0, null, null, null, null, null, null, null, null,
+            genAtSubmit, null, null, null, null, null, null, null, null,
             null, null, null, null, context);
       } catch (Exception e) {
         MetalLogger.error("Meshing error for chunk [%d,%d,%d]: %s", chunkX,
@@ -1253,354 +1220,7 @@ public class CustomChunkMesher {
     });
   }
 
-  private static boolean shouldRenderAtLod(BlockState state, int lodLevel) {
-    if (lodLevel == 0)
-      return true;
-    if (state.isAir())
-      return false;
-    if (state.getFluidState() != null && !state.getFluidState().isEmpty())
-      return true;
-    if (isLeafBlock(state.getBlock())) {
-      return true;
-    }
-    Block blk = state.getBlock();
-    if (blk == Blocks.SNOW) {
-      return true;
-    }
-    if (isTopOnlyDecorative(blk)) {
-      return true;
-    }
 
-    if (!state.isSolidRender() && isFullCubeShape(state)) {
-      return true;
-    }
-    boolean isOpaqueFull = state.isSolidRender();
-    boolean isSolid = state.isSolid();
-    if (lodLevel >= 1) {
-      if (!isOpaqueFull && !isSolid) {
-        return false;
-      }
-    }
-    if (lodLevel >= 2) {
-      if (!isOpaqueFull && isSolid) {
-        if (!state.canOcclude()) {
-          return false;
-        }
-      }
-    }
-    if (lodLevel >= 3 && !isOpaqueFull) {
-      return false;
-    }
-    if (lodLevel >= 4) {
-      if (!isOpaqueFull)
-        return false;
-      if (!state.canOcclude())
-        return false;
-    }
-    return true;
-  }
-
-  private static boolean isFastLodCompatible(BlockState state, int lodLevel) {
-    if (state == null || state.isAir() || !shouldRenderAtLod(state, lodLevel)) {
-      return true;
-    }
-    Block block = state.getBlock();
-    if (block == Blocks.WATER || block == Blocks.LAVA || isLeafBlock(block) ||
-        block == Blocks.SNOW || isTopOnlyDecorative(block)) {
-      return true;
-    }
-    if (!state.getFluidState().isEmpty()) {
-      return false;
-    }
-    return isFullCubeShape(state);
-  }
-
-  private static boolean canUseFastLodSection(int[] blockStates, int lodLevel) {
-    if (lodLevel <= 0 || blockStates == null) {
-      return false;
-    }
-    for (int stateId : blockStates) {
-      if (stateId == 0) {
-        continue;
-      }
-      if (!isFastLodCompatible(Block.stateById(stateId), lodLevel)) {
-        return false;
-      }
-    }
-    return true;
-  }
-
-  private static final class CoarseDetailMeshStats {
-    int opaqueQuadCount;
-    int waterQuadCount;
-    int cellsMeshed;
-    int sampledCells;
-  }
-
-  private static int detailTierCellScale(int detailTier) {
-    return switch (detailTier) {
-      case 1 -> DETAIL_TIER_SCALE_MEDIUM;
-      case 2 -> DETAIL_TIER_SCALE_FAR;
-      default -> DETAIL_TIER_SCALE_EXTREME;
-    };
-  }
-
-  private static int coarseStateRank(BlockState state) {
-    if (state == null || state.isAir()) {
-      return 0;
-    }
-    if (!state.getFluidState().isEmpty()) {
-      return state.getBlock() == Blocks.LAVA ? 5 : 4;
-    }
-    if (state.isSolidRender()) {
-      return 6;
-    }
-    if (state.canOcclude() || state.isSolid()) {
-      return 5;
-    }
-    if (isLeafBlock(state.getBlock())) {
-      return 3;
-    }
-    return 0;
-  }
-
-  private static int selectCoarseState(int[] blockStates, int startX,
-      int startY, int startZ, int scale) {
-    if (blockStates == null) {
-      return 0;
-    }
-    int bestSid = 0;
-    int bestRank = 0;
-    for (int y = startY; y < startY + scale; y++) {
-      for (int z = startZ; z < startZ + scale; z++) {
-        for (int x = startX; x < startX + scale; x++) {
-          int sid = blockStates[y * 256 + z * 16 + x];
-          if (sid == 0) {
-            continue;
-          }
-          int rank = coarseStateRank(Block.stateById(sid));
-          if (rank > bestRank) {
-            bestRank = rank;
-            bestSid = sid;
-          }
-        }
-      }
-    }
-    return bestSid;
-  }
-
-  private static byte selectCoarseLight(byte[] lightData, int startX,
-      int startY, int startZ, int scale) {
-    if (lightData == null) {
-      return (byte) 0xF0;
-    }
-    int block = 0;
-    int sky = 0;
-    for (int y = startY; y < startY + scale; y++) {
-      for (int z = startZ; z < startZ + scale; z++) {
-        for (int x = startX; x < startX + scale; x++) {
-          int packed = lightData[y * 256 + z * 16 + x] & 0xFF;
-          block = Math.max(block, packed & 0xF);
-          sky = Math.max(sky, (packed >> 4) & 0xF);
-        }
-      }
-    }
-    return (byte) ((block & 0xF) | ((sky & 0xF) << 4));
-  }
-
-  private static boolean hasCoarseOccupancy(int[] blockStates, int startX,
-      int startY, int startZ, int scale) {
-    return selectCoarseState(blockStates, startX, startY, startZ, scale) != 0;
-  }
-
-  private static boolean hasCoarseFaceOccupancy(int[] faceStates, int faceDir,
-      int startX, int startY,
-      int startZ, int scale) {
-    if (faceStates == null) {
-      return false;
-    }
-    switch (faceDir) {
-      case 0, 1:
-        for (int z = startZ; z < startZ + scale; z++) {
-          for (int x = startX; x < startX + scale; x++) {
-            if (faceStates[z * SECTION_SIZE + x] != 0) {
-              return true;
-            }
-          }
-        }
-        return false;
-      case 2, 3:
-        for (int y = startY; y < startY + scale; y++) {
-          for (int x = startX; x < startX + scale; x++) {
-            if (faceStates[y * SECTION_SIZE + x] != 0) {
-              return true;
-            }
-          }
-        }
-        return false;
-      case 4, 5:
-        for (int y = startY; y < startY + scale; y++) {
-          for (int z = startZ; z < startZ + scale; z++) {
-            if (faceStates[y * SECTION_SIZE + z] != 0) {
-              return true;
-            }
-          }
-        }
-        return false;
-      default:
-        return false;
-    }
-  }
-
-  private CoarseDetailMeshStats buildDistanceTierMesh(
-      ByteBuffer vertexBuffer, ByteBuffer waterBuffer, int[] sectionBiomeColors,
-      BlockStateModelSet blockModels, int chunkX, int chunkY, int chunkZ,
-      int[] blockStates, byte[] lightData, int detailTier, int[] nXNeg,
-      int[] nXPos, int[] nYNeg, int[] nYPos, int[] nZNeg, int[] nZPos) {
-    CoarseDetailMeshStats stats = new CoarseDetailMeshStats();
-    int scale = detailTierCellScale(detailTier);
-    int gridSize = SECTION_SIZE / scale;
-    int cellCount = gridSize * gridSize * gridSize;
-    int[] coarseStates = new int[cellCount];
-    byte[] coarseLights = new byte[cellCount];
-
-    for (int cellY = 0; cellY < gridSize; cellY++) {
-      int startY = cellY * scale;
-      for (int cellZ = 0; cellZ < gridSize; cellZ++) {
-        int startZ = cellZ * scale;
-        for (int cellX = 0; cellX < gridSize; cellX++) {
-          int startX = cellX * scale;
-          int cellIndex = cellY * gridSize * gridSize + cellZ * gridSize + cellX;
-          coarseStates[cellIndex] = selectCoarseState(blockStates, startX, startY, startZ, scale);
-          coarseLights[cellIndex] = selectCoarseLight(lightData, startX, startY, startZ, scale);
-          stats.sampledCells++;
-        }
-      }
-    }
-
-    for (int cellY = 0; cellY < gridSize; cellY++) {
-      int startY = cellY * scale;
-      for (int cellZ = 0; cellZ < gridSize; cellZ++) {
-        int startZ = cellZ * scale;
-        for (int cellX = 0; cellX < gridSize; cellX++) {
-          int startX = cellX * scale;
-          int cellIndex = cellY * gridSize * gridSize + cellZ * gridSize + cellX;
-          int sid = coarseStates[cellIndex];
-          if (sid == 0) {
-            continue;
-          }
-          BlockState state = Block.stateById(sid);
-          Block block = state.getBlock();
-          boolean isWater = block == Blocks.WATER ||
-              (!state.getFluidState().isEmpty() && block != Blocks.LAVA);
-          boolean translucent = isWater;
-          ByteBuffer target = translucent ? waterBuffer : vertexBuffer;
-          byte alpha = translucent ? WATER_ALPHA : (byte) 255;
-          byte packedLight = coarseLights[cellIndex];
-          int tintType = getBiomeTintType(block);
-          int color = tintType != TINT_NONE && tintType < sectionBiomeColors.length
-              ? sectionBiomeColors[tintType]
-              : getBlockColor(state);
-          byte tintR = (byte) ((color >> 16) & 0xFF);
-          byte tintG = (byte) ((color >> 8) & 0xFF);
-          byte tintB = (byte) (color & 0xFF);
-          TextureAtlasSprite sprite = null;
-          if (blockModels != null) {
-            try {
-              BlockStateModel model = blockModels.get(state);
-              if (model != null) {
-                sprite = model.particleMaterial().sprite();
-              }
-            } catch (Exception ignored) {
-            }
-          }
-
-          boolean occludedDown = cellY > 0
-              ? coarseStates[cellIndex - (gridSize * gridSize)] != 0
-              : hasCoarseFaceOccupancy(nYNeg, 0, startX, 0, startZ, scale);
-          boolean occludedUp = cellY < gridSize - 1
-              ? coarseStates[cellIndex + (gridSize * gridSize)] != 0
-              : hasCoarseFaceOccupancy(nYPos, 1, startX, 0, startZ, scale);
-          boolean occludedNorth = cellZ > 0
-              ? coarseStates[cellIndex - gridSize] != 0
-              : hasCoarseFaceOccupancy(nZNeg, 2, startX, startY, 0, scale);
-          boolean occludedSouth = cellZ < gridSize - 1
-              ? coarseStates[cellIndex + gridSize] != 0
-              : hasCoarseFaceOccupancy(nZPos, 3, startX, startY, 0, scale);
-          boolean occludedWest = cellX > 0
-              ? coarseStates[cellIndex - 1] != 0
-              : hasCoarseFaceOccupancy(nXNeg, 4, 0, startY, startZ, scale);
-          boolean occludedEast = cellX < gridSize - 1
-              ? coarseStates[cellIndex + 1] != 0
-              : hasCoarseFaceOccupancy(nXPos, 5, 0, startY, startZ, scale);
-
-          if (!occludedDown &&
-              stats.opaqueQuadCount + stats.waterQuadCount < MAX_QUADS) {
-            emitFaceScaled(target, startX, startY, startZ, 0, sprite,
-                packedLight, tintR, tintG, tintB, alpha, scale, 0);
-            if (translucent) {
-              stats.waterQuadCount++;
-            } else {
-              stats.opaqueQuadCount++;
-            }
-          }
-          if (!occludedUp &&
-              stats.opaqueQuadCount + stats.waterQuadCount < MAX_QUADS) {
-            emitFaceScaled(target, startX, startY, startZ, 1, sprite,
-                packedLight, tintR, tintG, tintB, alpha, scale, 0);
-            if (translucent) {
-              stats.waterQuadCount++;
-            } else {
-              stats.opaqueQuadCount++;
-            }
-          }
-          if (!occludedNorth &&
-              stats.opaqueQuadCount + stats.waterQuadCount < MAX_QUADS) {
-            emitFaceScaled(target, startX, startY, startZ, 2, sprite,
-                packedLight, tintR, tintG, tintB, alpha, scale, 0);
-            if (translucent) {
-              stats.waterQuadCount++;
-            } else {
-              stats.opaqueQuadCount++;
-            }
-          }
-          if (!occludedSouth &&
-              stats.opaqueQuadCount + stats.waterQuadCount < MAX_QUADS) {
-            emitFaceScaled(target, startX, startY, startZ, 3, sprite,
-                packedLight, tintR, tintG, tintB, alpha, scale, 0);
-            if (translucent) {
-              stats.waterQuadCount++;
-            } else {
-              stats.opaqueQuadCount++;
-            }
-          }
-          if (!occludedWest &&
-              stats.opaqueQuadCount + stats.waterQuadCount < MAX_QUADS) {
-            emitFaceScaled(target, startX, startY, startZ, 4, sprite,
-                packedLight, tintR, tintG, tintB, alpha, scale, 0);
-            if (translucent) {
-              stats.waterQuadCount++;
-            } else {
-              stats.opaqueQuadCount++;
-            }
-          }
-          if (!occludedEast &&
-              stats.opaqueQuadCount + stats.waterQuadCount < MAX_QUADS) {
-            emitFaceScaled(target, startX, startY, startZ, 5, sprite,
-                packedLight, tintR, tintG, tintB, alpha, scale, 0);
-            if (translucent) {
-              stats.waterQuadCount++;
-            } else {
-              stats.opaqueQuadCount++;
-            }
-          }
-          stats.cellsMeshed++;
-        }
-      }
-    }
-
-    return stats;
-  }
 
   private static volatile boolean applyFaceShade = true;
   private static volatile int leafDebugFrames = 0;
@@ -1609,10 +1229,6 @@ public class CustomChunkMesher {
   private static volatile int meshBuildDiagCount = 0;
   private static volatile long meshBuildTimeAcc = 0;
   private static volatile int meshBuildTimeSamples = 0;
-  private static volatile long lodSlowTimeAcc = 0;
-  private static volatile int lodSlowCount = 0;
-  private static volatile long lodFastTimeAcc = 0;
-  private static volatile int lodFastCount = 0;
   private static volatile long pipelineTimeAcc = 0;
   private static volatile int pipelineCount = 0;
   private static volatile int lightSampleFallbackCount = 0;
@@ -1716,107 +1332,6 @@ public class CustomChunkMesher {
 
   private static final ThreadLocal<SidDataArrays> SID_DATA_POOL = ThreadLocal.withInitial(SidDataArrays::new);
 
-  private static final class Lod1SidDataArrays {
-    int cap = 0;
-    int uvCap = 0;
-
-    byte[] oFlag;
-    boolean[] modelComputed, sidPropsComputed, sidIsAir, sidShouldSkip;
-    byte[] sidTintR, sidTintG, sidTintB;
-    boolean[] sidIsLeaf, sidForceOpaque;
-    byte[] sidBlockAlpha;
-    boolean[] sidIsNonFull, sidIsWaterLod0, sidIsWaterloggedLod0,
-        sidIsFluidLod0;
-    byte[] sidBiomeTintType;
-    boolean[] sidOpaque, sidIsFullCube, sidIsTransCube;
-
-    BlockState[] stateArr;
-    BlockStateModel[] modelArr;
-
-    short[] l0FaceUMin, l0FaceUMax, l0FaceVMin, l0FaceVMax;
-    boolean[] l0FaceHasSprite, l0FaceHasTint;
-
-    Lod1SidDataArrays() {
-      growTo(1024);
-    }
-
-    void ensureCapacity(int needed, int uvNeeded) {
-      if (needed > cap)
-        growTo(needed);
-      if (uvNeeded > uvCap)
-        growToUV(uvNeeded);
-    }
-
-    private void growTo(int n) {
-      cap = n;
-      oFlag = new byte[n];
-      modelComputed = new boolean[n];
-      sidPropsComputed = new boolean[n];
-      sidIsAir = new boolean[n];
-      sidShouldSkip = new boolean[n];
-      sidTintR = new byte[n];
-      sidTintG = new byte[n];
-      sidTintB = new byte[n];
-      sidIsLeaf = new boolean[n];
-      sidForceOpaque = new boolean[n];
-      sidBlockAlpha = new byte[n];
-      sidIsNonFull = new boolean[n];
-      sidIsWaterLod0 = new boolean[n];
-      sidIsWaterloggedLod0 = new boolean[n];
-      sidIsFluidLod0 = new boolean[n];
-      sidBiomeTintType = new byte[n];
-      sidOpaque = new boolean[n];
-      sidIsFullCube = new boolean[n];
-      sidIsTransCube = new boolean[n];
-      stateArr = new BlockState[n];
-      modelArr = new BlockStateModel[n];
-    }
-
-    private void growToUV(int n) {
-      uvCap = n;
-      l0FaceUMin = new short[n];
-      l0FaceUMax = new short[n];
-      l0FaceVMin = new short[n];
-      l0FaceVMax = new short[n];
-      l0FaceHasSprite = new boolean[n];
-      l0FaceHasTint = new boolean[n];
-    }
-
-    void clearUsed(int usedLen, int usedUV) {
-      java.util.Arrays.fill(oFlag, 0, usedLen, (byte) 0);
-      java.util.Arrays.fill(modelComputed, 0, usedLen, false);
-      java.util.Arrays.fill(sidPropsComputed, 0, usedLen, false);
-      java.util.Arrays.fill(sidIsAir, 0, usedLen, false);
-      java.util.Arrays.fill(sidShouldSkip, 0, usedLen, false);
-      java.util.Arrays.fill(sidTintR, 0, usedLen, (byte) 0);
-      java.util.Arrays.fill(sidTintG, 0, usedLen, (byte) 0);
-      java.util.Arrays.fill(sidTintB, 0, usedLen, (byte) 0);
-      java.util.Arrays.fill(sidIsLeaf, 0, usedLen, false);
-      java.util.Arrays.fill(sidForceOpaque, 0, usedLen, false);
-      java.util.Arrays.fill(sidBlockAlpha, 0, usedLen, (byte) 0);
-      java.util.Arrays.fill(sidIsNonFull, 0, usedLen, false);
-      java.util.Arrays.fill(sidIsWaterLod0, 0, usedLen, false);
-      java.util.Arrays.fill(sidIsWaterloggedLod0, 0, usedLen, false);
-      java.util.Arrays.fill(sidIsFluidLod0, 0, usedLen, false);
-      java.util.Arrays.fill(sidBiomeTintType, 0, usedLen, (byte) 0);
-      java.util.Arrays.fill(sidOpaque, 0, usedLen, false);
-      java.util.Arrays.fill(sidIsFullCube, 0, usedLen, false);
-      java.util.Arrays.fill(sidIsTransCube, 0, usedLen, false);
-
-      java.util.Arrays.fill(stateArr, 0, usedLen, null);
-      java.util.Arrays.fill(modelArr, 0, usedLen, null);
-      java.util.Arrays.fill(l0FaceUMin, 0, usedUV, (short) 0);
-      java.util.Arrays.fill(l0FaceUMax, 0, usedUV, (short) 0);
-      java.util.Arrays.fill(l0FaceVMin, 0, usedUV, (short) 0);
-      java.util.Arrays.fill(l0FaceVMax, 0, usedUV, (short) 0);
-      java.util.Arrays.fill(l0FaceHasSprite, 0, usedUV, false);
-      java.util.Arrays.fill(l0FaceHasTint, 0, usedUV, false);
-    }
-  }
-
-  private static final ThreadLocal<Lod1SidDataArrays> LOD1_SID_DATA_POOL = ThreadLocal
-      .withInitial(Lod1SidDataArrays::new);
-
   private static byte getFaceLight(byte[] lightData, byte[] nXNegLight,
       byte[] nXPosLight, byte[] nYNegLight,
       byte[] nYPosLight, byte[] nZNegLight,
@@ -1896,7 +1411,7 @@ public class CustomChunkMesher {
 
   private void doMeshBuild(int chunkX, int chunkY, int chunkZ,
       int[] blockStates, byte[] lightData, long key,
-      long generation, int lodLevel, int[] nXNeg, int[] nXPos, int[] nYNeg,
+      long generation, int[] nXNeg, int[] nXPos, int[] nYNeg,
       int[] nYPos, int[] nZNeg, int[] nZPos,
       byte[] nXNegLight, byte[] nXPosLight,
       byte[] nYNegLight, byte[] nYPosLight,
@@ -1924,9 +1439,7 @@ public class CustomChunkMesher {
       MetalRenderConfig leafCfg = MetalRenderClient.getConfig();
       int leafMode = (leafCfg != null) ? leafCfg.leafCullingMode : 0;
       applyFaceShade = false;
-      boolean useDistanceTier = false;
-      boolean useFastPath = canUseFastLodSection(blockStates, lodLevel);
-      boolean skipNonDirectionalQuads = useFastPath;
+
 
       boolean useSmoothAO = false;
 
@@ -1934,16 +1447,7 @@ public class CustomChunkMesher {
       int buildPCX = context != null ? context.buildPlayerCX : 0;
       int buildPCY = context != null ? context.buildPlayerCY : 0;
       int buildPCZ = context != null ? context.buildPlayerCZ : 0;
-      if (useDistanceTier) {
-        CoarseDetailMeshStats coarseStats = buildDistanceTierMesh(
-            vertexBuffer, waterBuffer, snapshotBiomeColors,
-            blockModels, chunkX, chunkY, chunkZ, blockStates, lightData,
-            lodLevel, nXNeg, nXPos, nYNeg, nYPos, nZNeg, nZPos);
-        opaqueQuadCount = coarseStats.opaqueQuadCount;
-        waterQuadCount = coarseStats.waterQuadCount;
-        bakedQuadBlocks = coarseStats.cellsMeshed;
-        fallbackBlocks = coarseStats.sampledCells;
-      } else if (useFastPath) {
+      {
         int[] fastBiomeColors = snapshotBiomeColors;
         int maxSid = 0;
         for (int i = 0; i < 4096; i++) {
@@ -1994,10 +1498,7 @@ public class CustomChunkMesher {
             sidSkip[sid] = true;
             continue;
           }
-          if (lodLevel > 0 && !shouldRenderAtLod(bs, lodLevel)) {
-            sidSkip[sid] = true;
-            continue;
-          }
+
           Block blk = bs.getBlock();
           boolean isWater = (blk == Blocks.WATER);
           boolean isLava = (blk == Blocks.LAVA);
@@ -2235,7 +1736,7 @@ public class CustomChunkMesher {
           if (_bsFT != null)
             sidTintTypeFast[fastSid] = getBiomeTintType(_bsFT.getBlock());
         }
-        int[] colGrassLOD = null, colWaterLOD = null;
+        int[] colGrassTint = null, colWaterTint = null;
         for (int y = 0; y < SECTION_SIZE; y++) {
           if (isTaskCancelled(key, generation)) {
             return;
@@ -2249,15 +1750,15 @@ public class CustomChunkMesher {
               byte r = sidR[sid], g = sidG[sid], b = sidB[sid],
                   a = sidAlpha[sid];
 
-              if (colGrassLOD != null && sid < sidTintTypeFast.length) {
+              if (colGrassTint != null && sid < sidTintTypeFast.length) {
                 byte ft = sidTintTypeFast[sid];
                 if (ft == TINT_GRASS) {
-                  int c = colGrassLOD[z * 16 + x];
+                  int c = colGrassTint[z * 16 + x];
                   r = (byte) ((c >> 16) & 0xFF);
                   g = (byte) ((c >> 8) & 0xFF);
                   b = (byte) (c & 0xFF);
                 } else if (ft == TINT_WATER) {
-                  int c = colWaterLOD[z * 16 + x];
+                  int c = colWaterTint[z * 16 + x];
                   r = (byte) ((c >> 16) & 0xFF);
                   g = (byte) ((c >> 8) & 0xFF);
                   b = (byte) (c & 0xFF);
@@ -2667,730 +2168,6 @@ public class CustomChunkMesher {
           }
         }
         fallbackBlocks = 4096;
-      } else {
-        int maxSidLod01 = 0;
-        if (blockStates != null)
-          for (int i = 0; i < 4096; i++) {
-            if (blockStates[i] > maxSidLod01)
-              maxSidLod01 = blockStates[i];
-          }
-        if (nXNeg != null)
-          for (int s : nXNeg) {
-            if (s > maxSidLod01)
-              maxSidLod01 = s;
-          }
-        if (nXPos != null)
-          for (int s : nXPos) {
-            if (s > maxSidLod01)
-              maxSidLod01 = s;
-          }
-        if (nYNeg != null)
-          for (int s : nYNeg) {
-            if (s > maxSidLod01)
-              maxSidLod01 = s;
-          }
-        if (nYPos != null)
-          for (int s : nYPos) {
-            if (s > maxSidLod01)
-              maxSidLod01 = s;
-          }
-        if (nZNeg != null)
-          for (int s : nZNeg) {
-            if (s > maxSidLod01)
-              maxSidLod01 = s;
-          }
-        if (nZPos != null)
-          for (int s : nZPos) {
-            if (s > maxSidLod01)
-              maxSidLod01 = s;
-          }
-
-        int l0Needed = maxSidLod01 + 1;
-        int l0UvSize = l0Needed * 6;
-        Lod1SidDataArrays _l1 = LOD1_SID_DATA_POOL.get();
-        _l1.ensureCapacity(l0Needed, l0UvSize);
-        _l1.clearUsed(l0Needed, l0UvSize);
-        byte[] oFlag = _l1.oFlag;
-        BlockState[] stateArr = _l1.stateArr;
-        BlockStateModel[] modelArr = _l1.modelArr;
-        boolean[] modelComputed = _l1.modelComputed;
-        boolean[] sidPropsComputed = _l1.sidPropsComputed;
-        boolean[] sidIsAir = _l1.sidIsAir;
-        boolean[] sidShouldSkip = _l1.sidShouldSkip;
-        byte[] sidTintR = _l1.sidTintR;
-        byte[] sidTintG = _l1.sidTintG;
-        byte[] sidTintB = _l1.sidTintB;
-        boolean[] sidIsLeaf = _l1.sidIsLeaf;
-        boolean[] sidForceOpaque = _l1.sidForceOpaque;
-        byte[] sidBlockAlpha = _l1.sidBlockAlpha;
-        boolean[] sidIsNonFull = _l1.sidIsNonFull;
-        boolean[] sidIsWaterLod0 = _l1.sidIsWaterLod0;
-        boolean[] sidIsWaterloggedLod0 = _l1.sidIsWaterloggedLod0;
-        boolean[] sidIsFluidLod0 = _l1.sidIsFluidLod0;
-        byte[] sidBiomeTintType = _l1.sidBiomeTintType;
-        boolean[] sidOpaque = _l1.sidOpaque;
-        boolean[] sidIsFullCube = _l1.sidIsFullCube;
-        boolean[] sidIsTransCube = _l1.sidIsTransCube;
-        short[] l0FaceUMin = _l1.l0FaceUMin;
-        short[] l0FaceUMax = _l1.l0FaceUMax;
-        short[] l0FaceVMin = _l1.l0FaceVMin;
-        short[] l0FaceVMax = _l1.l0FaceVMax;
-        boolean[] l0FaceHasSprite = _l1.l0FaceHasSprite;
-        boolean[] l0FaceHasTint = _l1.l0FaceHasTint;
-        RandomSource rand = REUSABLE_RANDOM.get();
-        int[] sectionBiomeColors = snapshotBiomeColors;
-        sidShouldSkip[0] = true;
-        if (blockStates != null) {
-          for (int i = 0; i < 4096; i++) {
-            int sid = blockStates[i];
-            if (sid == 0 || sidPropsComputed[sid])
-              continue;
-            sidPropsComputed[sid] = true;
-            BlockState bs = Block.stateById(sid);
-            stateArr[sid] = bs;
-            if (bs.isAir()) {
-              sidShouldSkip[sid] = true;
-              sidIsAir[sid] = true;
-              continue;
-            }
-            if (lodLevel > 0 && !shouldRenderAtLod(bs, lodLevel)) {
-              sidShouldSkip[sid] = true;
-              continue;
-            }
-            Block blk = bs.getBlock();
-            boolean isLeaf = isLeafBlock(blk);
-            boolean isWater = (blk == Blocks.WATER);
-            boolean isLava = (blk == Blocks.LAVA);
-            boolean isFluid = isWater || isLava;
-            sidIsLeaf[sid] = isLeaf;
-            sidForceOpaque[sid] = isLeaf && leafMode == 0;
-
-            sidBlockAlpha[sid] = isWater
-                ? WATER_ALPHA
-                : (isLeaf ? (byte) (leafMode == 0 ? 254 : 253) : (byte) 255);
-            sidIsNonFull[sid] = !bs.isSolidRender() && !isFluid && !isLeaf;
-            sidIsWaterLod0[sid] = isWater;
-            sidIsFluidLod0[sid] = isFluid;
-            sidIsWaterloggedLod0[sid] = !isWater && !isLava && !bs.getFluidState().isEmpty();
-            sidOpaque[sid] = bs.isSolidRender() || (isLeaf && leafMode == 0);
-            boolean fullCube = bs.isSolidRender() && !isFluid;
-            sidIsFullCube[sid] = fullCube;
-
-            sidIsTransCube[sid] = !isFluid && !isLeaf && !bs.isSolidRender() &&
-                isFullCubeShape(bs);
-            byte tintType = getBiomeTintType(blk);
-            sidBiomeTintType[sid] = tintType;
-            int tintColor;
-            if (tintType != TINT_NONE && tintType < sectionBiomeColors.length) {
-              tintColor = sectionBiomeColors[tintType];
-            } else {
-              tintColor = getBlockColor(bs);
-            }
-            sidTintR[sid] = (byte) ((tintColor >> 16) & 0xFF);
-            sidTintG[sid] = (byte) ((tintColor >> 8) & 0xFF);
-            sidTintB[sid] = (byte) (tintColor & 0xFF);
-
-            if (blk == Blocks.GRASS_BLOCK && meshBuildDiagCount < 3) {
-              meshBuildDiagCount++;
-              MetalLogger.info(
-                  "[TINT_DIAG] GRASS_BLOCK sid=%d tintType=%d "
-                      +
-                      "sectionBiomeColors[TINT_GRASS]=0x%06X tintColor=0x%06X "
-                      + "tintR=0x%02X chunk[%d,%d,%d]",
-                  sid, tintType,
-                  (sectionBiomeColors.length > TINT_GRASS
-                      ? sectionBiomeColors[TINT_GRASS]
-                      : -1),
-                  tintColor, sidTintR[sid] & 0xFF, chunkX, chunkY, chunkZ);
-            }
-            if (blockModels != null) {
-              try {
-                modelArr[sid] = blockModels.get(bs);
-              } catch (Exception ignored) {
-              }
-              modelComputed[sid] = true;
-              if (fullCube && modelArr[sid] != null) {
-                try {
-                  BlockStateModel mdl = modelArr[sid];
-                  rand.setSeed(42L);
-                  List<BlockStateModelPart> mdlParts = new java.util.ArrayList<>();
-                  mdl.collectParts(rand, mdlParts);
-                  boolean blockHasTint = BIOME_TINT_TYPE.containsKey(blk);
-                  if (!mdlParts.isEmpty()) {
-
-                    boolean hasMultiQuad = false;
-                    for (Direction chkDir : ALL_DIRECTIONS) {
-                      int qCount = 0;
-                      for (BlockStateModelPart chkPart : mdlParts) {
-                        List<BakedQuad> cq = chkPart.getQuads(chkDir);
-                        if (cq != null)
-                          qCount += cq.size();
-                      }
-                      if (qCount > 1) {
-                        hasMultiQuad = true;
-                        break;
-                      }
-                    }
-                    if (hasMultiQuad) {
-
-                      sidIsFullCube[sid] = false;
-                    } else
-                      for (int fdir = 0; fdir < 6; fdir++) {
-                        int uvIdx = sid * 6 + fdir;
-                        Direction d = ALL_DIRECTIONS[fdir];
-                        boolean foundTinted = false;
-                        for (BlockStateModelPart mdlPart : mdlParts) {
-                          List<BakedQuad> fQuads = mdlPart.getQuads(d);
-                          if (fQuads != null && fQuads.size() >= 1) {
-                            BakedQuad fq = fQuads.get(0);
-                            boolean qTint = fq.materialInfo().isTinted() ||
-                                fq.materialInfo().tintIndex() >= 0 ||
-                                blockHasTint;
-
-                            if (!l0FaceHasSprite[uvIdx] ||
-                                (qTint && !foundTinted)) {
-                              float minU = Float.MAX_VALUE,
-                                  maxU = -Float.MAX_VALUE;
-                              float minV = Float.MAX_VALUE,
-                                  maxV = -Float.MAX_VALUE;
-                              for (int fv = 0; fv < 4; fv++) {
-                                long puv = fq.packedUV(fv);
-                                float fu = Float.intBitsToFloat((int) (puv >> 32));
-                                float fvv = Float.intBitsToFloat((int) puv);
-                                minU = Math.min(minU, fu);
-                                maxU = Math.max(maxU, fu);
-                                minV = Math.min(minV, fvv);
-                                maxV = Math.max(maxV, fvv);
-                              }
-                              l0FaceUMin[uvIdx] = (short) (minU * 65535.0f);
-                              l0FaceUMax[uvIdx] = (short) (maxU * 65535.0f);
-                              l0FaceVMin[uvIdx] = (short) (minV * 65535.0f);
-                              l0FaceVMax[uvIdx] = (short) (maxV * 65535.0f);
-                              l0FaceHasSprite[uvIdx] = true;
-                              l0FaceHasTint[uvIdx] = qTint;
-                              if (qTint)
-                                foundTinted = true;
-                            }
-                            if (foundTinted)
-                              break;
-                          }
-                        }
-                      }
-                  } else {
-
-                    TextureAtlasSprite fallback = mdl.particleMaterial().sprite();
-                    if (fallback != null) {
-                      short fUMin = (short) (fallback.getU0() * 65535.0f);
-                      short fUMax = (short) (fallback.getU1() * 65535.0f);
-                      short fVMin = (short) (fallback.getV0() * 65535.0f);
-                      short fVMax = (short) (fallback.getV1() * 65535.0f);
-                      for (int fdir = 0; fdir < 6; fdir++) {
-                        int uvIdx = sid * 6 + fdir;
-                        l0FaceHasSprite[uvIdx] = true;
-                        l0FaceHasTint[uvIdx] = blockHasTint;
-                        l0FaceUMin[uvIdx] = fUMin;
-                        l0FaceUMax[uvIdx] = fUMax;
-                        l0FaceVMin[uvIdx] = fVMin;
-                        l0FaceVMax[uvIdx] = fVMax;
-                      }
-                    }
-                  }
-                } catch (Exception ignored) {
-                }
-              }
-            }
-          }
-        }
-        TextureAtlasSprite waterSpriteLod0 = null;
-        if (blockModels != null) {
-          try {
-            var wModel = blockModels.get(Blocks.WATER.defaultBlockState());
-            if (wModel != null)
-              waterSpriteLod0 = wModel.particleMaterial().sprite();
-          } catch (Exception ignored) {
-          }
-        }
-        float[] faceAO = FACE_AO_POOL.get();
-        byte[] faceLight = FACE_LIGHT_POOL.get();
-
-        int[] colGrass = null, colWater = null;
-        for (int y = 0; y < SECTION_SIZE; y++) {
-          if (isTaskCancelled(key, generation)) {
-            return;
-          }
-          for (int z = 0; z < SECTION_SIZE; z++) {
-            for (int x = 0; x < SECTION_SIZE; x++) {
-              int idx = y * 256 + z * 16 + x;
-              int stateId = blockStates != null && idx < blockStates.length
-                  ? blockStates[idx]
-                  : 0;
-              if (stateId == 0 || sidShouldSkip[stateId])
-                continue;
-              byte light = lightData != null && idx < lightData.length
-                  ? lightData[idx]
-                  : 0;
-              byte packedLight = (byte) ((light & 0xF) | ((light >> 4) & 0xF) << 4);
-
-              byte tintR, tintG, tintB;
-              if (colGrass != null) {
-                byte tt = sidBiomeTintType[stateId];
-                int colIdx = z * 16 + x;
-                int col;
-                if (tt == TINT_GRASS)
-                  col = colGrass[colIdx];
-                else if (tt == TINT_WATER)
-                  col = colWater[colIdx];
-                else
-                  col = -1;
-                if (col != -1) {
-                  tintR = (byte) ((col >> 16) & 0xFF);
-                  tintG = (byte) ((col >> 8) & 0xFF);
-                  tintB = (byte) (col & 0xFF);
-                } else {
-                  tintR = sidTintR[stateId];
-                  tintG = sidTintG[stateId];
-                  tintB = sidTintB[stateId];
-                }
-              } else {
-                tintR = sidTintR[stateId];
-                tintG = sidTintG[stateId];
-                tintB = sidTintB[stateId];
-              }
-              boolean forceDebugTint = MetalRenderConfig.debugPinkBlockTint();
-              if (forceDebugTint) {
-                tintR = (byte) 0xFF;
-                tintG = (byte) 0x30;
-                tintB = (byte) 0xB0;
-              }
-              boolean forceOpaque = sidForceOpaque[stateId];
-              byte blockAlpha = sidBlockAlpha[stateId];
-              boolean isNonFullBlock = sidIsNonFull[stateId];
-              boolean isWaterBaked = sidIsWaterLod0[stateId];
-
-              if (sidIsFullCube[stateId]) {
-                for (int face = 0; face < 6; face++) {
-                  if (skipFace != null && skipFace[face])
-                    continue;
-                  int nx2 = x, ny2 = y, nz2 = z;
-                  switch (face) {
-                    case 0:
-                      ny2--;
-                      break;
-                    case 1:
-                      ny2++;
-                      break;
-                    case 2:
-                      nz2--;
-                      break;
-                    case 3:
-                      nz2++;
-                      break;
-                    case 4:
-                      nx2--;
-                      break;
-                    case 5:
-                      nx2++;
-                      break;
-                  }
-                  if (!isTransparentFlat(blockStates, nx2, ny2, nz2, leafMode,
-                      nXNeg, nXPos, nYNeg, nYPos, nZNeg,
-                      nZPos, oFlag))
-                    continue;
-                  if (opaqueQuadCount >= MAX_QUADS)
-                    break;
-                  int uvIdx = stateId * 6 + face;
-                  if (lightData != null) {
-                    computeSmoothLighting(x, y, z, face, blockStates, sidOpaque,
-                        lightData, nXNeg, nXPos, nYNeg, nYPos,
-                        nZNeg, nZPos, nXNegLight, nXPosLight,
-                        nYNegLight, nYPosLight, nZNegLight,
-                        nZPosLight, faceAO, faceLight);
-                  } else {
-                    faceAO[0] = faceAO[1] = faceAO[2] = faceAO[3] = 1.0f;
-                    faceLight[0] = faceLight[1] = faceLight[2] = faceLight[3] = (byte) 0xF0;
-                  }
-                  byte fR = (l0FaceHasTint[uvIdx] || forceDebugTint)
-                      ? tintR
-                      : (byte) 255;
-                  byte fG = (l0FaceHasTint[uvIdx] || forceDebugTint)
-                      ? tintG
-                      : (byte) 255;
-                  byte fB = (l0FaceHasTint[uvIdx] || forceDebugTint)
-                      ? tintB
-                      : (byte) 255;
-                  emitFaceAO(vertexBuffer, x, y, z, face, fR, fG, fB,
-                      forceOpaque ? (byte) 254 : blockAlpha,
-                      l0FaceHasSprite[uvIdx], l0FaceUMin[uvIdx],
-                      l0FaceUMax[uvIdx], l0FaceVMin[uvIdx],
-                      l0FaceVMax[uvIdx], 0, faceAO, faceLight);
-                  opaqueQuadCount++;
-
-                  if (!forceOpaque && blockAlpha == (byte) 253) {
-                    emitReversedQuad(vertexBuffer);
-                    opaqueQuadCount++;
-                  }
-                }
-                bakedQuadBlocks++;
-                continue;
-              }
-              if (blockModels != null && !sidIsFluidLod0[stateId]) {
-                try {
-                  boolean forceTintQuad = false;
-                  BlockStateModel model = modelArr[stateId];
-                  if (model != null) {
-                    long seed = (long) (chunkX * 16 + x) * 3129871L ^
-                        (long) (chunkZ * 16 + z) * 116129781L ^
-                        (long) (chunkY * 16 + y);
-                    rand.setSeed(seed);
-                    int quadsThisBlock = 0;
-                    List<BlockStateModelPart> parts = new java.util.ArrayList<>();
-                    model.collectParts(rand, parts);
-                    for (BlockStateModelPart part : parts) {
-                      for (Direction dir : ALL_DIRECTIONS) {
-                        if (skipFace != null && skipFace[dir.ordinal()])
-                          continue;
-                        int nx = x + dir.getStepX();
-                        int ny = y + dir.getStepY();
-                        int nz = z + dir.getStepZ();
-                        if (isWaterBaked &&
-                            isWaterAt(blockStates, nx, ny, nz, nXNeg, nXPos,
-                                nYNeg, nYPos, nZNeg, nZPos)) {
-                          dbgWaterBakedCull++;
-                          continue;
-                        }
-                        if (!isTransparentFlatFor(
-                            blockStates, nx, ny, nz, leafMode, nXNeg, nXPos,
-                            nYNeg, nYPos, nZNeg, nZPos, oFlag,
-                            stateId < sidIsTransCube.length &&
-                                sidIsTransCube[stateId]))
-                          continue;
-                        List<BakedQuad> quads = part.getQuads(dir);
-                        if (quads != null) {
-                          boolean aoComputed = false;
-                          for (BakedQuad quad : quads) {
-                            if (opaqueQuadCount + waterQuadCount >= MAX_QUADS)
-                              break;
-                            ByteBuffer tbuf = isWaterBaked ? waterBuffer : vertexBuffer;
-                            int emitted;
-                            if (lightData != null) {
-                              if (!aoComputed) {
-                                computeSmoothLighting(
-                                    x, y, z, dir.ordinal(), blockStates,
-                                    sidOpaque, lightData, nXNeg, nXPos, nYNeg,
-                                    nYPos, nZNeg, nZPos, nXNegLight, nXPosLight,
-                                    nYNegLight, nYPosLight, nZNegLight,
-                                    nZPosLight, faceAO, faceLight);
-                                aoComputed = true;
-                              }
-                              emitted = emitBakedQuadAO(
-                                  tbuf, quad, x, y, z, tintR, tintG, tintB,
-                                  forceOpaque, forceTintQuad, blockAlpha,
-                                  faceAO, faceLight);
-                            } else {
-                              emitted = emitBakedQuad(
-                                  tbuf, quad, x, y, z,
-                                  getFaceLight(
-                                      lightData, nXNegLight, nXPosLight,
-                                      nYNegLight, nYPosLight, nZNegLight,
-                                      nZPosLight, x, y, z, dir.ordinal()),
-                                  tintR, tintG, tintB, forceOpaque,
-                                  forceTintQuad, blockAlpha);
-                            }
-                            if (isWaterBaked)
-                              waterQuadCount += emitted;
-                            else
-                              opaqueQuadCount += emitted;
-
-                            if (!forceOpaque && blockAlpha == (byte) 253 &&
-                                emitted > 0) {
-                              emitReversedQuad(tbuf);
-                              opaqueQuadCount++;
-                            }
-                            quadsThisBlock++;
-                          }
-                        }
-                      }
-                      if (!skipNonDirectionalQuads) {
-                        List<BakedQuad> nonDirQuads = part.getQuads(null);
-                        if (nonDirQuads != null) {
-                          for (BakedQuad quad : nonDirQuads) {
-                            if (opaqueQuadCount + waterQuadCount >= MAX_QUADS)
-                              break;
-                            ByteBuffer tbuf = isWaterBaked ? waterBuffer : vertexBuffer;
-                            int emitted = emitBakedQuad(
-                                tbuf, quad, x, y, z, packedLight, tintR, tintG,
-                                tintB, forceOpaque, forceTintQuad, blockAlpha);
-                            if (isWaterBaked)
-                              waterQuadCount += emitted;
-                            else
-                              opaqueQuadCount += emitted;
-                            quadsThisBlock++;
-                          }
-                        }
-                      }
-                    }
-                    if (quadsThisBlock > 0) {
-                      if (isWaterBaked)
-                        dbgWaterBaked++;
-                      bakedQuadBlocks++;
-                      if (sidIsWaterloggedLod0[stateId] &&
-                          waterSpriteLod0 != null) {
-                        byte wAlpha = WATER_ALPHA;
-                        int wd00 = computeCornerFluidDrop(
-                            blockStates, x, y, z, sidIsWaterLod0, nXNeg, nXPos,
-                            nYNeg, nYPos, nZNeg, nZPos);
-                        int wd01 = computeCornerFluidDrop(
-                            blockStates, x, y, z + 1, sidIsWaterLod0, nXNeg,
-                            nXPos, nYNeg, nYPos, nZNeg, nZPos);
-                        int wd11 = computeCornerFluidDrop(
-                            blockStates, x + 1, y, z + 1, sidIsWaterLod0, nXNeg,
-                            nXPos, nYNeg, nYPos, nZNeg, nZPos);
-                        int wd10 = computeCornerFluidDrop(
-                            blockStates, x + 1, y, z, sidIsWaterLod0, nXNeg,
-                            nXPos, nYNeg, nYPos, nZNeg, nZPos);
-                        if (!isWaterAt(blockStates, x, y + 1, z, nXNeg, nXPos,
-                            nYNeg, nYPos, nZNeg, nZPos) &&
-                            isTransparentFlat(blockStates, x, y + 1, z,
-                                leafMode, nXNeg, nXPos, nYNeg,
-                                nYPos, nZNeg, nZPos, oFlag))
-                          waterQuadCount += emitFaceWaterSmooth(
-                              waterBuffer, x, y, z, 1, waterSpriteLod0,
-                              packedLight, tintR, tintG, tintB, wAlpha, wd00,
-                              wd01, wd11, wd10);
-                        if (!isWaterAt(blockStates, x, y - 1, z, nXNeg, nXPos,
-                            nYNeg, nYPos, nZNeg, nZPos) &&
-                            isTransparentFlat(blockStates, x, y - 1, z,
-                                leafMode, nXNeg, nXPos, nYNeg,
-                                nYPos, nZNeg, nZPos, oFlag))
-                          waterQuadCount += emitFaceWaterSmooth(
-                              waterBuffer, x, y, z, 0, waterSpriteLod0,
-                              packedLight, tintR, tintG, tintB, wAlpha, 0, 0, 0,
-                              0);
-                        if (!isWaterAt(blockStates, x, y, z + 1, nXNeg, nXPos,
-                            nYNeg, nYPos, nZNeg, nZPos) &&
-                            isTransparentFlat(blockStates, x, y, z + 1,
-                                leafMode, nXNeg, nXPos, nYNeg,
-                                nYPos, nZNeg, nZPos, oFlag))
-                          waterQuadCount += emitFaceWaterSmooth(
-                              waterBuffer, x, y, z, 3, waterSpriteLod0,
-                              packedLight, tintR, tintG, tintB, wAlpha, wd00,
-                              wd01, wd11, wd10);
-                        if (!isWaterAt(blockStates, x, y, z - 1, nXNeg, nXPos,
-                            nYNeg, nYPos, nZNeg, nZPos) &&
-                            isTransparentFlat(blockStates, x, y, z - 1,
-                                leafMode, nXNeg, nXPos, nYNeg,
-                                nYPos, nZNeg, nZPos, oFlag))
-                          waterQuadCount += emitFaceWaterSmooth(
-                              waterBuffer, x, y, z, 2, waterSpriteLod0,
-                              packedLight, tintR, tintG, tintB, wAlpha, wd00,
-                              wd01, wd11, wd10);
-                        if (!isWaterAt(blockStates, x + 1, y, z, nXNeg, nXPos,
-                            nYNeg, nYPos, nZNeg, nZPos) &&
-                            isTransparentFlat(blockStates, x + 1, y, z,
-                                leafMode, nXNeg, nXPos, nYNeg,
-                                nYPos, nZNeg, nZPos, oFlag))
-                          waterQuadCount += emitFaceWaterSmooth(
-                              waterBuffer, x, y, z, 5, waterSpriteLod0,
-                              packedLight, tintR, tintG, tintB, wAlpha, wd00,
-                              wd01, wd11, wd10);
-                        if (!isWaterAt(blockStates, x - 1, y, z, nXNeg, nXPos,
-                            nYNeg, nYPos, nZNeg, nZPos) &&
-                            isTransparentFlat(blockStates, x - 1, y, z,
-                                leafMode, nXNeg, nXPos, nYNeg,
-                                nYPos, nZNeg, nZPos, oFlag))
-                          waterQuadCount += emitFaceWaterSmooth(
-                              waterBuffer, x, y, z, 4, waterSpriteLod0,
-                              packedLight, tintR, tintG, tintB, wAlpha, wd00,
-                              wd01, wd11, wd10);
-                      }
-                      continue;
-                    }
-                  }
-                } catch (Exception e) {
-                }
-              }
-              fallbackBlocks++;
-              if (isWaterBaked)
-                dbgWaterFallback++;
-              if (isNonFullBlock) {
-                if (sidIsWaterloggedLod0[stateId] && waterSpriteLod0 != null) {
-                  byte wAlpha = WATER_ALPHA;
-                  int wd00 = computeCornerFluidDrop(
-                      blockStates, x, y, z, sidIsWaterLod0, nXNeg, nXPos, nYNeg,
-                      nYPos, nZNeg, nZPos);
-                  int wd01 = computeCornerFluidDrop(
-                      blockStates, x, y, z + 1, sidIsWaterLod0, nXNeg, nXPos,
-                      nYNeg, nYPos, nZNeg, nZPos);
-                  int wd11 = computeCornerFluidDrop(
-                      blockStates, x + 1, y, z + 1, sidIsWaterLod0, nXNeg,
-                      nXPos, nYNeg, nYPos, nZNeg, nZPos);
-                  int wd10 = computeCornerFluidDrop(
-                      blockStates, x + 1, y, z, sidIsWaterLod0, nXNeg, nXPos,
-                      nYNeg, nYPos, nZNeg, nZPos);
-                  if (!isWaterAt(blockStates, x, y + 1, z, nXNeg, nXPos, nYNeg,
-                      nYPos, nZNeg, nZPos) &&
-                      isTransparentFlat(blockStates, x, y + 1, z, leafMode,
-                          nXNeg, nXPos, nYNeg, nYPos, nZNeg,
-                          nZPos, oFlag))
-                    waterQuadCount += emitFaceWaterSmooth(
-                        waterBuffer, x, y, z, 1, waterSpriteLod0, packedLight,
-                        tintR, tintG, tintB, wAlpha, wd00, wd01, wd11, wd10);
-                  if (!isWaterAt(blockStates, x, y - 1, z, nXNeg, nXPos, nYNeg,
-                      nYPos, nZNeg, nZPos) &&
-                      isTransparentFlat(blockStates, x, y - 1, z, leafMode,
-                          nXNeg, nXPos, nYNeg, nYPos, nZNeg,
-                          nZPos, oFlag))
-                    waterQuadCount += emitFaceWaterSmooth(
-                        waterBuffer, x, y, z, 0, waterSpriteLod0, packedLight,
-                        tintR, tintG, tintB, wAlpha, 0, 0, 0, 0);
-                  if (!isWaterAt(blockStates, x, y, z + 1, nXNeg, nXPos, nYNeg,
-                      nYPos, nZNeg, nZPos) &&
-                      isTransparentFlat(blockStates, x, y, z + 1, leafMode,
-                          nXNeg, nXPos, nYNeg, nYPos, nZNeg,
-                          nZPos, oFlag))
-                    waterQuadCount += emitFaceWaterSmooth(
-                        waterBuffer, x, y, z, 3, waterSpriteLod0, packedLight,
-                        tintR, tintG, tintB, wAlpha, wd00, wd01, wd11, wd10);
-                  if (!isWaterAt(blockStates, x, y, z - 1, nXNeg, nXPos, nYNeg,
-                      nYPos, nZNeg, nZPos) &&
-                      isTransparentFlat(blockStates, x, y, z - 1, leafMode,
-                          nXNeg, nXPos, nYNeg, nYPos, nZNeg,
-                          nZPos, oFlag))
-                    waterQuadCount += emitFaceWaterSmooth(
-                        waterBuffer, x, y, z, 2, waterSpriteLod0, packedLight,
-                        tintR, tintG, tintB, wAlpha, wd00, wd01, wd11, wd10);
-                  if (!isWaterAt(blockStates, x + 1, y, z, nXNeg, nXPos, nYNeg,
-                      nYPos, nZNeg, nZPos) &&
-                      isTransparentFlat(blockStates, x + 1, y, z, leafMode,
-                          nXNeg, nXPos, nYNeg, nYPos, nZNeg,
-                          nZPos, oFlag))
-                    waterQuadCount += emitFaceWaterSmooth(
-                        waterBuffer, x, y, z, 5, waterSpriteLod0, packedLight,
-                        tintR, tintG, tintB, wAlpha, wd00, wd01, wd11, wd10);
-                  if (!isWaterAt(blockStates, x - 1, y, z, nXNeg, nXPos, nYNeg,
-                      nYPos, nZNeg, nZPos) &&
-                      isTransparentFlat(blockStates, x - 1, y, z, leafMode,
-                          nXNeg, nXPos, nYNeg, nYPos, nZNeg,
-                          nZPos, oFlag))
-                    waterQuadCount += emitFaceWaterSmooth(
-                        waterBuffer, x, y, z, 4, waterSpriteLod0, packedLight,
-                        tintR, tintG, tintB, wAlpha, wd00, wd01, wd11, wd10);
-                }
-              }
-              TextureAtlasSprite sprite = (modelArr[stateId] != null)
-                  ? modelArr[stateId].particleMaterial().sprite()
-                  : null;
-              boolean isWaterBlock = sidIsWaterLod0[stateId];
-              boolean isFluidBlock = sidIsFluidLod0[stateId];
-              int wd00, wd01, wd11, wd10;
-              if (isFluidBlock) {
-                boolean[] heightMask = isWaterBlock ? sidIsWaterLod0 : sidIsFluidLod0;
-                wd00 = computeCornerFluidDrop(blockStates, x, y, z, heightMask,
-                    nXNeg, nXPos, nYNeg, nYPos, nZNeg,
-                    nZPos);
-                wd01 = computeCornerFluidDrop(blockStates, x, y, z + 1,
-                    heightMask, nXNeg, nXPos, nYNeg,
-                    nYPos, nZNeg, nZPos);
-                wd11 = computeCornerFluidDrop(blockStates, x + 1, y, z + 1,
-                    heightMask, nXNeg, nXPos, nYNeg,
-                    nYPos, nZNeg, nZPos);
-                wd10 = computeCornerFluidDrop(blockStates, x + 1, y, z,
-                    heightMask, nXNeg, nXPos, nYNeg,
-                    nYPos, nZNeg, nZPos);
-              } else {
-                wd00 = 0;
-                wd01 = 0;
-                wd11 = 0;
-                wd10 = 0;
-              }
-              ByteBuffer fbuf = isWaterBlock ? waterBuffer : vertexBuffer;
-              if ((!isWaterBlock ||
-                  !isWaterAt(blockStates, x, y + 1, z, nXNeg, nXPos, nYNeg,
-                      nYPos, nZNeg, nZPos))
-                  &&
-                  isTransparentFlat(blockStates, x, y + 1, z, leafMode, nXNeg,
-                      nXPos, nYNeg, nYPos, nZNeg, nZPos, oFlag)) {
-                int emitted = emitFaceWaterSmooth(
-                    fbuf, x, y, z, 1, sprite, packedLight, tintR, tintG, tintB,
-                    blockAlpha, wd00, wd01, wd11, wd10);
-                if (isWaterBlock)
-                  waterQuadCount += emitted;
-                else
-                  opaqueQuadCount += emitted;
-              }
-              if ((!isWaterBlock ||
-                  !isWaterAt(blockStates, x, y - 1, z, nXNeg, nXPos, nYNeg,
-                      nYPos, nZNeg, nZPos))
-                  &&
-                  isTransparentFlat(blockStates, x, y - 1, z, leafMode, nXNeg,
-                      nXPos, nYNeg, nYPos, nZNeg, nZPos, oFlag)) {
-                int emitted = emitFaceWaterSmooth(
-                    fbuf, x, y, z, 0, sprite, packedLight, tintR, tintG, tintB,
-                    blockAlpha, 0, 0, 0, 0);
-                if (isWaterBlock)
-                  waterQuadCount += emitted;
-                else
-                  opaqueQuadCount += emitted;
-              }
-              if ((!isWaterBlock ||
-                  !isWaterAt(blockStates, x, y, z + 1, nXNeg, nXPos, nYNeg,
-                      nYPos, nZNeg, nZPos))
-                  &&
-                  isTransparentFlat(blockStates, x, y, z + 1, leafMode, nXNeg,
-                      nXPos, nYNeg, nYPos, nZNeg, nZPos, oFlag)) {
-                int emitted = emitFaceWaterSmooth(
-                    fbuf, x, y, z, 3, sprite, packedLight, tintR, tintG, tintB,
-                    blockAlpha, wd00, wd01, wd11, wd10);
-                if (isWaterBlock)
-                  waterQuadCount += emitted;
-                else
-                  opaqueQuadCount += emitted;
-              }
-              if ((!isWaterBlock ||
-                  !isWaterAt(blockStates, x, y, z - 1, nXNeg, nXPos, nYNeg,
-                      nYPos, nZNeg, nZPos))
-                  &&
-                  isTransparentFlat(blockStates, x, y, z - 1, leafMode, nXNeg,
-                      nXPos, nYNeg, nYPos, nZNeg, nZPos, oFlag)) {
-                int emitted = emitFaceWaterSmooth(
-                    fbuf, x, y, z, 2, sprite, packedLight, tintR, tintG, tintB,
-                    blockAlpha, wd00, wd01, wd11, wd10);
-                if (isWaterBlock)
-                  waterQuadCount += emitted;
-                else
-                  opaqueQuadCount += emitted;
-              }
-              if ((!isWaterBlock ||
-                  !isWaterAt(blockStates, x + 1, y, z, nXNeg, nXPos, nYNeg,
-                      nYPos, nZNeg, nZPos))
-                  &&
-                  isTransparentFlat(blockStates, x + 1, y, z, leafMode, nXNeg,
-                      nXPos, nYNeg, nYPos, nZNeg, nZPos, oFlag)) {
-                int emitted = emitFaceWaterSmooth(
-                    fbuf, x, y, z, 5, sprite, packedLight, tintR, tintG, tintB,
-                    blockAlpha, wd00, wd01, wd11, wd10);
-                if (isWaterBlock)
-                  waterQuadCount += emitted;
-                else
-                  opaqueQuadCount += emitted;
-              }
-              if ((!isWaterBlock ||
-                  !isWaterAt(blockStates, x - 1, y, z, nXNeg, nXPos, nYNeg,
-                      nYPos, nZNeg, nZPos))
-                  &&
-                  isTransparentFlat(blockStates, x - 1, y, z, leafMode, nXNeg,
-                      nXPos, nYNeg, nYPos, nZNeg, nZPos, oFlag)) {
-                int emitted = emitFaceWaterSmooth(
-                    fbuf, x, y, z, 4, sprite, packedLight, tintR, tintG, tintB,
-                    blockAlpha, wd00, wd01, wd11, wd10);
-                if (isWaterBlock)
-                  waterQuadCount += emitted;
-                else
-                  opaqueQuadCount += emitted;
-              }
-            }
-          }
-        }
       }
       int quadCount = opaqueQuadCount + waterQuadCount;
       if (waterQuadCount > 0) {
@@ -3399,10 +2176,9 @@ public class CustomChunkMesher {
       }
       if (meshBuildCount <= 3) {
         MetalLogger.info("[BUILD_V9 DIAG] chunk[%d,%d,%d] quads=%d opaque=%d "
-            + "water=%d baked=%d fallback=%d lod=%d",
+            + "water=%d baked=%d fallback=%d",
             chunkX, chunkY, chunkZ, quadCount, opaqueQuadCount,
-            waterQuadCount, bakedQuadBlocks, fallbackBlocks,
-            lodLevel);
+            waterQuadCount, bakedQuadBlocks, fallbackBlocks);
       }
       if (quadCount == 0) {
         ChunkMeshData old;
@@ -3450,7 +2226,7 @@ public class CustomChunkMesher {
         UPLOAD_SEMAPHORE.release();
       }
       ChunkMeshData mesh = new ChunkMeshData(bufferHandle, quadCount, chunkX, chunkY, chunkZ,
-          lodLevel, buildPCX, buildPCY, buildPCZ, visibilityMask,
+          buildPCX, buildPCY, buildPCZ, visibilityMask,
           facingQuadCounts);
       ChunkMeshData old;
       synchronized (meshCache) {
@@ -3463,7 +2239,7 @@ public class CustomChunkMesher {
         vertexCountAtomic.addAndGet(mesh.quadCount * 4 - old.quadCount * 4);
       }
       NativeBridge.nRegisterChunkMesh(chunkX, chunkY, chunkZ, bufferHandle,
-          quadCount, opaqueQuadCount, lodLevel, visibilityMask,
+          quadCount, opaqueQuadCount, visibilityMask,
           facingQuadCounts);
       if (old != null) {
         NativeBridge.nDestroyBuffer(old.bufferHandle);
@@ -3482,22 +2258,12 @@ public class CustomChunkMesher {
       long buildElapsed = System.nanoTime() - buildStart;
       MetalRenderProfiler.getInstance().recordMeshingTime(buildElapsed);
       meshBuildTimeAcc += buildElapsed;
-      if (lodLevel < 1) {
-        lodSlowTimeAcc += buildElapsed;
-        lodSlowCount++;
-      } else {
-        lodFastTimeAcc += buildElapsed;
-        lodFastCount++;
-      }
       int samples = ++meshBuildTimeSamples;
       if (MetalRenderConfig.isDeepDebugActive() && samples % 500 == 0) {
         double avgMs = (meshBuildTimeAcc / 1e6) / samples;
-        double slowAvg = lodSlowCount > 0 ? (lodSlowTimeAcc / 1e6) / lodSlowCount : 0;
-        double fastAvg = lodFastCount > 0 ? (lodFastTimeAcc / 1e6) / lodFastCount : 0;
         MetalLogger.info(
-            "MESH_PERF: avg=%.2fms over %d builds | LOD0: %.2fms (%d) LOD1+: "
-                + "%.2fms (%d) | pipeline=%.2fms (%d)",
-            avgMs, samples, slowAvg, lodSlowCount, fastAvg, lodFastCount,
+            "MESH_PERF: avg=%.2fms over %d builds | pipeline=%.2fms (%d)",
+            avgMs, samples,
             pipelineCount > 0 ? (pipelineTimeAcc / 1e6) / pipelineCount : 0.0,
             pipelineCount);
         MetalLogger.info(
@@ -3778,30 +2544,24 @@ public class CustomChunkMesher {
   }
 
   public void buildMeshFromWorld(int chunkX, int chunkY, int chunkZ) {
-    buildMeshFromWorld(chunkX, chunkY, chunkZ, 0);
+    buildMeshFromWorld(chunkX, chunkY, chunkZ, false);
   }
 
   public void buildMeshFromWorld(int chunkX, int chunkY, int chunkZ,
-      int lodLevel) {
-    buildMeshFromWorld(chunkX, chunkY, chunkZ, lodLevel, false);
-  }
-
-  public void buildMeshFromWorld(int chunkX, int chunkY, int chunkZ,
-      int lodLevel, boolean highPriority) {
-    buildMeshFromWorld(chunkX, chunkY, chunkZ, lodLevel, highPriority, false);
+      boolean highPriority) {
+    buildMeshFromWorld(chunkX, chunkY, chunkZ, highPriority, false);
   }
 
   public void buildMeshFromWorldInteractive(int chunkX, int chunkY,
       int chunkZ) {
-    buildMeshFromWorld(chunkX, chunkY, chunkZ, 0, true, true);
+    buildMeshFromWorld(chunkX, chunkY, chunkZ, true, true);
   }
 
-  private void buildMeshFromWorld(int chunkX, int chunkY, int chunkZ,
-      int lodLevel, boolean highPriority,
+  public void buildMeshFromWorld(int chunkX, int chunkY, int chunkZ,
+      boolean highPriority,
       boolean interactivePriority) {
     if (!initialized)
       return;
-    final int effectiveLodLevel = Math.max(0, Math.min(4, lodLevel));
     final boolean useApproximateLight = !interactivePriority && (highPriority || aggressiveApproximateLighting);
     long key = packChunkKey(chunkX, chunkY, chunkZ);
     boolean wasDirty;
@@ -3812,8 +2572,8 @@ public class CustomChunkMesher {
       if (!pendingKeys.add(key)) {
         if (MetalRenderConfig.isDeepDebugActive()) {
           MetalLogger.debug(
-              "BUILD_SKIP_DUP: chunk=[%d,%d,%d] lod=%d high=%s interactive=%s",
-              chunkX, chunkY, chunkZ, effectiveLodLevel, highPriority,
+              "BUILD_SKIP_DUP: chunk=[%d,%d,%d] high=%s interactive=%s",
+              chunkX, chunkY, chunkZ, highPriority,
               interactivePriority);
         }
         return;
@@ -3835,14 +2595,14 @@ public class CustomChunkMesher {
         Minecraft mc = Minecraft.getInstance();
         SectionSnapshot snapshot = captureSectionSnapshot(
             mc != null ? mc.level : null, chunkX, chunkY, chunkZ,
-            effectiveLodLevel, useApproximateLight);
+            useApproximateLight);
         if (!snapshot.valid) {
           synchronized (pendingKeys) {
             pendingKeys.remove(key);
           }
           MetalLogger.debug(
-              "BUILD_SKIP_INVALID: chunk=[%d,%d,%d] lod=%d high=%s interactive=%s",
-              chunkX, chunkY, chunkZ, effectiveLodLevel, highPriority,
+              "BUILD_SKIP_INVALID: chunk=[%d,%d,%d] high=%s interactive=%s",
+              chunkX, chunkY, chunkZ, highPriority,
               interactivePriority);
           return;
         }
@@ -3852,13 +2612,13 @@ public class CustomChunkMesher {
             pendingKeys.remove(key);
           }
           MetalLogger.debug(
-              "BUILD_SKIP_EMPTY: chunk=[%d,%d,%d] lod=%d high=%s interactive=%s",
-              chunkX, chunkY, chunkZ, effectiveLodLevel, highPriority,
+              "BUILD_SKIP_EMPTY: chunk=[%d,%d,%d] high=%s interactive=%s",
+              chunkX, chunkY, chunkZ, highPriority,
               interactivePriority);
           return;
         }
         doMeshBuild(chunkX, chunkY, chunkZ, snapshot.blockStates,
-            snapshot.lightData, key, genAtSubmit, effectiveLodLevel,
+            snapshot.lightData, key, genAtSubmit,
             snapshot.nXNeg, snapshot.nXPos, snapshot.nYNeg, snapshot.nYPos,
             snapshot.nZNeg, snapshot.nZPos, snapshot.nXNegLight,
             snapshot.nXPosLight, snapshot.nYNegLight, snapshot.nYPosLight,
@@ -3876,8 +2636,8 @@ public class CustomChunkMesher {
     };
     int priority = interactivePriority ? 0 : (highPriority || wasDirty ? 1 : 2);
     MetalLogger.debug(
-        "BUILD_SUBMIT: chunk=[%d,%d,%d] lod=%d priority=%d high=%s interactive=%s dirty=%s",
-        chunkX, chunkY, chunkZ, effectiveLodLevel, priority, highPriority,
+        "BUILD_SUBMIT: chunk=[%d,%d,%d] priority=%d high=%s interactive=%s dirty=%s",
+        chunkX, chunkY, chunkZ, priority, highPriority,
         interactivePriority, wasDirty);
     submitMeshTask(priority, buildTask);
   }

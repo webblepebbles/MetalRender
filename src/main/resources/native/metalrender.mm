@@ -310,7 +310,6 @@ static id<MTLComputePipelineState> g_hizDownsamplePipeline = nil;
 static id<MTLComputePipelineState> g_hizMultiPipeline = nil;
 static id<MTLComputePipelineState> g_cullEncodePipeline = nil;
 static id<MTLComputePipelineState> g_resetCullPipeline = nil;
-static id<MTLComputePipelineState> g_lodSelectPipeline = nil;
 static id<MTLTexture> g_hizPyramid = nil;
 static id<MTLTexture> g_hizFallbackTexture = nil;
 static uint32_t g_hizMipCount = 0;
@@ -353,7 +352,6 @@ static id<MTLRenderPipelineState> g_meshTerrainEmissivePSO = nil;
 bool g_meshShadersActive = false;
 uint32_t g_meshPipelineCount = 0;
 static int g_thermalState = 0;
-static int g_lodRadiusReduction = 0;
 static double g_lastThermalCheckTime = 0;
 static float g_skyBrightness = 1.0f;
 
@@ -430,7 +428,6 @@ struct NativeMesh {
   uint64_t bufferHandle;
   int32_t quadCount;
   int32_t opaqueQuadCount;
-  int32_t lodLevel;
   uint64_t visibilityMask;
   int32_t facingQuadCounts[14];
   bool active;
@@ -497,9 +494,9 @@ struct ChunkMeshletNative {
   float worldX;
   float worldY;
   float worldZ;
-  uint32_t lodLevel;
   uint32_t _pad0;
   uint32_t _pad1;
+  uint32_t _pad2;
 };
 static_assert(sizeof(ChunkMeshletNative) == 32,
               "ChunkMeshletNative must be 32 bytes");
@@ -1421,7 +1418,6 @@ fragment float4 fragment_particle(
   g_hizMultiPipeline = createComputePipeline(@"hiz_downsample_multi");
   g_cullEncodePipeline = createComputePipeline(@"cull_and_encode");
   g_resetCullPipeline = createComputePipeline(@"reset_cull_stats");
-  g_lodSelectPipeline = createComputePipeline(@"lod_select");
 
   {
     NSError *oitErr = nil;
@@ -1824,22 +1820,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nBeginFrame(
   (void)fogEnd;
   ensure_device();
   ensure_offscreen();
-  if (g_lodSelectPipeline && g_subChunkBuffer && g_cameraUniformsBuffer) {
-    id<MTLCommandBuffer> lodCb = [g_queue commandBuffer];
-    if (lodCb) {
-      id<MTLComputeCommandEncoder> lodEnc = [lodCb computeCommandEncoder];
-      if (lodEnc) {
-        [lodEnc setComputePipelineState:g_lodSelectPipeline];
-        [lodEnc setBuffer:g_cameraUniformsBuffer offset:0 atIndex:1];
-        [lodEnc setBuffer:g_subChunkBuffer offset:0 atIndex:2];
-        MTLSize threads = MTLSizeMake(256, 1, 1);
-        MTLSize groups = MTLSizeMake(1, 1, 1);
-        [lodEnc dispatchThreadgroups:groups threadsPerThreadgroup:threads];
-        [lodEnc endEncoding];
-        [lodCb commit];
-      }
-    }
-  }
 }
 extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawTerrain(
@@ -2568,7 +2548,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBatch(
 extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMesh(
     JNIEnv *env, jclass, jint cx, jint cy, jint cz, jlong bufferHandle,
-    jint quadCount, jint opaqueQuadCount, jint lodLevel, jlong visibilityMask,
+    jint quadCount, jint opaqueQuadCount, jlong visibilityMask,
     jintArray facingQuadCounts) {
   int64_t key = packMeshKey(cx, cy, cz);
   int32_t faceCounts[14] = {};
@@ -2591,7 +2571,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMesh(
     m.bufferHandle = (uint64_t)bufferHandle;
     m.quadCount = quadCount;
     m.opaqueQuadCount = opaqueQuadCount;
-    m.lodLevel = lodLevel;
     m.visibilityMask = (uint64_t)visibilityMask;
     memcpy(m.facingQuadCounts, faceCounts, sizeof(faceCounts));
     m.active = true;
@@ -2613,7 +2592,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMesh(
   mesh.bufferHandle = (uint64_t)bufferHandle;
   mesh.quadCount = (int32_t)quadCount;
   mesh.opaqueQuadCount = (int32_t)opaqueQuadCount;
-  mesh.lodLevel = (int32_t)lodLevel;
   mesh.visibilityMask = (uint64_t)visibilityMask;
   memcpy(mesh.facingQuadCounts, faceCounts, sizeof(faceCounts));
   mesh.active = true;
@@ -3130,7 +3108,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           meshlets[meshletCount].worldX = s_cmds[i].ox;
           meshlets[meshletCount].worldY = s_cmds[i].oy;
           meshlets[meshletCount].worldZ = s_cmds[i].oz;
-          meshlets[meshletCount].lodLevel = 0;
           meshlets[meshletCount]._pad0 = 0;
           meshlets[meshletCount]._pad1 = 0;
           meshletCount++;
@@ -4128,21 +4105,18 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
       g_thermalState = (int)state;
 
       if (state >= NSProcessInfoThermalStateCritical) {
-        g_lodRadiusReduction = 50;
         g_thermalQualityLevel = 2;
         g_dynamicLODScale = fmaxf(g_dynamicLODScale, 1.8f);
         if (g_frameCount % 60 == 0)
           dbg("THERMAL: Critical! quality=2, LOD scale=%.2f\n",
               g_dynamicLODScale);
       } else if (state >= NSProcessInfoThermalStateSerious) {
-        g_lodRadiusReduction = 25;
         g_thermalQualityLevel = 1;
         g_dynamicLODScale = fmaxf(g_dynamicLODScale, 1.4f);
         if (g_frameCount % 300 == 0)
           dbg("THERMAL: Serious. quality=1, LOD scale=%.2f\n",
               g_dynamicLODScale);
       } else {
-        g_lodRadiusReduction = 0;
         g_thermalQualityLevel = 0;
       }
 
@@ -5095,11 +5069,6 @@ extern "C" JNIEXPORT jint JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetThermalState(
     JNIEnv *, jclass) {
   return (jint)g_thermalState;
-}
-extern "C" JNIEXPORT jint JNICALL
-Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetThermalLODReduction(
-    JNIEnv *, jclass) {
-  return (jint)g_lodRadiusReduction;
 }
 extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetRenderDistance(

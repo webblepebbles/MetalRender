@@ -48,11 +48,6 @@ public final class MetalRenderCommands {
                                 return 1;
                             }))
 
-                            .then(literal("lod").executes(ctx -> {
-                                sendLodStatus(ctx.getSource());
-                                return 1;
-                            }))
-
                             .then(literal("config")
                                     .then(literal("open").executes(ctx -> {
                                         openConfigScreen(ctx.getSource());
@@ -113,7 +108,6 @@ public final class MetalRenderCommands {
         msg(src, "§e/metalrender cache clear §7- Clear cache & restart renderer");
         msg(src, "§e/metalrender reload §7- Reload world renderer");
         msg(src, "§e/metalrender restart §7- Full renderer restart");
-        msg(src, "§e/metalrender lod §7- Show LOD runtime status");
         msg(src, "§e/metalrender config open §7- Open MetalRender settings screen");
         msg(src, "§e/metalrender config save|reload|reset §7- Config management");
         msg(src, "§e/metalrender performance reset §7- Reset perf settings");
@@ -143,9 +137,6 @@ public final class MetalRenderCommands {
         msg(src, "§7Enabled: " + (enabled ? "§aYes" : "§cNo"));
         msg(src, "§7Hardware: "
                 + (available ? "§a" + MetalHardwareChecker.getDeviceName() : "§cUnavailable"));
-        msg(src,
-                "§7LOD: §aZone 0 active §7(0-" + MetalRenderConfig.zone0RadiusChunks()
-                        + " chunks, far target " + MetalRenderConfig.farFieldRadiusChunks() + " chunks)");
         msg(src, "§7Resolution scale: §f" + String.format("%.2fx", MetalRenderConfig.resolutionScale()));
         msg(src, "§7Frustum culling: "
                 + (MetalRenderConfig.aggressiveFrustumCulling() ? "§aAggressive" : "§eNormal"));
@@ -201,29 +192,12 @@ public final class MetalRenderCommands {
     }
 
     private static void resetConfig(FabricClientCommandSource src) {
-        MetalRenderConfig.resetLodGroundworkDefaults();
         MetalRenderConfig.setResolutionScale(1.0f);
         MetalRenderConfig.setAggressiveFrustumCulling(false);
         MetalRenderConfig.setOcclusionCulling(false);
         MetalRenderConfig.setMirrorUploads(false);
         invalidateAllMeshes();
         msg(src, "§eAll settings reset to defaults. Rebuilding...");
-    }
-
-    private static void sendLodStatus(FabricClientCommandSource src) {
-        msg(src, "§6§l--- MetalRender LOD ---");
-        msg(src, "§7Mode: §aZone 0 active");
-        msg(src, "§7Runtime: §fScreen-space near-field LOD is active");
-        msg(src, "§7Zone 0: §f0-" + MetalRenderConfig.zone0RadiusChunks()
-                + " chunks §7(screen-space subtiers)");
-        msg(src, "§7Zone 1+: §f" + MetalRenderConfig.zone0RadiusChunks() + "-"
-                + MetalRenderConfig.farFieldRadiusChunks()
-                + " chunks §7(automatic far-field target)");
-        msg(src,
-                "§7Zone 0 thresholds: §fA > " + fmtPx(MetalRenderConfig.zone0ExactBlockPixels())
-                        + "px, B > " + fmtPx(MetalRenderConfig.zone0GreedyBlockPixels())
-                        + "px, C > " + fmtPx(MetalRenderConfig.zone0ClusterBlockPixels()) + "px");
-        msg(src, "§7Far-field runtime: §eLegacy coarse tier fallback only");
     }
 
     private static String fmtPx(float value) {
