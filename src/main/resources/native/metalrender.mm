@@ -5466,11 +5466,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nAreMemorylessTarge
     JNIEnv *, jclass) {
   return g_useMemorylessTargets ? JNI_TRUE : JNI_FALSE;
 }
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nIsMegaBufferActive(
-    JNIEnv *, jclass) {
-  return g_megaVB ? JNI_TRUE : JNI_FALSE;
-}
 
 extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nFlushDeferredDeletions(
@@ -5579,20 +5574,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nWatchdogReset(
   }
 }
 
-extern "C" JNIEXPORT jint JNICALL
-Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nMegaDefragment(
-    JNIEnv *, jclass) {
-  @autoreleasepool {
-    std::unique_lock<std::shared_mutex> lock(g_megaMutex);
-    int beforeBlocks = (int)g_megaFreeList.size();
-    megaCoalesceFreeList();
-    int afterBlocks = (int)g_megaFreeList.size();
-    if (beforeBlocks != afterBlocks) {
-      dbg("MEGA_DEFRAG: %d -> %d free blocks\n", beforeBlocks, afterBlocks);
-    }
-    return (jint)afterBlocks;
-  }
-}
 
 extern "C" JNIEXPORT jfloat JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetGpuFrameTimeMs(

@@ -236,10 +236,6 @@ public final class NativeBridge {
 
   public static native void nFlushDeferredDeletions();
 
-  public static native int nMegaDefragment();
-
-  public static native boolean nIsMegaBufferActive();
-
   public static native void nDrawDeferredWaterPass(long frameContext);
 
   public static native boolean nAreArgumentBuffersActive();

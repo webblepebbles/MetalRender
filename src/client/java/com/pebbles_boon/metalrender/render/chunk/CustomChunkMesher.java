@@ -78,7 +78,6 @@ public class CustomChunkMesher {
   private final int maxInstantThreadCount;
   private static final int UPLOAD_PARALLELISM = Math.max(12, Runtime.getRuntime().availableProcessors());
   private static final java.util.concurrent.Semaphore UPLOAD_SEMAPHORE = new java.util.concurrent.Semaphore(UPLOAD_PARALLELISM);
-  private volatile boolean fastUploadPathActive;
   private static final int NORMAL_TOTAL_THREAD_BUDGET = 64;
   private static final int BURST_TOTAL_THREAD_BUDGET = 128;
   private static final int BURST_MAX_BUILDER_THREADS = 28;
@@ -375,7 +374,6 @@ public class CustomChunkMesher {
 
   public void initialize(long device) {
     this.deviceHandle = device;
-    refreshUploadPathMode();
     MetalLogger.info("CustomChunkMesher initialize: device=%d loadingConfig=%s",
         device, MetalRenderClient.getConfig() != null
             ? MetalRenderClient.getConfig().enableMetalRendering
@@ -400,21 +398,11 @@ public class CustomChunkMesher {
         deviceHandle, ibData.length, NativeMemory.STORAGE_MODE_SHARED);
     NativeBridge.nUploadBufferData(this.globalIndexBufferHandle, ibData, 0,
         ibData.length);
-    refreshUploadPathMode();
     this.initialized = true;
-    MetalLogger.info("Chunk mesh uploads using %s path (parallelism=%d)",
-        fastUploadPathActive ? "mega-buffer" : "fallback",
+    MetalLogger.info("Chunk mesh uploads using fallback path (parallelism=%d)",
         UPLOAD_PARALLELISM);
     MetalLogger.info("CustomChunkMesher initialized (maxQuads=%d, ibSize=%d)",
         MAX_QUADS, ibData.length);
-  }
-
-  private void refreshUploadPathMode() {
-    try {
-      fastUploadPathActive = NativeBridge.isLibLoaded() && NativeBridge.nIsMegaBufferActive();
-    } catch (Throwable ignored) {
-      fastUploadPathActive = false;
-    }
   }
 
   private static long packChunkKey(int x, int y, int z) {
