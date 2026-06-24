@@ -138,8 +138,6 @@ public final class MetalRenderCommands {
         msg(src, "§7Hardware: "
                 + (available ? "§a" + MetalHardwareChecker.getDeviceName() : "§cUnavailable"));
         msg(src, "§7Resolution scale: §f" + String.format("%.2fx", MetalRenderConfig.resolutionScale()));
-        msg(src, "§7Frustum culling: "
-                + (MetalRenderConfig.aggressiveFrustumCulling() ? "§aAggressive" : "§eNormal"));
 
         MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
         if (wr != null) {
@@ -193,8 +191,6 @@ public final class MetalRenderCommands {
 
     private static void resetConfig(FabricClientCommandSource src) {
         MetalRenderConfig.setResolutionScale(1.0f);
-        MetalRenderConfig.setAggressiveFrustumCulling(false);
-        MetalRenderConfig.setOcclusionCulling(false);
         MetalRenderConfig.setMirrorUploads(false);
         invalidateAllMeshes();
         msg(src, "§eAll settings reset to defaults. Rebuilding...");

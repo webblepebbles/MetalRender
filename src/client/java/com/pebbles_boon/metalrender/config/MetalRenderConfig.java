@@ -22,8 +22,6 @@ public final class MetalRenderConfig {
   private static volatile boolean swapOpaque = false;
   private static volatile boolean swapCutout = false;
   private static volatile boolean swapTranslucent = false;
-  private static volatile boolean aggressiveFrustumCulling = false;
-  private static volatile boolean occlusionCulling = false;
   private static volatile float resolutionScale = 1.0f;
   private static volatile boolean deepDebugActive = false;
   private static volatile boolean debugPinkBlockTintEnabled = false;
@@ -95,10 +93,6 @@ public final class MetalRenderConfig {
 
         if (obj.has("savedResolutionScale"))
           resolutionScale = clamp(obj.get("savedResolutionScale").getAsFloat(), 0.20f, 1.5f);
-        if (obj.has("savedAggressiveFrustumCulling"))
-          aggressiveFrustumCulling = obj.get("savedAggressiveFrustumCulling").getAsBoolean();
-        if (obj.has("savedOcclusionCulling"))
-          occlusionCulling = obj.get("savedOcclusionCulling").getAsBoolean();
       }
     } catch (Exception e) {
 
@@ -116,8 +110,6 @@ public final class MetalRenderConfig {
   }
 
   private static void applyStableQualityFallback(MetalRenderConfig cfg) {
-    aggressiveFrustumCulling = false;
-    occlusionCulling = false;
     resolutionScale = 1.0f;
   }
 
@@ -152,8 +144,6 @@ public final class MetalRenderConfig {
   
 
       obj.addProperty("savedResolutionScale", resolutionScale);
-      obj.addProperty("savedAggressiveFrustumCulling", aggressiveFrustumCulling);
-      obj.addProperty("savedOcclusionCulling", occlusionCulling);
       java.nio.file.Path path = configFile();
       java.nio.file.Files.createDirectories(path.getParent());
       java.nio.file.Files.writeString(path,
@@ -177,14 +167,6 @@ public final class MetalRenderConfig {
 
   public static boolean swapTranslucent() {
     return swapTranslucent;
-  }
-
-  public static boolean aggressiveFrustumCulling() {
-    return aggressiveFrustumCulling;
-  }
-
-  public static boolean occlusionCulling() {
-    return occlusionCulling;
   }
 
   public static float resolutionScale() {
@@ -237,14 +219,6 @@ public final class MetalRenderConfig {
     swapTranslucent = v;
   }
 
-  public static void setAggressiveFrustumCulling(boolean v) {
-    aggressiveFrustumCulling = v;
-  }
-
-  public static void setOcclusionCulling(boolean v) {
-    occlusionCulling = v;
-  }
-
   public static void setResolutionScale(float v) {
     resolutionScale = clamp(v, 0.20f, 1.5f);
   }
@@ -258,8 +232,6 @@ public final class MetalRenderConfig {
     swapOpaque = getBool("metalrender.swap.opaque", swapOpaque);
     swapCutout = getBool("metalrender.swap.cutout", swapCutout);
     swapTranslucent = getBool("metalrender.swap.translucent", swapTranslucent);
-    aggressiveFrustumCulling = getBool("metalrender.culling.frustum", aggressiveFrustumCulling);
-    occlusionCulling = getBool("metalrender.culling.occlusion", occlusionCulling);
     resolutionScale = getFloat("metalrender.render.resolutionScale", resolutionScale);
   }
 
