@@ -135,6 +135,8 @@ public class MetalWorldRenderer {
   private ByteBuffer subChunkUploadBuffer;
   private ByteBuffer chunkUniformsBuffer;
   private int subChunkUploadCapacity = 4096;
+  private long argumentBufferHandle;
+  private it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap readinessCache;
   private final float[] viewProjMatrix = new float[16];
   private final float[] projMatrixFlat = new float[16];
   private final float[] modelViewFlat = new float[16];
@@ -159,6 +161,7 @@ public class MetalWorldRenderer {
     this.entityRenderer = new MetalEntityRenderer();
     this.particleRenderer = new MetalParticleRenderer();
     this.chunkMesher = new CustomChunkMesher();
+    this.readinessCache = new it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap();
     MetalRenderer renderer = MetalRenderClient.getRenderer();
     long device = renderer != null ? renderer.getBackend().getDeviceHandle() : 0;
     this.textureManager = new MetalTextureManager(device);
@@ -198,6 +201,16 @@ public class MetalWorldRenderer {
             .order(ByteOrder.nativeOrder());
         chunkUniformsBuffer = ByteBuffer.allocateDirect(subChunkUploadCapacity * 16)
             .order(ByteOrder.nativeOrder());
+        if (argumentBufferHandle == 0 && meshShaderBackend != null &&
+            meshShaderBackend.areMeshShadersAvailable()) {
+          argumentBufferHandle = NativeBridge.nCreateBuffer(handle,
+              subChunkUploadCapacity * 16,
+              NativeMemory.STORAGE_MODE_SHARED);
+          if (argumentBufferHandle != 0) {
+            MetalLogger.info("Mesh argument buffer allocated: handle=%d size=%d",
+                argumentBufferHandle, subChunkUploadCapacity * 16);
+          }
+        }
       }
       applyFeatureConfig(MetalRenderClient.getConfig());
       boolean meshShadersActive = NativeBridge.isLibLoaded() && NativeBridge.nAreMeshShadersActive();
@@ -238,6 +251,10 @@ public class MetalWorldRenderer {
     gpuDrivenEnabled = false;
     subChunkUploadBuffer = null;
     chunkUniformsBuffer = null;
+    if (argumentBufferHandle != 0) {
+      NativeBridge.nDestroyBuffer(argumentBufferHandle);
+      argumentBufferHandle = 0;
+    }
     com.pebbles_boon.metalrender.nativebridge.ResidencySetManager.shutdown();
     updateLoadingModeState();
   }
@@ -413,6 +430,16 @@ public class MetalWorldRenderer {
         }
         float skyFactor = resolveSkyLightFactor(camera, tickDelta);
         NativeBridge.nSetSkyBrightness(frameCtx, skyFactor);
+        if (argumentBufferHandle == 0 && meshShaderBackend != null &&
+            meshShaderBackend.areMeshShadersAvailable() &&
+            NativeBridge.isLibLoaded()) {
+          long handle0 = renderer.getBackend().getDeviceHandle();
+          if (handle0 != 0) {
+            argumentBufferHandle = NativeBridge.nCreateBuffer(handle0,
+                subChunkUploadCapacity * 16,
+                NativeMemory.STORAGE_MODE_SHARED);
+          }
+        }
         if (!skipTerrainDraw) {
           boolean useMeshShaderOpaque = meshShaderBackend != null &&
               meshShaderBackend.areMeshShadersAvailable() &&
@@ -420,7 +447,7 @@ public class MetalWorldRenderer {
           if (useMeshShaderOpaque && meshShaderBackend.isGPUDrivenEnabled()) {
             long ibHandle = chunkMesher.getGlobalIndexBuffer();
             if (ibHandle != 0) {
-              meshShaderBackend.dispatchTerrainMultiPass(frameCtx, renderer.getHandle(), 0);
+              meshShaderBackend.dispatchTerrainMultiPass(frameCtx, renderer.getHandle(), argumentBufferHandle);
               int visible = meshShaderBackend.getLastVisibleCount();
               if (visible > 0) {
                 lastDrawnChunkCount = visible;
@@ -647,8 +674,8 @@ public class MetalWorldRenderer {
     return vi;
   }
 
-  private final java.util.LinkedHashSet<Long> pendingBuildSet = new java.util.LinkedHashSet<>();
-  private final java.util.ArrayList<Long> sortedBuildList = new java.util.ArrayList<>();
+  private final it.unimi.dsi.fastutil.longs.LongOpenHashSet pendingBuildSet = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+  private final it.unimi.dsi.fastutil.longs.LongArrayList sortedBuildList = new it.unimi.dsi.fastutil.longs.LongArrayList();
   private boolean sortedListDirty = true;
   private int lastSortedSize = 0;
   private int framesSinceLastSort = 0;
@@ -954,9 +981,9 @@ public class MetalWorldRenderer {
       return;
     }
     boolean removed = false;
-    java.util.Iterator<Long> iterator = pendingBuildSet.iterator();
+    it.unimi.dsi.fastutil.longs.LongIterator iterator = pendingBuildSet.iterator();
     while (iterator.hasNext()) {
-      long key = iterator.next();
+      long key = iterator.nextLong();
       int chunkX = unpackChunkX(key);
       int chunkZ = unpackChunkZ(key);
       int dx = chunkX - playerChunkX;
@@ -1113,6 +1140,7 @@ public class MetalWorldRenderer {
       int minBuilds, int highPrioritySubmissions) {
     if (pendingBuildSet.isEmpty())
       return 0;
+    readinessCache.clear();
     if (sortedListDirty) {
       int currentSize = pendingBuildSet.size();
       int sortInterval = currentSize > 25000 ? 30
@@ -1732,12 +1760,32 @@ public class MetalWorldRenderer {
 
   private boolean isSectionBuildReady(ClientLevel world, int chunkX, int chunkY,
       int chunkZ) {
+    long pKey = readinessColumnKey(chunkX, chunkZ);
+    if (readinessCache.containsKey(pKey)) {
+      return readinessCache.get(pKey);
+    }
     var source = world.getChunkSource();
-    return source.getChunkNow(chunkX, chunkZ) != null &&
-        source.getChunkNow(chunkX - 1, chunkZ) != null &&
-        source.getChunkNow(chunkX + 1, chunkZ) != null &&
-        source.getChunkNow(chunkX, chunkZ - 1) != null &&
-        source.getChunkNow(chunkX, chunkZ + 1) != null;
+    if (source.getChunkNow(chunkX, chunkZ) == null) {
+      readinessCache.put(pKey, false);
+      return false;
+    }
+    boolean ready = readyNeighborCheck(source, chunkX, chunkZ);
+    readinessCache.put(pKey, ready);
+    return ready;
+  }
+
+  private static long readinessColumnKey(int chunkX, int chunkZ) {
+    return ((long) chunkX << 32) | (chunkZ & 0xFFFFFFFFL);
+  }
+
+  private static boolean readyNeighborCheck(Object source, int chunkX, int chunkZ) {
+    if (!(source instanceof net.minecraft.world.level.chunk.ChunkSource src)) {
+      return true;
+    }
+    return src.getChunkNow(chunkX - 1, chunkZ) != null &&
+        src.getChunkNow(chunkX + 1, chunkZ) != null &&
+        src.getChunkNow(chunkX, chunkZ - 1) != null &&
+        src.getChunkNow(chunkX, chunkZ + 1) != null;
   }
 
   private void enqueueSectionBuild(int chunkX, int worldY, int chunkZ) {
@@ -1774,12 +1822,14 @@ public class MetalWorldRenderer {
     chunkMesher.noteBlockUpdate(cx, cy, cz);
     chunkMesher.markDirty(cx, cy, cz);
     chunkMesher.buildMeshFromWorldInteractive(cx, cy, cz);
-    markDirtyAndQueue(cx - 1, cy, cz);
-    markDirtyAndQueue(cx + 1, cy, cz);
-    markDirtyAndQueue(cx, cy - 1, cz);
-    markDirtyAndQueue(cx, cy + 1, cz);
-    markDirtyAndQueue(cx, cy, cz - 1);
-    markDirtyAndQueue(cx, cy, cz + 1);
+    if (!loadingMode) {
+      markDirtyAndQueue(cx - 1, cy, cz);
+      markDirtyAndQueue(cx + 1, cy, cz);
+      markDirtyAndQueue(cx, cy - 1, cz);
+      markDirtyAndQueue(cx, cy + 1, cz);
+      markDirtyAndQueue(cx, cy, cz - 1);
+      markDirtyAndQueue(cx, cy, cz + 1);
+    }
     MetalLogger.info(
         "BLOCK_REBUILD: block=[%d,%d,%d] section=[%d,%d,%d] pending=%d chunkPending=%d meshes=%d",
         blockX, blockY, blockZ, cx, cy, cz, pendingBuildSet.size(),

@@ -9,7 +9,7 @@ import com.pebbles_boon.metalrender.performance.MetalRenderProfiler;
 import com.pebbles_boon.metalrender.performance.PerformanceController;
 import com.pebbles_boon.metalrender.util.MetalLogger;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
-import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
+import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -64,6 +64,9 @@ public class CustomChunkMesher {
   private final LongOpenHashSet dirtyKeys = new LongOpenHashSet();
 
   private final LongOpenHashSet emptyKeys = new LongOpenHashSet();
+  private final Long2ObjectOpenHashMap<SectionSnapshot> snapshotCache = new Long2ObjectOpenHashMap<>();
+  private final Long2LongOpenHashMap snapshotCacheGen = new Long2LongOpenHashMap();
+  private java.util.concurrent.ThreadPoolExecutor transientPool;
   private final Long2LongOpenHashMap dirtyGeneration = new Long2LongOpenHashMap();
   private final Long2LongOpenHashMap pendingVisibleSectionNanos = new Long2LongOpenHashMap();
   private final Long2LongOpenHashMap pendingBlockUpdateNanos = new Long2LongOpenHashMap();
@@ -325,6 +328,7 @@ public class CustomChunkMesher {
     this.dirtyGeneration.defaultReturnValue(0L);
     this.pendingVisibleSectionNanos.defaultReturnValue(0L);
     this.pendingBlockUpdateNanos.defaultReturnValue(0L);
+    this.snapshotCacheGen.defaultReturnValue(Long.MIN_VALUE);
     int processors = Runtime.getRuntime().availableProcessors();
 
     int reservedCores = processors >= 12 ? 2 : 1;
@@ -333,6 +337,7 @@ public class CustomChunkMesher {
     int maxBuilderThreads = Math.max(warmupThreads, Math.min(20, processors + 2));
     int steadyInstantThreads = processors >= 10 ? 4 : 3;
     int maxInstantThreads = processors >= 16 ? 8 : (processors >= 10 ? 6 : 4);
+    int transientThreads = Math.max(2, Math.min(4, processors / 2));
 
     final int warmupThreadCount = warmupThreads;
     final int steadyThreadCount = steadyThreads;
@@ -352,6 +357,29 @@ public class CustomChunkMesher {
         java.util.concurrent.TimeUnit.SECONDS,
         new java.util.concurrent.PriorityBlockingQueue<>(), meshFactory);
     this.builderPool.allowCoreThreadTimeOut(true);
+
+    final int transientThreadCount = transientThreads;
+    java.util.concurrent.ThreadFactory transientFactory = r -> {
+      Thread t = new Thread(r, "MetalRender-MeshBuilder-Transient");
+      t.setDaemon(true);
+      t.setPriority(Thread.NORM_PRIORITY - 1);
+      return t;
+    };
+    this.transientPool = new java.util.concurrent.ThreadPoolExecutor(
+        transientThreadCount, transientThreadCount, 60L,
+        java.util.concurrent.TimeUnit.SECONDS,
+        new java.util.concurrent.LinkedBlockingQueue<>(), transientFactory);
+    this.transientPool.allowCoreThreadTimeOut(true);
+    java.util.concurrent.ScheduledExecutorService transientTimer =
+        java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+          Thread t = new Thread(r, "MetalRender-TransientShutdown");
+          t.setDaemon(true);
+          return t;
+        });
+    transientTimer.schedule(() -> {
+      transientPool.shutdown();
+      transientTimer.shutdown();
+    }, 60L, java.util.concurrent.TimeUnit.SECONDS);
 
     java.util.concurrent.ScheduledExecutorService warmupTimer = java.util.concurrent.Executors
         .newSingleThreadScheduledExecutor(r -> {
@@ -411,8 +439,18 @@ public class CustomChunkMesher {
   }
 
   private void submitMeshTask(int priority, Runnable task) {
-    builderPool.execute(new PrioritizedMeshTask(priority, task));
+    PrioritizedMeshTask ptask = new PrioritizedMeshTask(priority, task);
+    if (aggressiveApproximateLighting && transientPool != null &&
+        !transientPool.isShutdown() &&
+        transientPool.getActiveCount() < transientPool.getMaximumPoolSize() &&
+        (builderPool.getQueue().size() > 0 || pendingKeys.size() >= 512)) {
+      transientPool.execute(ptask);
+      return;
+    }
+    builderPool.execute(ptask);
   }
+
+
 
   private boolean isTaskCancelled(long key, long generation) {
     synchronized (dirtyGeneration) {
@@ -1103,6 +1141,12 @@ public class CustomChunkMesher {
     synchronized (emptyKeys) {
       emptyKeys.clear();
     }
+    synchronized (snapshotCache) {
+      snapshotCache.clear();
+    }
+    synchronized (snapshotCacheGen) {
+      snapshotCacheGen.clear();
+    }
     MetalLogger.info("All mesh data cleared (%d meshes).", count);
   }
 
@@ -1137,6 +1181,12 @@ public class CustomChunkMesher {
     }
     synchronized (pendingKeys) {
       pendingKeys.remove(key);
+    }
+    synchronized (snapshotCache) {
+      snapshotCache.remove(key);
+    }
+    synchronized (snapshotCacheGen) {
+      snapshotCacheGen.remove(key);
     }
   }
 
@@ -2581,9 +2631,24 @@ public class CustomChunkMesher {
       try {
         long pipelineStart = System.nanoTime();
         Minecraft mc = Minecraft.getInstance();
-        SectionSnapshot snapshot = captureSectionSnapshot(
-            mc != null ? mc.level : null, chunkX, chunkY, chunkZ,
-            useApproximateLight);
+        SectionSnapshot snapshot = null;
+        synchronized (snapshotCache) {
+          if (snapshotCache.containsKey(key) &&
+              snapshotCacheGen.get(key) == genAtSubmit) {
+            snapshot = snapshotCache.get(key);
+          }
+        }
+        if (snapshot == null) {
+          snapshot = captureSectionSnapshot(
+              mc != null ? mc.level : null, chunkX, chunkY, chunkZ,
+              useApproximateLight);
+          if (snapshot != null && snapshot.valid) {
+            synchronized (snapshotCache) {
+              snapshotCache.put(key, snapshot);
+              snapshotCacheGen.put(key, genAtSubmit);
+            }
+          }
+        }
         if (!snapshot.valid) {
           synchronized (pendingKeys) {
             pendingKeys.remove(key);

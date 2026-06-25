@@ -4,6 +4,12 @@ import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
 import com.pebbles_boon.metalrender.util.MetalLogger;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -31,6 +37,8 @@ public final class MetalRenderProfiler {
   private long hangCount;
   private volatile ProfileSnapshot snapshot = new ProfileSnapshot();
 
+  private final java.util.concurrent.LinkedBlockingQueue<String> csvQueue = new java.util.concurrent.LinkedBlockingQueue<>();
+  private volatile boolean csvWorkerStarted;
   private final AtomicLong meshTimeAccNs = new AtomicLong(0);
   private final AtomicLong uploadTimeAccNs = new AtomicLong(0);
   private final AtomicLong cullTimeAccNs = new AtomicLong(0);
@@ -55,6 +63,11 @@ public final class MetalRenderProfiler {
   private final double[] gpuTimes = new double[HISTORY_SIZE];
 
   private long lastLogTimeMs;
+  private long lastCsvEmitMs;
+  private boolean csvHeaderWritten;
+  private static final String CSV_HEADER =
+      "epoch_ms,loading,frame_ms,mesh_ms,upload_ms,cull_ms,scan_ms," +
+          "meshes_built,chunks_drawn,meshes,pending,vertex_count,builder_pool,queued";
 
   private MetalRenderProfiler() {
   }
@@ -207,6 +220,104 @@ public final class MetalRenderProfiler {
       logPeriodic(frameMs, cpuMs, renderMs,
           meshMs, uploadMs, cullMs, scanMs, textureMs, entityMs, particleMs,
           meshesBuilt, uploadsDone, chunksScanned, chunksDrawn);
+    }
+    MetalWorldRenderer wrForCsv = MetalRenderClient.getWorldRenderer();
+    if (wrForCsv != null && wrForCsv.isLoadingMode() &&
+        nowMs - lastCsvEmitMs >= 1000L) {
+      lastCsvEmitMs = nowMs;
+      emitCsvSample(nowMs, frameMs, meshMs, uploadMs, cullMs, scanMs,
+          meshesBuilt, chunksDrawn, wrForCsv);
+    }
+  }
+
+  private void emitCsvSample(long tsMs, double frameMs, double meshMs,
+      double uploadMs, double cullMs, double scanMs,
+      int meshesBuilt, int chunksDrawn, MetalWorldRenderer wr) {
+    ensureCsvWorker();
+    CustomChunkMesherAccess access = CustomChunkMesherAccess.of(wr);
+    StringBuilder sb = new StringBuilder(256);
+    if (!csvHeaderWritten) {
+      csvHeaderWritten = true;
+      sb.append(CSV_HEADER).append('\n');
+    }
+    sb.append(tsMs).append(',').append(true).append(',')
+        .append(String.format(Locale.ROOT, "%.3f", frameMs)).append(',')
+        .append(String.format(Locale.ROOT, "%.3f", meshMs)).append(',')
+        .append(String.format(Locale.ROOT, "%.3f", uploadMs)).append(',')
+        .append(String.format(Locale.ROOT, "%.3f", cullMs)).append(',')
+        .append(String.format(Locale.ROOT, "%.3f", scanMs)).append(',')
+        .append(meshesBuilt).append(',')
+        .append(chunksDrawn).append(',')
+        .append(access.meshCount).append(',')
+        .append(access.pendingCount).append(',')
+        .append(access.vertexCount).append(',')
+        .append(access.builderActive).append(',')
+        .append(access.builderQueued).append('\n');
+    csvQueue.offer(sb.toString());
+  }
+
+  private void ensureCsvWorker() {
+    if (csvWorkerStarted) return;
+    synchronized (this) {
+      if (csvWorkerStarted) return;
+      csvWorkerStarted = true;
+      Thread t = new Thread(() -> {
+        StringBuilder batch = new StringBuilder(4096);
+        while (!Thread.currentThread().isInterrupted()) {
+          try {
+            String line = csvQueue.poll(250L, java.util.concurrent.TimeUnit.MILLISECONDS);
+            if (line != null) {
+              batch.append(line);
+              String drain;
+              while ((drain = csvQueue.poll()) != null) {
+                batch.append(drain);
+              }
+              try {
+                java.nio.file.Path dir = Paths.get("run", "logs");
+                Files.createDirectories(dir);
+                java.nio.file.Path file = dir.resolve("metalrender_load.csv");
+                Files.writeString(file, batch.toString(), StandardCharsets.UTF_8,
+                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
+              } catch (IOException ignored) {
+              }
+              batch.setLength(0);
+            }
+          } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+          }
+        }
+      }, "MetalRender-CsvWorker");
+      t.setDaemon(true);
+      t.start();
+    }
+  }
+
+  private static final class CustomChunkMesherAccess {
+    final int meshCount;
+    final int pendingCount;
+    final int vertexCount;
+    final int builderActive;
+    final int builderQueued;
+
+    private CustomChunkMesherAccess(int meshCount, int pendingCount,
+        int vertexCount, int builderActive, int builderQueued) {
+      this.meshCount = meshCount;
+      this.pendingCount = pendingCount;
+      this.vertexCount = vertexCount;
+      this.builderActive = builderActive;
+      this.builderQueued = builderQueued;
+    }
+
+    static CustomChunkMesherAccess of(MetalWorldRenderer wr) {
+      try {
+        com.pebbles_boon.metalrender.render.chunk.CustomChunkMesher m =
+            wr.getChunkMesher();
+        return new CustomChunkMesherAccess(m.getMeshCount(), m.getPendingCount(),
+            m.getTotalVertexCount(), m.getBuilderActiveCount(),
+            m.getBuilderQueueDepth());
+      } catch (Throwable t) {
+        return new CustomChunkMesherAccess(0, 0, 0, 0, 0);
+      }
     }
   }
 
