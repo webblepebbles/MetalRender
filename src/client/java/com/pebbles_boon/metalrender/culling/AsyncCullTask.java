@@ -28,13 +28,6 @@ public class AsyncCullTask {
   private AsyncCullTask() {
   }
 
-  /**
-   * Submits a frustum update to the cull pool. Each worker owns its own persistent
-   * {@link FrustumCuller}. The result is published via a handle-tagged AtomicReference
-   * so an older submission (from a previous frame whose worker finished late) cannot
-   * overwrite a newer one. The render thread reads the latest result on every frame
-   * without blocking.
-   */
   public static void submitFrustumUpdate(Matrix4f proj, Matrix4f modelView, Vector3f camPos) {
     long handle = handleCounter.incrementAndGet();
     EXECUTOR.submit(() -> {
@@ -56,24 +49,15 @@ public class AsyncCullTask {
     });
   }
 
-  /** Returns the most recently completed frustum, or {@code null} if none yet. */
   public static FrustumCuller getCurrentCull() {
     CullResult r = latestRef.get();
     return r != null ? r.culler : null;
   }
 
-  /** Returns the handle of the most recently completed frustum, or 0 if none yet. */
   public static long getCurrentHandle() {
     CullResult r = latestRef.get();
     return r != null ? r.handle : 0L;
   }
-
-  /**
-   * Drops the published cull result and resets the handle counter. The next call to
-   * {@link #getCurrentCull()} will return {@code null} so the render thread falls back
-   * to a synchronous frustum update. Called on world load to avoid stale planes from
-   * the previous world.
-   */
   public static void reset() {
     latestRef.set(null);
     handleCounter.set(0);

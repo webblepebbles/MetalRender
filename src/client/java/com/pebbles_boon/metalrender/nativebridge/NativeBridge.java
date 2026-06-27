@@ -253,4 +253,13 @@ public final class NativeBridge {
 
 
   public static native void nDrawOITPass(long frameContext);
+
+  public static native long nCreateIndirectCommandBuffer(long deviceHandle,
+      int maxCommands);
+  public static native void nEncodeChunkDrawICBCmd(long icb, int cmdIndex,
+      int sectionIndex, int instanceCount,
+      long meshBuffer, long indexBuffer, int indexCount);
+  public static native void nExecuteIndirectCommandBuffer(long frameContext,
+      long icb);
+  public static native void nDestroyIndirectCommandBuffer(long icb);
 }

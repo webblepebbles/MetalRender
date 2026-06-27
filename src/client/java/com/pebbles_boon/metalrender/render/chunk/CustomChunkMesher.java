@@ -1150,12 +1150,6 @@ public class CustomChunkMesher {
     }
   }
 
-  /**
-   * Splits {@code totalTarget} across the immediate and background pools, biased
-   * ~60/40 toward immediate (slight over-allocation so close-range interactive rebuilds
-   * drain faster than distant background rebuilds). Used everywhere the prior
-   * single-builder-pool sizing was driven by {@code pending} / {@code ewmaInFlight}.
-   */
   private void resizeBuilderPools(int totalTarget) {
     int immediate = Math.max(2, totalTarget / 2 + 1);
     int background = Math.max(0, totalTarget - immediate);

@@ -7,7 +7,10 @@ import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.backend.MetalRenderer;
 import com.pebbles_boon.metalrender.config.MetalRenderConfig;
 import com.pebbles_boon.metalrender.culling.AsyncCullTask;
+import com.pebbles_boon.metalrender.culling.CullingOrcreator;
 import com.pebbles_boon.metalrender.culling.FrustumCuller;
+import com.pebbles_boon.metalrender.culling.HiZController;
+import com.pebbles_boon.metalrender.draw.TerrainIndirectDraw;
 import com.pebbles_boon.metalrender.entity.MetalEntityRenderer;
 import com.pebbles_boon.metalrender.nativebridge.MetalHardwareChecker;
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
@@ -18,6 +21,7 @@ import com.pebbles_boon.metalrender.sodium.backend.MeshShaderBackend;
 import com.pebbles_boon.metalrender.performance.BuildBudgetEstimator;
 import com.pebbles_boon.metalrender.performance.PerformanceController;
 import com.pebbles_boon.metalrender.performance.MetalRenderProfiler;
+import com.pebbles_boon.metalrender.sort.TranslucencySorter;
 import com.pebbles_boon.metalrender.util.MetalLogger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -152,6 +156,11 @@ public class MetalWorldRenderer {
   private final int[] gpuCullStats = new int[5];
   private int lastGPUVisibleCount;
   private final TranslucencyTrigger translucencyTrigger = new TranslucencyTrigger();
+  private final CullingOrcreator cullingOrchestrator = new CullingOrcreator();
+  private final HiZController hiZController = new HiZController();
+  private final TranslucencySorter translucencySorter = new TranslucencySorter();
+  private final TerrainIndirectDraw terrainIndirectDraw = new TerrainIndirectDraw();
+  private final float[] gpuFrustumPlanes = new float[24];
   private long lastThermalLogMs;
   private boolean loadingMode;
   private int loadingModePendingCount;
@@ -183,6 +192,32 @@ public class MetalWorldRenderer {
   }    public void onWorldLoad() {
     AsyncCullTask.reset();
     worldLoaded = true;
+    MetalRenderConfig gpuConfig = MetalRenderClient.getConfig();
+    boolean clusterEnabled = gpuConfig != null && gpuConfig.enableClusterFrustumCulling;
+    boolean hiZEnabled = gpuConfig != null && gpuConfig.enableHiZCull;
+    boolean sortEnabled = gpuConfig != null && gpuConfig.enableGpuTranslucencySort;
+    boolean icbEnabled = gpuConfig != null && gpuConfig.enableIndirectCommandBuffers;
+    cullingOrchestrator.setActive(clusterEnabled);
+    cullingOrchestrator.setCpuFallbackEnabled(false);
+    hiZController.setActive(hiZEnabled);
+    translucencySorter.setActive(sortEnabled);
+    terrainIndirectDraw.setActive(icbEnabled);
+    if (hiZEnabled) {
+      Minecraft mc0 = Minecraft.getInstance();
+      if (mc0 != null && mc0.getWindow() != null) {
+        int w = mc0.getWindow().getWidth();
+        int h = mc0.getWindow().getHeight();
+        if (w > 0 && h > 0) {
+          hiZController.ensureInitialized(w, h);
+        }
+      }
+    }
+    if (sortEnabled) {
+      translucencySorter.ensureInitialized(0);
+    }
+    MetalLogger.info(
+        "Phase4A orchestrators: cluster=%s hiZ=%s sort=%s icb=%s",
+        clusterEnabled, hiZEnabled, sortEnabled, icbEnabled);
     MetalRenderer renderer = MetalRenderClient.getRenderer();
     if (renderer != null && renderer.isAvailable()) {
       Minecraft mc = Minecraft.getInstance();
@@ -262,6 +297,10 @@ public class MetalWorldRenderer {
       argumentBufferHandle = 0;
     }
     com.pebbles_boon.metalrender.nativebridge.ResidencySetManager.shutdown();
+    cullingOrchestrator.shutdown();
+    hiZController.shutdown();
+    translucencySorter.shutdown();
+    terrainIndirectDraw.shutdown();
     updateLoadingModeState();
   }
 
@@ -404,6 +443,20 @@ public class MetalWorldRenderer {
     final Vector3f asyncCam = new Vector3f(camPos);
     AsyncCullTask.submitFrustumUpdate(asyncProj, asyncMV, asyncCam);
     MetalRenderProfiler.getInstance().recordCullTime(System.nanoTime() - cullStart);
+
+    if (cullingOrchestrator.isActive()) {
+      Matrix4f vp = new Matrix4f(projectionMatrix).mul(modelViewMatrix);
+      extractFrustumPlanes(vp, gpuFrustumPlanes);
+      int chunkRadius = Minecraft.getInstance().options.renderDistance().get();
+      cullingOrchestrator.rebuildFromFrustumCpu(frustumCuller, chunkRadius);
+      cullingOrchestrator.uploadToGpu(gpuFrustumPlanes);
+    }
+    Minecraft mcForYaw = Minecraft.getInstance();
+    float playerYaw = mcForYaw != null && mcForYaw.player != null
+        ? mcForYaw.player.getYRot()
+        : 0.0f;
+    translucencySorter.tickStable(camPos, playerYaw);
+    terrainIndirectDraw.beginFrame();
 
     lastDrawnChunkCount = 0;
     renderer.beginFrame(tickDelta);

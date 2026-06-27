@@ -15,6 +15,9 @@ public final class MetalRenderConfig {
   public boolean enableBurstThreadMode = false;
   public boolean enableMeshShaders = true;
   public boolean enableArgumentBuffers = false;
+  public boolean enableClusterFrustumCulling = false;
+  public boolean enableHiZCull = false;
+  public boolean enableGpuTranslucencySort = false;
 
   public boolean enableProgrammableBlending = false;
   public boolean enableIndirectCommandBuffers = false;

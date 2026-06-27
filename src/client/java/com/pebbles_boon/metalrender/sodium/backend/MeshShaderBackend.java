@@ -143,6 +143,26 @@ public class MeshShaderBackend {
       }
     }
   }
+  public boolean dispatchTerrainViaICB(long frameContext, long icbHandle,
+      com.pebbles_boon.metalrender.draw.TerrainIndirectDraw indirectDraw) {
+    if (!active || frameContext == 0 || icbHandle == 0
+        || indirectDraw == null) {
+      return false;
+    }
+    boolean ok = indirectDraw.execute(frameContext);
+    if (ok) {
+      lastVisibleCount = indirectDraw.getCurrentCommandCount();
+    }
+    return ok;
+  }
+
+  public boolean dispatchTerrainViaICB(long frameContext, long icbHandle) {
+    return dispatchTerrainViaICB(frameContext, icbHandle, null);
+  }
+
+  public boolean isClusterCullReady(long lastUploadNs) {
+    return lastUploadNs > 0L && (System.nanoTime() - lastUploadNs) < 1_000_000_000L;
+  }
 
   private long getPipeline(int passIndex) {
     if (passIndex >= 0 && passIndex < 3 &&

@@ -26,4 +26,18 @@ public final class MeshShaderNative {
   public static native int getActivePipelineCount();
 
   public static native long[] createTerrainMeshPipelines(long libraryHandle);
+
+  public static native void uploadClusterVisibilitySSBO(int regionCount,
+      byte[] data);
+  public static native void markFrustumPlanes(float[] planes);
+
+  public static native long createTranslucencySortSSBO(int capacity);
+  public static native int dispatchTranslucencySort(long ssbo, int count);
+  public static native int readTranslucencyOrder(long ssbo, int[] out);
+  public static native void destroyTranslucencySortSSBO(long ssbo);
+
+  public static native long createHiZPyramid(int width, int height);
+  public static native void updateHiZPyramid(long handle,
+      java.nio.ByteBuffer depth, int width, int height);
+  public static native void destroyHiZPyramid(long handle);
 }

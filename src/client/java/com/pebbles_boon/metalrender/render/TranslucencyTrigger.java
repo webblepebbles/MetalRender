@@ -23,7 +23,32 @@ public class TranslucencyTrigger {
       lastCamPos.set(camPos);
       lastYaw = yaw;
     }
-    return stableFrames >= STABLE_REQUIRED;
+    boolean stable = stableFrames >= STABLE_REQUIRED;
+    notifyGpuSort(stable);
+    return stable;
+  }
+
+  public static interface GpuSortHook {
+    void onTrigger(boolean stableNow);
+  }
+
+  private static volatile GpuSortHook gpuSortHook;
+
+  public static void registerGpuSortHook(GpuSortHook hook) {
+    gpuSortHook = hook;
+  }
+
+  public static void clearGpuSortHook(GpuSortHook hook) {
+    if (gpuSortHook == hook) {
+      gpuSortHook = null;
+    }
+  }
+
+  void notifyGpuSort(boolean stableNow) {
+    GpuSortHook hook = gpuSortHook;
+    if (hook != null) {
+      hook.onTrigger(stableNow);
+    }
   }
 
   public boolean isStable() {
