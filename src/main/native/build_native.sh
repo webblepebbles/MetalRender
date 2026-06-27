@@ -3,7 +3,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 JAVA_HOME=${JAVA_HOME:-$(/usr/libexec/java_home -v 21)}
 mkdir -p build/native
-clang++ -fobjc-arc -shared \
+clang++ -shared \
   -o build/native/libmetalrender.dylib \
   ../resources/native/metalrender.mm \
   ../resources/native/meshshader.mm \
