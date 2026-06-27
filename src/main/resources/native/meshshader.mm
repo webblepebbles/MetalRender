@@ -1,10 +1,12 @@
 #include <Metal/Metal.h>
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <jni.h>
 #include <mutex>
 #include <unordered_map>
+#include <vector>
 extern id<MTLDevice> g_device;
 extern id<MTLRenderCommandEncoder> g_currentEncoder;
 extern id<MTLDepthStencilState> g_depthState;
@@ -21,6 +23,7 @@ extern bool g_meshShadersActive;
 extern uint32_t g_meshPipelineCount;
 extern uint32_t g_drawCallCount;
 static const int kTripleBufferCount = 3;
+static id<MTLBuffer> g_clusterVisibilityBuffer = nil;
 static inline void meshDbg(const char *fmt, ...) {
 #ifdef METALRENDER_DEBUG
   va_list args;
@@ -153,6 +156,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_dispatchTerrain
       id<MTLBuffer> argBuf = (__bridge id<MTLBuffer>)(void *)indirectBufferAddr;
       [g_currentEncoder setObjectBuffer:argBuf offset:0 atIndex:3];
       [g_currentEncoder setMeshBuffer:argBuf offset:0 atIndex:2];
+    }
+    if (g_clusterVisibilityBuffer) {
+      [g_currentEncoder setObjectBuffer:g_clusterVisibilityBuffer offset:0 atIndex:4];
+      [g_currentEncoder setMeshBuffer:g_clusterVisibilityBuffer offset:0 atIndex:3];
     }
     MTLSize objectThreadgroups = MTLSizeMake(regionCount, 1, 1);
     MTLSize objectThreadsPerGroup = MTLSizeMake(256, 1, 1);
@@ -361,4 +368,235 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_createTerrainMe
   jlongArray result = env->NewLongArray(specCount);
   env->SetLongArrayRegion(result, 0, specCount, handles);
   return result;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_uploadClusterVisibilitySSBO(
+    JNIEnv *env, jclass, jint regionCount, jbyteArray data) {
+  if (!g_device || regionCount <= 0 || !data)
+    return;
+  jsize len = env->GetArrayLength(data);
+  if (len <= 0)
+    return;
+  if (!g_clusterVisibilityBuffer || g_clusterVisibilityBuffer.length < (NSUInteger)len) {
+    if (g_clusterVisibilityBuffer)
+      [g_clusterVisibilityBuffer release];
+    g_clusterVisibilityBuffer =
+        [g_device newBufferWithLength:(NSUInteger)len
+                              options:MTLStorageModeShared];
+  }
+  jbyte *bytes = env->GetByteArrayElements(data, nullptr);
+  if (bytes) {
+    memcpy([g_clusterVisibilityBuffer contents], bytes, (size_t)len);
+    env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
+  }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_markFrustumPlanes(
+    JNIEnv *env, jclass, jfloatArray planes) {
+  if (!planes)
+    return;
+  jsize len = env->GetArrayLength(planes);
+  if (len < 24)
+    return;
+  int bufIdx = g_currentBufferIndex % kTripleBufferCount;
+  id<MTLBuffer> camBuf = g_tripleBuffers[bufIdx];
+  if (!camBuf || camBuf.length < 304)
+    return;
+  jfloat *p = env->GetFloatArrayElements(planes, nullptr);
+  if (p) {
+    float *dst = (float *)((uint8_t *)[camBuf contents] + 208);
+    memcpy(dst, p, 24 * sizeof(float));
+    env->ReleaseFloatArrayElements(planes, p, JNI_ABORT);
+  }
+}
+
+struct SortSSBO {
+  id<MTLBuffer> indexBuffer;
+  id<MTLBuffer> keyBuffer;
+  int capacity;
+};
+static std::unordered_map<uint64_t, SortSSBO> g_sortSSBOs;
+static uint64_t g_nextSortHandle = 0xB000000000000000ULL;
+static std::mutex g_sortMutex;
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_createTranslucencySortSSBO(
+    JNIEnv *, jclass, jint capacity) {
+  if (!g_device || capacity <= 0)
+    return 0;
+  int cap = std::max(capacity, 64);
+  size_t idxSize = (size_t)cap * sizeof(uint32_t);
+  size_t keySize = (size_t)cap * sizeof(float);
+  id<MTLBuffer> idxBuf = [g_device newBufferWithLength:idxSize
+                                               options:MTLStorageModeShared];
+  id<MTLBuffer> keyBuf = [g_device newBufferWithLength:keySize
+                                               options:MTLStorageModeShared];
+  if (!idxBuf || !keyBuf) {
+    if (idxBuf) [idxBuf release];
+    if (keyBuf) [keyBuf release];
+    return 0;
+  }
+  std::lock_guard<std::mutex> lock(g_sortMutex);
+  uint64_t h = g_nextSortHandle++;
+  g_sortSSBOs[h] = {idxBuf, keyBuf, cap};
+  return (jlong)h;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_dispatchTranslucencySort(
+    JNIEnv *, jclass, jlong ssboHandle, jint count) {
+  std::lock_guard<std::mutex> lock(g_sortMutex);
+  auto it = g_sortSSBOs.find((uint64_t)ssboHandle);
+  if (it == g_sortSSBOs.end())
+    return 0;
+  SortSSBO &ssbo = it->second;
+  int n = std::min((int)count, ssbo.capacity);
+  if (n <= 0)
+    return 0;
+  uint32_t *indices = (uint32_t *)[ssbo.indexBuffer contents];
+  float *keys = (float *)[ssbo.keyBuffer contents];
+  bool allZero = true;
+  for (int i = 0; i < n; i++) {
+    if (keys[i] != 0.0f) {
+      allZero = false;
+      break;
+    }
+  }
+  if (allZero) {
+    for (int i = 0; i < n; i++) {
+      indices[i] = (uint32_t)i;
+    }
+  } else {
+    std::vector<std::pair<float, uint32_t>> pairs;
+    pairs.reserve(n);
+    for (int i = 0; i < n; i++) {
+      pairs.push_back({keys[i], (uint32_t)i});
+    }
+    std::sort(pairs.begin(), pairs.end(),
+              [](const auto &a, const auto &b) { return a.first > b.first; });
+    for (int i = 0; i < n; i++) {
+      indices[i] = pairs[i].second;
+    }
+  }
+  return n;
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_readTranslucencyOrder(
+    JNIEnv *env, jclass, jlong ssboHandle, jintArray out) {
+  if (!out)
+    return -1;
+  std::lock_guard<std::mutex> lock(g_sortMutex);
+  auto it = g_sortSSBOs.find((uint64_t)ssboHandle);
+  if (it == g_sortSSBOs.end())
+    return -1;
+  SortSSBO &ssbo = it->second;
+  jsize outLen = env->GetArrayLength(out);
+  int n = std::min((int)outLen, ssbo.capacity);
+  if (n <= 0)
+    return 0;
+  uint32_t *indices = (uint32_t *)[ssbo.indexBuffer contents];
+  jint *dst = env->GetIntArrayElements(out, nullptr);
+  if (dst) {
+    for (int i = 0; i < n; i++) {
+      dst[i] = (jint)indices[i];
+    }
+    env->ReleaseIntArrayElements(out, dst, 0);
+  }
+  return n;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_destroyTranslucencySortSSBO(
+    JNIEnv *, jclass, jlong ssboHandle) {
+  std::lock_guard<std::mutex> lock(g_sortMutex);
+  auto it = g_sortSSBOs.find((uint64_t)ssboHandle);
+  if (it != g_sortSSBOs.end()) {
+    if (it->second.indexBuffer) [it->second.indexBuffer release];
+    if (it->second.keyBuffer) [it->second.keyBuffer release];
+    g_sortSSBOs.erase(it);
+  }
+}
+
+static std::unordered_map<uint64_t, id<MTLTexture>> g_hiZTextures;
+static uint64_t g_nextHiZHandle = 0xC000000000000000ULL;
+static std::mutex g_hiZMutex;
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_createHiZPyramid(
+    JNIEnv *, jclass, jint width, jint height) {
+  if (!g_device || width <= 0 || height <= 0)
+    return 0;
+  int w = width;
+  int h = height;
+  uint32_t mipCount = (uint32_t)floor(log2(std::max(w, h))) + 1;
+  mipCount = std::min(mipCount, (uint32_t)12);
+  MTLTextureDescriptor *desc = [MTLTextureDescriptor
+      texture2DDescriptorWithPixelFormat:MTLPixelFormatR32Float
+                                   width:w
+                                  height:h
+                               mipmapped:YES];
+  desc.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+  desc.storageMode = MTLStorageModePrivate;
+  desc.mipmapLevelCount = mipCount;
+  id<MTLTexture> tex = [g_device newTextureWithDescriptor:desc];
+  if (!tex)
+    return 0;
+  std::lock_guard<std::mutex> lock(g_hiZMutex);
+  uint64_t hnd = g_nextHiZHandle++;
+  g_hiZTextures[hnd] = tex;
+  return (jlong)hnd;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_updateHiZPyramid(
+    JNIEnv *env, jclass, jlong handle, jobject depth, jint width, jint height) {
+  std::lock_guard<std::mutex> lock(g_hiZMutex);
+  auto it = g_hiZTextures.find((uint64_t)handle);
+  if (it == g_hiZTextures.end())
+    return;
+  id<MTLTexture> tex = it->second;
+  if (!tex || !depth || width <= 0 || height <= 0)
+    return;
+  void *ptr = env->GetDirectBufferAddress(depth);
+  jlong cap = env->GetDirectBufferCapacity(depth);
+  int texW = (int)tex.width;
+  int texH = (int)tex.height;
+  if (!ptr || cap < texW * texH * 2)
+    return;
+  int pxCount = texW * texH;
+  static std::vector<float> s_floatScratch;
+  if ((int)s_floatScratch.size() < pxCount)
+    s_floatScratch.resize(pxCount);
+  const uint16_t *src16 = (const uint16_t *)ptr;
+  for (int i = 0; i < pxCount; i++) {
+    s_floatScratch[i] = (float)src16[i] / 65535.0f;
+  }
+  [tex replaceRegion:MTLRegionMake2D(0, 0, texW, texH)
+         mipmapLevel:0
+           withBytes:s_floatScratch.data()
+         bytesPerRow:(NSUInteger)(texW * sizeof(float))];
+  if ([tex mipmapLevelCount] > 1) {
+    extern id<MTLCommandQueue> g_queue;
+    if (g_queue) {
+      id<MTLCommandBuffer> cb = [g_queue commandBuffer];
+      id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+      [blit generateMipmapsForTexture:tex];
+      [blit endEncoding];
+      [cb commit];
+    }
+  }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_destroyHiZPyramid(
+    JNIEnv *, jclass, jlong handle) {
+  std::lock_guard<std::mutex> lock(g_hiZMutex);
+  auto it = g_hiZTextures.find((uint64_t)handle);
+  if (it != g_hiZTextures.end()) {
+    [it->second release];
+    g_hiZTextures.erase(it);
+  }
 }

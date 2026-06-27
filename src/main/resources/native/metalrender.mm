@@ -62,7 +62,7 @@ static inline int dispatch_get_active_cpu_count() {
 #endif
 static bool g_available = true;
 id<MTLDevice> g_device = nil;
-static id<MTLCommandQueue> g_queue = nil;
+id<MTLCommandQueue> g_queue = nil;
 static std::unordered_map<uint64_t, id<MTLBuffer>> g_buffers;
 static uint64_t g_nextHandle = 1;
 static id<MTLBuffer> g_megaVB = nil;
@@ -5747,4 +5747,106 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDestroyResidencySe
     }
   }
 #endif
+}
+
+static std::unordered_map<uint64_t, id<MTLIndirectCommandBuffer>> g_javaICBs;
+static std::unordered_map<uint64_t, NSUInteger> g_javaICBEncodedCount;
+static uint64_t g_nextJavaICBHandle = 0xA000000000000000ULL;
+static std::mutex g_javaICBMutex;
+
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateIndirectCommandBuffer(
+    JNIEnv *, jclass, jlong deviceHandle, jint maxCommands) {
+  (void)deviceHandle;
+  ensure_device();
+  if (!g_device || maxCommands <= 0)
+    return 0;
+  MTLIndirectCommandBufferDescriptor *desc =
+      [MTLIndirectCommandBufferDescriptor new];
+  desc.commandTypes = MTLIndirectCommandTypeDrawIndexed;
+  desc.inheritPipelineState = YES;
+  desc.inheritBuffers = YES;
+  desc.maxVertexBufferBindCount = 8;
+  id<MTLIndirectCommandBuffer> icb =
+      [g_device newIndirectCommandBufferWithDescriptor:desc
+                                       maxCommandCount:(NSUInteger)maxCommands
+                                               options:MTLStorageModeShared];
+  [desc release];
+  if (!icb)
+    return 0;
+  std::lock_guard<std::mutex> lock(g_javaICBMutex);
+  uint64_t h = g_nextJavaICBHandle++;
+  g_javaICBs[h] = icb;
+  g_javaICBEncodedCount[h] = 0;
+  return (jlong)h;
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEncodeChunkDrawICBCmd(
+    JNIEnv *, jclass, jlong icbHandle, jint cmdIndex, jint sectionIndex,
+    jint instanceCount, jlong meshBufferHandle, jlong indexBufferHandle,
+    jint indexCount) {
+  (void)sectionIndex;
+  std::lock_guard<std::mutex> lock(g_javaICBMutex);
+  auto it = g_javaICBs.find((uint64_t)icbHandle);
+  if (it == g_javaICBs.end())
+    return;
+  id<MTLIndirectCommandBuffer> icb = it->second;
+  if (!icb || cmdIndex < 0 || cmdIndex >= (int)[icb size])
+    return;
+  id<MTLIndirectRenderCommand> icmd =
+      [icb indirectRenderCommandAtIndex:(NSUInteger)cmdIndex];
+  ResolvedBuf vbRes = resolve_buffer((uint64_t)meshBufferHandle);
+  ResolvedBuf ibRes = resolve_buffer((uint64_t)indexBufferHandle);
+  if (!vbRes.buf || !ibRes.buf)
+    return;
+  [icmd setVertexBuffer:vbRes.buf offset:(NSUInteger)vbRes.offset atIndex:0];
+  int inst = std::max((int)instanceCount, 1);
+  g_javaICBEncodedCount[(uint64_t)icbHandle] =
+      std::max(g_javaICBEncodedCount[(uint64_t)icbHandle],
+               (NSUInteger)(cmdIndex + 1));
+  [icmd drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                   indexCount:(NSUInteger)indexCount
+                    indexType:MTLIndexTypeUInt32
+                  indexBuffer:ibRes.buf
+            indexBufferOffset:(NSUInteger)ibRes.offset
+                instanceCount:(NSUInteger)inst
+                   baseVertex:0
+                 baseInstance:0];
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nExecuteIndirectCommandBuffer(
+    JNIEnv *, jclass, jlong frameContext, jlong icbHandle) {
+  (void)frameContext;
+  if (!g_currentEncoder)
+    return;
+  std::lock_guard<std::mutex> lock(g_javaICBMutex);
+  auto it = g_javaICBs.find((uint64_t)icbHandle);
+  if (it == g_javaICBs.end())
+    return;
+  id<MTLIndirectCommandBuffer> icb = it->second;
+  if (!icb)
+    return;
+  auto cit = g_javaICBEncodedCount.find((uint64_t)icbHandle);
+  NSUInteger count = (cit != g_javaICBEncodedCount.end()) ? cit->second : 0;
+  if (count > 0) {
+    [g_currentEncoder executeCommandsInBuffer:icb
+                                    withRange:NSMakeRange(0, count)];
+  }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDestroyIndirectCommandBuffer(
+    JNIEnv *, jclass, jlong icbHandle) {
+  std::lock_guard<std::mutex> lock(g_javaICBMutex);
+  auto it = g_javaICBs.find((uint64_t)icbHandle);
+  if (it != g_javaICBs.end()) {
+    [it->second release];
+    g_javaICBs.erase(it);
+  }
+  auto cit = g_javaICBEncodedCount.find((uint64_t)icbHandle);
+  if (cit != g_javaICBEncodedCount.end()) {
+    g_javaICBEncodedCount.erase(cit);
+  }
 }
