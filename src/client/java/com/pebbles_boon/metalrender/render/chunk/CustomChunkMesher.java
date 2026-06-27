@@ -11,6 +11,7 @@ import com.pebbles_boon.metalrender.util.MetalLogger;
 import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
 import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;import it.unimi.dsi.fastutil.longs.LongArrayList;
 import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
+import it.unimi.dsi.fastutil.objects.Object2IntOpenHashMap;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.IdentityHashMap;
@@ -66,6 +67,36 @@ public class CustomChunkMesher {
   private final LongOpenHashSet emptyKeys = new LongOpenHashSet();
   private final Long2ObjectOpenHashMap<SectionSnapshot> snapshotCache = new Long2ObjectOpenHashMap<>();
   private final Long2LongOpenHashMap snapshotCacheGen = new Long2LongOpenHashMap();
+  private static final int BATCH_REG_CAPACITY = 2048;
+  private final long[] batchRegData = new long[BATCH_REG_CAPACITY * 8];
+  private int batchRegCount = 0;
+
+  public void flushMeshRegistrations() {
+    int toFlush;
+    synchronized (batchRegData) {
+      toFlush = batchRegCount;
+      if (toFlush <= 0)
+        return;
+      NativeBridge.nRegisterChunkMeshBatch(toFlush, batchRegData);
+      batchRegCount = 0;
+    }
+  }
+
+  private static int roundToSizeClass(int size) {
+    if (size <= 8192)
+      return 8192;
+    if (size <= 16384)
+      return 16384;
+    if (size <= 32768)
+      return 32768;
+    if (size <= 65536)
+      return 65536;
+    if (size <= 131072)
+      return 131072;
+    if (size <= 262144)
+      return 262144;
+    return (size + 255) & ~255;
+  }
   private java.util.concurrent.ThreadPoolExecutor transientPool;
   private final Long2LongOpenHashMap dirtyGeneration = new Long2LongOpenHashMap();
   private final Long2LongOpenHashMap pendingVisibleSectionNanos = new Long2LongOpenHashMap();
@@ -73,7 +104,8 @@ public class CustomChunkMesher {
   private long deviceHandle;
   private boolean initialized;
   private long globalIndexBufferHandle;
-  private final java.util.concurrent.ThreadPoolExecutor builderPool;
+  private final java.util.concurrent.ThreadPoolExecutor immediatePool;
+  private final java.util.concurrent.ThreadPoolExecutor backgroundPool;
   private final int boostedBuilderThreadCount;
   private final int steadyBuilderThreadCount;
   private final int maxBuilderThreadCount;
@@ -346,17 +378,33 @@ public class CustomChunkMesher {
     this.maxBuilderThreadCount = maxBuilderThreads;
     this.steadyInstantThreadCount = steadyInstantThreads;
     this.maxInstantThreadCount = Math.max(steadyInstantThreads, maxInstantThreads);
-    java.util.concurrent.ThreadFactory meshFactory = r -> {
-      Thread t = new Thread(r, "MetalRender-MeshBuilder");
+    final java.util.concurrent.ThreadFactory immediateFactory = r -> {
+      Thread t = new Thread(r, "MetalRender-MeshBuilder-Immediate");
       t.setDaemon(true);
       t.setPriority(Thread.NORM_PRIORITY);
       return t;
     };
-    this.builderPool = new java.util.concurrent.ThreadPoolExecutor(
-        warmupThreadCount, warmupThreadCount, 10L,
+    final java.util.concurrent.ThreadFactory backgroundFactory = r -> {
+      Thread t = new Thread(r, "MetalRender-MeshBuilder-Background");
+      t.setDaemon(true);
+      t.setPriority(Thread.NORM_PRIORITY - 1);
+      return t;
+    };
+    int immediateWarmupThreads = Math.max(2, warmupThreadCount / 2 + 1);
+    int backgroundWarmupThreads = Math.max(2, warmupThreadCount - immediateWarmupThreads);
+    int immediateMaxThreads = Math.max(immediateWarmupThreads, maxBuilderThreadCount / 2);
+    int backgroundMaxThreads = Math.max(backgroundWarmupThreads,
+        maxBuilderThreadCount - immediateMaxThreads);
+    this.immediatePool = new java.util.concurrent.ThreadPoolExecutor(
+        immediateWarmupThreads, immediateMaxThreads, 10L,
         java.util.concurrent.TimeUnit.SECONDS,
-        new java.util.concurrent.PriorityBlockingQueue<>(), meshFactory);
-    this.builderPool.allowCoreThreadTimeOut(true);
+        new java.util.concurrent.PriorityBlockingQueue<>(), immediateFactory);
+    this.immediatePool.allowCoreThreadTimeOut(true);
+    this.backgroundPool = new java.util.concurrent.ThreadPoolExecutor(
+        backgroundWarmupThreads, backgroundMaxThreads, 10L,
+        java.util.concurrent.TimeUnit.SECONDS,
+        new java.util.concurrent.PriorityBlockingQueue<>(), backgroundFactory);
+    this.backgroundPool.allowCoreThreadTimeOut(true);
 
     final int transientThreadCount = transientThreads;
     java.util.concurrent.ThreadFactory transientFactory = r -> {
@@ -389,7 +437,10 @@ public class CustomChunkMesher {
         });
     warmupTimer.schedule(() -> {
       if (getPendingCount() == 0) {
-        updateThreadPoolSize(builderPool, steadyThreadCount);
+        int immediateSteady = Math.max(2, steadyThreadCount / 2 + 1);
+        int backgroundSteady = Math.max(2, steadyThreadCount - immediateSteady);
+        updateThreadPoolSize(immediatePool, immediateSteady);
+        updateThreadPoolSize(backgroundPool, backgroundSteady);
       }
       warmupTimer.shutdown();
     }, 30, java.util.concurrent.TimeUnit.SECONDS);
@@ -438,16 +489,92 @@ public class CustomChunkMesher {
         (z & 0x3FFFFF);
   }
 
+  private static final int IMMEDIATE_QUEUE_CHUNK_RANGE = 8;
+  private static final int COALESCE_WINDOW_FRAMES = 2;
+  private static final int COALESCE_MAP_CAP = 4096;
+
+  private final Long2LongOpenHashMap rebuildBatchTick = new Long2LongOpenHashMap();
+  private volatile int coalesceFrameCounter = 0;
+
+  public void bumpCoalesceFrame() {
+    coalesceFrameCounter++;
+  }
+
+  public int getCoalesceFrameCounter() {
+    return coalesceFrameCounter;
+  }
+
+  private int getImmediateInFlight() {
+    return immediatePool.getActiveCount() + immediatePool.getQueue().size();
+  }
+
+  private int getBackgroundInFlight() {
+    return backgroundPool.getActiveCount() + backgroundPool.getQueue().size();
+  }
+
+  public int getImmediatePoolActive() {
+    return immediatePool.getActiveCount();
+  }
+
+  public int getImmediatePoolQueueDepth() {
+    return immediatePool.getQueue().size();
+  }
+
+  public int getBackgroundPoolActive() {
+    return backgroundPool.getActiveCount();
+  }
+
+  public int getBackgroundPoolQueueDepth() {
+    return backgroundPool.getQueue().size();
+  }
+
   private void submitMeshTask(int priority, Runnable task) {
-    PrioritizedMeshTask ptask = new PrioritizedMeshTask(priority, task);
-    if (aggressiveApproximateLighting && transientPool != null &&
-        !transientPool.isShutdown() &&
-        transientPool.getActiveCount() < transientPool.getMaximumPoolSize() &&
-        (builderPool.getQueue().size() > 0 || pendingKeys.size() >= 512)) {
-      transientPool.execute(ptask);
+    submitMeshTask(priority, task, 0, 0);
+  }
+
+  private void submitMeshTask(int priority, Runnable task, int chunkX, int chunkZ) {
+    boolean isImmediate;
+    if (priority == 0) {
+      isImmediate = true;
+    } else {
+      Minecraft mc = Minecraft.getInstance();
+      if (priority == 1 && mc != null && mc.player != null) {
+        int pcx = mc.player.chunkPosition().x();
+        int pcz = mc.player.chunkPosition().z();
+        int dx = Math.abs(chunkX - pcx);
+        int dz = Math.abs(chunkZ - pcz);
+        int chunkDist = Math.max(dx, dz);
+        isImmediate = chunkDist <= IMMEDIATE_QUEUE_CHUNK_RANGE;
+      } else {
+        isImmediate = false;
+      }
+    }
+    BuildBudgetEstimator estimator = PerformanceController.getBudgetEstimator();
+    int immediateCap = estimator != null
+        ? estimator.recommendedInFlightFor(0)
+        : 64;
+    if (isImmediate && priority != 0 && getImmediateInFlight() >= immediateCap) {
+      isImmediate = false;
+    }
+    int backgroundCap = estimator != null
+        ? estimator.recommendedInFlightFor(1)
+        : 256;
+    if (!isImmediate && getBackgroundInFlight() >= backgroundCap) {
       return;
     }
-    builderPool.execute(ptask);
+    PrioritizedMeshTask ptask = new PrioritizedMeshTask(priority, task);
+    if (isImmediate) {
+      immediatePool.execute(ptask);
+    } else {
+      if (aggressiveApproximateLighting && transientPool != null &&
+          !transientPool.isShutdown() &&
+          transientPool.getActiveCount() < transientPool.getMaximumPoolSize() &&
+          (backgroundPool.getQueue().size() > 0 || pendingKeys.size() >= 512)) {
+        transientPool.execute(ptask);
+        return;
+      }
+      backgroundPool.execute(ptask);
+    }
   }
 
 
@@ -550,12 +677,23 @@ public class CustomChunkMesher {
     }
     int[] blockStates = new int[SECTION_SIZE * SECTION_SIZE * SECTION_SIZE];
     boolean hasAnyBlock = false;
+    Object2IntOpenHashMap<BlockState> bsIdCache = BS_ID_CACHE.get();
     for (int y = 0; y < SECTION_SIZE; y++) {
       for (int z = 0; z < SECTION_SIZE; z++) {
         for (int x = 0; x < SECTION_SIZE; x++) {
           BlockState bs = section.getBlockState(x, y, z);
           if (!bs.isAir()) {
-            blockStates[y * 256 + z * 16 + x] = Block.getId(bs);
+            int cachedId = bsIdCache.getInt(bs);
+            int stateId;
+            if (cachedId != -1) {
+              stateId = cachedId;
+            } else {
+              stateId = Block.getId(bs);
+              if (bsIdCache.size() < BS_ID_CACHE_CAP) {
+                bsIdCache.put(bs, stateId);
+              }
+            }
+            blockStates[y * 256 + z * 16 + x] = stateId;
             hasAnyBlock = true;
           }
         }
@@ -964,36 +1102,34 @@ public class CustomChunkMesher {
   }
 
   public int getBuilderActiveCount() {
-    return builderPool != null ? builderPool.getActiveCount() : 0;
+    return (immediatePool != null ? immediatePool.getActiveCount() : 0) +
+        (backgroundPool != null ? backgroundPool.getActiveCount() : 0);
   }
 
   public int getBuilderQueueDepth() {
-    return builderPool != null ? builderPool.getQueue().size() : 0;
+    return (immediatePool != null ? immediatePool.getQueue().size() : 0) +
+        (backgroundPool != null ? backgroundPool.getQueue().size() : 0);
   }
 
   public int getInstantActiveCount() {
-    return builderPool != null ? builderPool.getActiveCount() : 0;
+    return getBuilderActiveCount();
   }
 
   public int getInstantQueueDepth() {
-    return builderPool != null ? builderPool.getQueue().size()
-        : 0;
+    return getBuilderQueueDepth();
   }
 
   public int getInteractiveActiveCount() {
-    return builderPool != null
-        ? builderPool.getActiveCount()
-        : 0;
+    return immediatePool != null ? immediatePool.getActiveCount() : 0;
   }
 
   public int getInteractiveQueueDepth() {
-    return builderPool != null
-        ? builderPool.getQueue().size()
-        : 0;
+    return immediatePool != null ? immediatePool.getQueue().size() : 0;
   }
 
   public int getBuilderThreadCount() {
-    return builderPool.getCorePoolSize();
+    return (immediatePool != null ? immediatePool.getCorePoolSize() : 0) +
+        (backgroundPool != null ? backgroundPool.getCorePoolSize() : 0);
   }
 
   private static void updateThreadPoolSize(java.util.concurrent.ThreadPoolExecutor pool,
@@ -1012,6 +1148,19 @@ public class CustomChunkMesher {
       pool.setCorePoolSize(normalizedCore);
       pool.setMaximumPoolSize(normalizedMax);
     }
+  }
+
+  /**
+   * Splits {@code totalTarget} across the immediate and background pools, biased
+   * ~60/40 toward immediate (slight over-allocation so close-range interactive rebuilds
+   * drain faster than distant background rebuilds). Used everywhere the prior
+   * single-builder-pool sizing was driven by {@code pending} / {@code ewmaInFlight}.
+   */
+  private void resizeBuilderPools(int totalTarget) {
+    int immediate = Math.max(2, totalTarget / 2 + 1);
+    int background = Math.max(0, totalTarget - immediate);
+    updateThreadPoolSize(immediatePool, immediate);
+    updateThreadPoolSize(backgroundPool, background);
   }
 
   private boolean isBurstThreadModeEnabled() {
@@ -1059,18 +1208,18 @@ public class CustomChunkMesher {
         loadingMode, pending, fpsPriorityMode, aggressiveApproximateLighting,
         ewmaThreads, ewmaInFlight, shouldThrottle);
     if (pending <= 0) {
-      updateThreadPoolSize(builderPool, 0);
+      resizeBuilderPools(0);
       MetalLogger.info("THREAD_BUDGET: pools idled");
       return;
     }
     if (fpsPriorityMode && !shouldThrottle) {
       int target = Math.min(getBuilderThreadCap(), ewmaThreads > 0 ? Math.min(getBuilderThreadCap(), ewmaThreads) : getBuilderThreadCap());
-      updateThreadPoolSize(builderPool, target);
+      resizeBuilderPools(target);
       return;
     }
     if (fpsPriorityMode && shouldThrottle) {
       int target = Math.max(2, Math.min(getBuilderThreadCap(), ewmaThreads > 0 ? ewmaThreads / 2 : 2));
-      updateThreadPoolSize(builderPool, target);
+      resizeBuilderPools(target);
       return;
     }
     int baseTarget = loadingMode ? boostedBuilderThreadCount : steadyBuilderThreadCount;
@@ -1101,7 +1250,7 @@ public class CustomChunkMesher {
       backlogBoost = 0;
     }
     int target = Math.min(budgetCap, baseTarget + backlogBoost);
-    updateThreadPoolSize(builderPool, target);
+    resizeBuilderPools(target);
     MetalLogger.info(
         "THREAD_BUDGET: builder=%d cap=%d backlogBoost=%d ewma=%d",
         target, budgetCap, backlogBoost, ewmaThreads);
@@ -1147,6 +1296,13 @@ public class CustomChunkMesher {
     synchronized (snapshotCacheGen) {
       snapshotCacheGen.clear();
     }
+    synchronized (batchRegData) {
+      batchRegCount = 0;
+    }
+    coalesceFrameCounter = 0;
+    synchronized (rebuildBatchTick) {
+      rebuildBatchTick.clear();
+    }
     MetalLogger.info("All mesh data cleared (%d meshes).", count);
   }
 
@@ -1169,6 +1325,22 @@ public class CustomChunkMesher {
 
   public void markDirty(int cx, int cy, int cz) {
     long key = packChunkKey(cx, cy, cz);
+    int currentFrame = coalesceFrameCounter;
+    long prevMark;
+    synchronized (rebuildBatchTick) {
+      if (rebuildBatchTick.size() >= COALESCE_MAP_CAP) {
+        rebuildBatchTick.clear();
+      }
+      prevMark = rebuildBatchTick.get(key);
+      rebuildBatchTick.put(key, currentFrame);
+    }
+    boolean recentBlockUpdate;
+    synchronized (pendingBlockUpdateNanos) {
+      recentBlockUpdate = pendingBlockUpdateNanos.containsKey(key);
+    }
+    boolean canCoalesce = prevMark != 0L
+        && (currentFrame - (int) prevMark) <= COALESCE_WINDOW_FRAMES
+        && !recentBlockUpdate;
 
     synchronized (emptyKeys) {
       emptyKeys.remove(key);
@@ -1176,17 +1348,19 @@ public class CustomChunkMesher {
     synchronized (dirtyKeys) {
       dirtyKeys.add(key);
     }
-    synchronized (dirtyGeneration) {
-      dirtyGeneration.put(key, dirtyGeneration.get(key) + 1L);
-    }
     synchronized (pendingKeys) {
       pendingKeys.remove(key);
     }
-    synchronized (snapshotCache) {
-      snapshotCache.remove(key);
-    }
-    synchronized (snapshotCacheGen) {
-      snapshotCacheGen.remove(key);
+    if (!canCoalesce) {
+      synchronized (dirtyGeneration) {
+        dirtyGeneration.put(key, dirtyGeneration.get(key) + 1L);
+      }
+      synchronized (snapshotCache) {
+        snapshotCache.remove(key);
+      }
+      synchronized (snapshotCacheGen) {
+        snapshotCacheGen.remove(key);
+      }
     }
   }
 
@@ -1255,7 +1429,7 @@ public class CustomChunkMesher {
           pendingKeys.remove(key);
         }
       }
-    });
+    }, chunkX, chunkZ);
   }
 
 
@@ -1310,10 +1484,22 @@ public class CustomChunkMesher {
     }
 
     void ensureCapacity(int needed, int uvNeeded) {
-      if (needed > cap)
-        growTo(needed);
-      if (uvNeeded > uvCap)
-        growToUV(uvNeeded);
+      if (needed > cap) {
+        int next = 1024;
+        while (next < needed && next < 65536)
+          next *= 4;
+        if (next < needed)
+          next = needed;
+        growTo(next);
+      }
+      if (uvNeeded > uvCap) {
+        int next = 1024;
+        while (next < uvNeeded && next < 65536 * 6)
+          next *= 4;
+        if (next < uvNeeded)
+          next = uvNeeded;
+        growToUV(next);
+      }
     }
 
     private void growTo(int newCap) {
@@ -1369,6 +1555,13 @@ public class CustomChunkMesher {
   }
 
   private static final ThreadLocal<SidDataArrays> SID_DATA_POOL = ThreadLocal.withInitial(SidDataArrays::new);
+
+  private static final int BS_ID_CACHE_CAP = 32768;
+  private static final ThreadLocal<Object2IntOpenHashMap<BlockState>> BS_ID_CACHE = ThreadLocal.withInitial(() -> {
+    Object2IntOpenHashMap<BlockState> m = new Object2IntOpenHashMap<>(8192);
+    m.defaultReturnValue(-1);
+    return m;
+  });
 
   private static byte getFaceLight(byte[] lightData, byte[] nXNegLight,
       byte[] nXPosLight, byte[] nYNegLight,
@@ -2250,11 +2443,20 @@ public class CustomChunkMesher {
         return;
       }
 
+      int roundedSize = roundToSizeClass(dataLen);
+      long oldHintHandle = 0;
+      synchronized (meshCache) {
+        ChunkMeshData existing = meshCache.get(key);
+        if (existing != null) {
+          oldHintHandle = existing.bufferHandle;
+        }
+      }
+
       long bufferHandle;
       UPLOAD_SEMAPHORE.acquireUninterruptibly();
       try {
-        bufferHandle = NativeBridge.nCreateBuffer(
-            deviceHandle, dataLen, NativeMemory.STORAGE_MODE_SHARED);
+        bufferHandle = NativeBridge.nCreateBufferWithHint(
+            deviceHandle, roundedSize, NativeMemory.STORAGE_MODE_SHARED, oldHintHandle);
         long uploadStart = System.nanoTime();
         NativeBridge.nUploadBufferDataDirect(bufferHandle, vertexBuffer, 0,
             dataLen);
@@ -2276,10 +2478,35 @@ public class CustomChunkMesher {
       } else {
         vertexCountAtomic.addAndGet(mesh.quadCount * 4 - old.quadCount * 4);
       }
-      NativeBridge.nRegisterChunkMesh(chunkX, chunkY, chunkZ, bufferHandle,
-          quadCount, opaqueQuadCount, visibilityMask,
-          facingQuadCounts);
-      if (old != null) {
+      int flushCount = -1;
+      synchronized (batchRegData) {
+        int idx = batchRegCount * 8;
+        batchRegData[idx] = (chunkX & 0xFFFFFFFFL) | ((long) chunkY << 32);
+        batchRegData[idx + 1] = (chunkZ & 0xFFFFFFFFL) | ((long) quadCount << 32);
+        batchRegData[idx + 2] = bufferHandle;
+        batchRegData[idx + 3] = visibilityMask;
+        batchRegData[idx + 4] =
+            (opaqueQuadCount & 0xFFFFFFFFL)
+                | ((long) (facingQuadCounts.length > 0 ? facingQuadCounts[0] : 0) << 32);
+        batchRegData[idx + 5] =
+            ((long) (facingQuadCounts.length > 1 ? facingQuadCounts[1] : 0) & 0xFFFFFFFFL)
+                | ((long) (facingQuadCounts.length > 2 ? facingQuadCounts[2] : 0) << 32);
+        batchRegData[idx + 6] =
+            ((long) (facingQuadCounts.length > 3 ? facingQuadCounts[3] : 0) & 0xFFFFFFFFL)
+                | ((long) (facingQuadCounts.length > 4 ? facingQuadCounts[4] : 0) << 32);
+        batchRegData[idx + 7] =
+            ((long) (facingQuadCounts.length > 5 ? facingQuadCounts[5] : 0) & 0xFFFFFFFFL)
+                | ((long) (facingQuadCounts.length > 6 ? facingQuadCounts[6] : 0) << 32);
+        batchRegCount++;
+        if (batchRegCount >= BATCH_REG_CAPACITY) {
+          flushCount = batchRegCount;
+          batchRegCount = 0;
+        }
+      }
+      if (flushCount > 0) {
+        NativeBridge.nRegisterChunkMeshBatch(flushCount, batchRegData);
+      }
+      if (old != null && old.bufferHandle != bufferHandle) {
         NativeBridge.nDestroyBuffer(old.bufferHandle);
       }
 
@@ -2692,7 +2919,7 @@ public class CustomChunkMesher {
         "BUILD_SUBMIT: chunk=[%d,%d,%d] priority=%d high=%s interactive=%s dirty=%s",
         chunkX, chunkY, chunkZ, priority, highPriority,
         interactivePriority, wasDirty);
-    submitMeshTask(priority, buildTask);
+    submitMeshTask(priority, buildTask, chunkX, chunkZ);
   }
 
   private int emitBakedQuad(ByteBuffer buf, BakedQuad quad, int blockX,

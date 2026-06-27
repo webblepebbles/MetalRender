@@ -101,6 +101,13 @@ public class MetalWorldRenderer {
   private static final int TEXTURE_SYNC_PRESSURE_THRESHOLD = 64;
   private static final int PRESSURED_ATLAS_SYNC_FRAME_INTERVAL = 2;
   private static final int PRESSURED_LIGHTMAP_SYNC_FRAME_INTERVAL = 8;
+  private static final double TEXTURE_BACKOFF_TRIP_MESH_MS = 6.0;
+  private static final double TEXTURE_BACKOFF_HARD_TRIP_MESH_MS = 12.0;
+  private static final double TEXTURE_BACKOFF_RECOVERY_MESH_MS = 4.0;
+  private static final int TEXTURE_BACKOFF_TRIP_CONSEC = 2;
+  private static final int TEXTURE_BACKOFF_RECOVER_CONSEC = 5;
+  private static final int BACKED_OFF_ATLAS_SYNC_FRAME_INTERVAL = 8;
+  private static final int BACKED_OFF_LIGHTMAP_SYNC_FRAME_INTERVAL = 32;
   private static final int JAVA_PROFILE_EMIT_INTERVAL = 240;
   private static volatile java.lang.reflect.Field skyLightFactorField;
   private static volatile java.lang.reflect.Method skyLightProbeGetValueMethod;
@@ -173,9 +180,8 @@ public class MetalWorldRenderer {
 
   public static MetalWorldRenderer getInstance() {
     return instance;
-  }
-
-  public void onWorldLoad() {
+  }    public void onWorldLoad() {
+    AsyncCullTask.reset();
     worldLoaded = true;
     MetalRenderer renderer = MetalRenderClient.getRenderer();
     if (renderer != null && renderer.isAvailable()) {
@@ -286,12 +292,23 @@ public class MetalWorldRenderer {
     } else if (texturesReady && !textureManager.isUsingFallbackBlockAtlas()) {
       boolean textureSyncPressure = pendingBuildSet.size() >= TEXTURE_SYNC_PRESSURE_THRESHOLD ||
           chunkMesher.getPendingCount() >= TEXTURE_SYNC_PRESSURE_THRESHOLD;
-      if (!textureSyncPressure ||
-          frameCount % PRESSURED_ATLAS_SYNC_FRAME_INTERVAL == 0) {
+      updateTextureBackoffState();
+      int atlasInterval;
+      int lightmapInterval;
+      if (textureBackoffActive) {
+        atlasInterval = BACKED_OFF_ATLAS_SYNC_FRAME_INTERVAL;
+        lightmapInterval = BACKED_OFF_LIGHTMAP_SYNC_FRAME_INTERVAL;
+      } else if (textureSyncPressure) {
+        atlasInterval = PRESSURED_ATLAS_SYNC_FRAME_INTERVAL;
+        lightmapInterval = PRESSURED_LIGHTMAP_SYNC_FRAME_INTERVAL;
+      } else {
+        atlasInterval = 1;
+        lightmapInterval = 1;
+      }
+      if (frameCount % atlasInterval == 0) {
         textureManager.updateBlockAtlas();
       }
-      if (!textureSyncPressure ||
-          frameCount % PRESSURED_LIGHTMAP_SYNC_FRAME_INTERVAL == 0) {
+      if (frameCount % lightmapInterval == 0) {
         textureManager.updateLightmap();
       }
     }
@@ -361,37 +378,31 @@ public class MetalWorldRenderer {
     updateLoadingModeState();
   }
 
-  private volatile FrustumCuller asyncCullResult = new FrustumCuller();
-  private volatile FrustumCuller asyncCullPending = new FrustumCuller();
-  private volatile boolean asyncCullReady = false;
-
   public void beginFrame(Camera camera, float tickDelta, Matrix4f projection,
       Matrix4f modelView) {
     MetalRenderer renderer = MetalRenderClient.getRenderer();
     if (renderer == null || !renderer.isAvailable())
       return;
+    if (chunkMesher != null) {
+      chunkMesher.flushMeshRegistrations();
+      chunkMesher.bumpCoalesceFrame();
+    }
     projectionMatrix.set(projection);
     modelViewMatrix.set(modelView);
     Vector3f camPos = new Vector3f((float) camera.position().x, (float) camera.position().y,
         (float) camera.position().z);
 
     long cullStart = System.nanoTime();
-    if (asyncCullReady) {
-      frustumCuller.copyFrom(asyncCullResult);
-      asyncCullReady = false;
+    FrustumCuller latest = AsyncCullTask.getCurrentCull();
+    if (latest != null) {
+      frustumCuller.copyFrom(latest);
     } else {
       frustumCuller.update(projectionMatrix, modelViewMatrix, camPos);
     }
     final Matrix4f asyncProj = new Matrix4f(projectionMatrix);
     final Matrix4f asyncMV = new Matrix4f(modelViewMatrix);
     final Vector3f asyncCam = new Vector3f(camPos);
-    AsyncCullTask.submit(() -> {
-      asyncCullPending.update(asyncProj, asyncMV, asyncCam);
-      FrustumCuller tmp = asyncCullResult;
-      asyncCullResult = asyncCullPending;
-      asyncCullPending = tmp;
-      asyncCullReady = true;
-    });
+    AsyncCullTask.submitFrustumUpdate(asyncProj, asyncMV, asyncCam);
     MetalRenderProfiler.getInstance().recordCullTime(System.nanoTime() - cullStart);
 
     lastDrawnChunkCount = 0;
@@ -553,6 +564,7 @@ public class MetalWorldRenderer {
     }
   }
 
+
   public void endFrame() {
     MetalRenderer renderer = MetalRenderClient.getRenderer();
     if (renderer == null || !renderer.isAvailable())
@@ -678,6 +690,9 @@ public class MetalWorldRenderer {
   private final it.unimi.dsi.fastutil.longs.LongArrayList sortedBuildList = new it.unimi.dsi.fastutil.longs.LongArrayList();
   private boolean sortedListDirty = true;
   private int lastSortedSize = 0;
+  private int consecutiveHighMeshMsFrames = 0;
+  private int consecutiveCoolMeshMsFrames = 0;
+  private boolean textureBackoffActive = false;
   private int framesSinceLastSort = 0;
   private float cachedForwardX = 0, cachedForwardZ = 1;
   private int lastScanPlayerCX = Integer.MIN_VALUE, lastScanPlayerCZ = Integer.MIN_VALUE;
@@ -1786,6 +1801,39 @@ public class MetalWorldRenderer {
         src.getChunkNow(chunkX + 1, chunkZ) != null &&
         src.getChunkNow(chunkX, chunkZ - 1) != null &&
         src.getChunkNow(chunkX, chunkZ + 1) != null;
+  }
+
+  private void updateTextureBackoffState() {
+    if (loadingMode) {
+      consecutiveHighMeshMsFrames = 0;
+      consecutiveCoolMeshMsFrames = 0;
+      textureBackoffActive = false;
+      return;
+    }
+    BuildBudgetEstimator estimator = PerformanceController.getBudgetEstimator();
+    double meshMs = estimator != null ? estimator.getEwmaMeshMs() : 0.0;
+    if (meshMs > TEXTURE_BACKOFF_HARD_TRIP_MESH_MS) {
+      textureBackoffActive = true;
+      consecutiveHighMeshMsFrames = TEXTURE_BACKOFF_TRIP_CONSEC;
+      consecutiveCoolMeshMsFrames = 0;
+      return;
+    }
+    if (meshMs > TEXTURE_BACKOFF_TRIP_MESH_MS) {
+      consecutiveHighMeshMsFrames++;
+      consecutiveCoolMeshMsFrames = 0;
+      if (consecutiveHighMeshMsFrames >= TEXTURE_BACKOFF_TRIP_CONSEC) {
+        textureBackoffActive = true;
+      }
+    } else if (meshMs < TEXTURE_BACKOFF_RECOVERY_MESH_MS) {
+      consecutiveCoolMeshMsFrames++;
+      consecutiveHighMeshMsFrames = 0;
+      if (consecutiveCoolMeshMsFrames >= TEXTURE_BACKOFF_RECOVER_CONSEC) {
+        textureBackoffActive = false;
+      }
+    } else {
+      consecutiveHighMeshMsFrames = 0;
+      consecutiveCoolMeshMsFrames = 0;
+    }
   }
 
   private void enqueueSectionBuild(int chunkX, int worldY, int chunkZ) {

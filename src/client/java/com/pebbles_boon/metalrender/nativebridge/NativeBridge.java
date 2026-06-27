@@ -49,6 +49,9 @@ public final class NativeBridge {
 
   public static native void nSetCurrentThreadQoS(int qosClass);
 
+  public static native long nCreateBufferWithHint(long deviceHandle, int sizeBytes,
+      int storageMode, long oldHandle);
+
   public static native long nCreateBuffer(long deviceHandle, int sizeBytes,
       int storageMode);
 
@@ -213,6 +216,8 @@ public final class NativeBridge {
   public static native boolean nIsGPUDrivenActive();
 
   public static native boolean nAreMeshShadersActive();
+
+  public static native void nRegisterChunkMeshBatch(int count, long[] batchData);
 
   public static native void nRegisterChunkMesh(int cx, int cy, int cz,
       long bufferHandle, int quadCount,

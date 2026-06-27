@@ -43,7 +43,28 @@ public class BuildBudgetEstimator {
     return 96;
   }
 
+  /**
+   * Per-queue in-flight cap. {@code queueId == 0} is the Immediate pool (close-camera
+   * interactive / high-priority rebuilds, low cap so they drain fast and we feed back
+   * pressure early). {@code queueId == 1} is the Background pool (everything else,
+   * generous cap from the global total).
+   */
+  public int recommendedInFlightFor(int queueId) {
+    if (queueId == 0) {
+      if (ewmaGpuMs < 4.1) return 64;
+      if (ewmaGpuMs < 8.1) return 48;
+      return 32;
+    }
+    int budget = recommendedInFlight();
+    return Math.max(64, budget - 32);
+  }
+
   public boolean shouldThrottle() {
     return ewmaGpuMs > 16.1;
+  }
+
+  /** Current EWMA of mesh build time (ms). Used by texture-sync back-off heuristics. */
+  public double getEwmaMeshMs() {
+    return ewmaMeshMs;
   }
 }

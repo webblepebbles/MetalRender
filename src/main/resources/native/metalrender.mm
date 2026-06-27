@@ -2009,6 +2009,35 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MetalBackend_destroyBuffer(
   g_deferredDeletions.push_back({h, g_frameCount, isMegaHandle(h)});
 }
 extern "C" JNIEXPORT jlong JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateBufferWithHint(
+    JNIEnv *, jclass, jlong deviceHandle, jint sizeBytes, jint storageMode,
+    jlong oldHandle) {
+  (void)deviceHandle;
+  (void)storageMode;
+  ensure_device();
+  if (!g_device || sizeBytes <= 0)
+    return 0;
+  size_t aligned = (size_t)((sizeBytes + 255) & ~255);
+  if (oldHandle != 0 && isMegaHandle((uint64_t)oldHandle)) {
+    MegaSubAlloc existing;
+    if (megaGetAlloc((uint64_t)oldHandle, existing) &&
+        existing.size >= aligned) {
+      return (jlong)oldHandle;
+    }
+  }
+  if (g_megaVB && aligned <= 16 * 1024 * 1024) {
+    uint64_t megaH = megaAlloc(aligned);
+    if (megaH != 0) {
+      return (jlong)megaH;
+    }
+  }
+  id<MTLBuffer> buf =
+      [g_device newBufferWithLength:(size_t)sizeBytes
+                            options:MTLStorageModeShared];
+  return (jlong)store_buffer(buf);
+}
+
+extern "C" JNIEXPORT jlong JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateBuffer(
     JNIEnv *, jclass, jlong deviceHandle, jint sizeBytes, jint storageMode) {
   (void)deviceHandle;
@@ -2545,6 +2574,79 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBatch(
     }
   }
 }
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMeshBatch(
+    JNIEnv *env, jclass, jint count, jlongArray batchData) {
+  if (count <= 0 || !batchData)
+    return;
+  jsize longLen = env->GetArrayLength(batchData);
+  jsize maxCount = (jsize)(longLen / 8);
+  if (count > maxCount)
+    count = (jint)maxCount;
+  jlong *data = env->GetLongArrayElements(batchData, nullptr);
+  if (!data)
+    return;
+  std::unique_lock<std::shared_mutex> lock(g_meshRegMutex);
+  for (int i = 0; i < count; i++) {
+    int idx = i * 8;
+    int32_t cx = (int32_t)(data[idx] & 0xFFFFFFFFLL);
+    int32_t cy = (int32_t)(data[idx] >> 32);
+    int32_t cz = (int32_t)(data[idx + 1] & 0xFFFFFFFFLL);
+    int32_t quadCountI = (int32_t)(data[idx + 1] >> 32);
+    uint64_t bufH = (uint64_t)data[idx + 2];
+    uint64_t visMask = (uint64_t)data[idx + 3];
+    int32_t opaqueQ = (int32_t)(data[idx + 4] & 0xFFFFFFFFLL);
+    int32_t f0 = (int32_t)(data[idx + 4] >> 32);
+    int32_t f1 = (int32_t)(data[idx + 5] & 0xFFFFFFFFLL);
+    int32_t f2 = (int32_t)(data[idx + 5] >> 32);
+    int32_t f3 = (int32_t)(data[idx + 6] & 0xFFFFFFFFLL);
+    int32_t f4 = (int32_t)(data[idx + 6] >> 32);
+    int32_t f5 = (int32_t)(data[idx + 7] & 0xFFFFFFFFLL);
+    int32_t f6 = (int32_t)(data[idx + 7] >> 32);
+    int64_t key = packMeshKey(cx, cy, cz);
+    int32_t faceCounts[14] = {f0, f1, f2, f3, f4, f5, f6, 0, 0, 0, 0, 0, 0, 0};
+    int opaqueFaceTotal = f0 + f1 + f2 + f3 + f4 + f5 + f6;
+    if (opaqueFaceTotal != opaqueQ) {
+      memset(faceCounts, 0, sizeof(faceCounts));
+      faceCounts[6] = opaqueQ;
+    }
+    auto it = g_meshKeyToIdx.find(key);
+    if (it != g_meshKeyToIdx.end()) {
+      NativeMesh &m = g_nativeMeshes[it->second];
+      m.bufferHandle = bufH;
+      m.quadCount = quadCountI;
+      m.opaqueQuadCount = opaqueQ;
+      m.visibilityMask = visMask;
+      memcpy(m.facingQuadCounts, faceCounts, sizeof(faceCounts));
+      m.active = true;
+      continue;
+    }
+    size_t mIdx;
+    if (!g_meshFreeSlots.empty()) {
+      mIdx = g_meshFreeSlots.back();
+      g_meshFreeSlots.pop_back();
+    } else {
+      mIdx = g_nativeMeshes.size();
+      g_nativeMeshes.push_back({});
+    }
+    NativeMesh mesh = {};
+    mesh.chunkX = cx;
+    mesh.chunkY = cy;
+    mesh.chunkZ = cz;
+    mesh.bufferHandle = bufH;
+    mesh.quadCount = quadCountI;
+    mesh.opaqueQuadCount = opaqueQ;
+    mesh.visibilityMask = visMask;
+    memcpy(mesh.facingQuadCounts, faceCounts, sizeof(faceCounts));
+    mesh.active = true;
+    g_nativeMeshes[mIdx] = mesh;
+    g_meshKeyToIdx[key] = mIdx;
+    g_activeMeshIndices.push_back((int)mIdx);
+    g_activeMeshCount++;
+  }
+  env->ReleaseLongArrayElements(batchData, data, JNI_ABORT);
+}
+
 extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMesh(
     JNIEnv *env, jclass, jint cx, jint cy, jint cz, jlong bufferHandle,
