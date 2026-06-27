@@ -8,6 +8,7 @@ import com.pebbles_boon.metalrender.backend.MetalRenderer;
 import com.pebbles_boon.metalrender.config.MetalRenderConfig;
 import com.pebbles_boon.metalrender.culling.AsyncCullTask;
 import com.pebbles_boon.metalrender.culling.CullingOrcreator;
+import com.pebbles_boon.metalrender.culling.CullingOrcreator;
 import com.pebbles_boon.metalrender.culling.FrustumCuller;
 import com.pebbles_boon.metalrender.culling.HiZController;
 import com.pebbles_boon.metalrender.draw.TerrainIndirectDraw;
@@ -156,7 +157,7 @@ public class MetalWorldRenderer {
   private final int[] gpuCullStats = new int[5];
   private int lastGPUVisibleCount;
   private final TranslucencyTrigger translucencyTrigger = new TranslucencyTrigger();
-  private final CullingOrcreator cullingOrchestrator = new CullingOrcreator();
+  private final CullingOrcreator cullingOrcreator = new CullingOrcreator();
   private final HiZController hiZController = new HiZController();
   private final TranslucencySorter translucencySorter = new TranslucencySorter();
   private final TerrainIndirectDraw terrainIndirectDraw = new TerrainIndirectDraw();
@@ -189,7 +190,9 @@ public class MetalWorldRenderer {
 
   public static MetalWorldRenderer getInstance() {
     return instance;
-  }    public void onWorldLoad() {
+  }
+
+  public void onWorldLoad() {
     AsyncCullTask.reset();
     worldLoaded = true;
     MetalRenderConfig gpuConfig = MetalRenderClient.getConfig();
@@ -197,8 +200,8 @@ public class MetalWorldRenderer {
     boolean hiZEnabled = gpuConfig != null && gpuConfig.enableHiZCull;
     boolean sortEnabled = gpuConfig != null && gpuConfig.enableGpuTranslucencySort;
     boolean icbEnabled = gpuConfig != null && gpuConfig.enableIndirectCommandBuffers;
-    cullingOrchestrator.setActive(clusterEnabled);
-    cullingOrchestrator.setCpuFallbackEnabled(false);
+    cullingOrcreator.setActive(clusterEnabled);
+    cullingOrcreator.setCpuFallbackEnabled(false);
     hiZController.setActive(hiZEnabled);
     translucencySorter.setActive(sortEnabled);
     terrainIndirectDraw.setActive(icbEnabled);
@@ -297,7 +300,7 @@ public class MetalWorldRenderer {
       argumentBufferHandle = 0;
     }
     com.pebbles_boon.metalrender.nativebridge.ResidencySetManager.shutdown();
-    cullingOrchestrator.shutdown();
+    cullingOrcreator.shutdown();
     hiZController.shutdown();
     translucencySorter.shutdown();
     terrainIndirectDraw.shutdown();
@@ -444,18 +447,14 @@ public class MetalWorldRenderer {
     AsyncCullTask.submitFrustumUpdate(asyncProj, asyncMV, asyncCam);
     MetalRenderProfiler.getInstance().recordCullTime(System.nanoTime() - cullStart);
 
-    if (cullingOrchestrator.isActive()) {
+    if (cullingOrcreator.isActive()) {
       Matrix4f vp = new Matrix4f(projectionMatrix).mul(modelViewMatrix);
       extractFrustumPlanes(vp, gpuFrustumPlanes);
       int chunkRadius = Minecraft.getInstance().options.renderDistance().get();
-      cullingOrchestrator.rebuildFromFrustumCpu(frustumCuller, chunkRadius);
-      cullingOrchestrator.uploadToGpu(gpuFrustumPlanes);
+      cullingOrcreator.rebuildFromFrustumCpu(frustumCuller, chunkRadius);
+      cullingOrcreator.uploadToGpu(gpuFrustumPlanes);
     }
-    Minecraft mcForYaw = Minecraft.getInstance();
-    float playerYaw = mcForYaw != null && mcForYaw.player != null
-        ? mcForYaw.player.getYRot()
-        : 0.0f;
-    translucencySorter.tickStable(camPos, playerYaw);
+    translucencySorter.tickStable(camPos, camera.getYRot());
     terrainIndirectDraw.beginFrame();
 
     lastDrawnChunkCount = 0;
@@ -616,7 +615,6 @@ public class MetalWorldRenderer {
       planes[offset + 3] *= invLen;
     }
   }
-
 
   public void endFrame() {
     MetalRenderer renderer = MetalRenderClient.getRenderer();
