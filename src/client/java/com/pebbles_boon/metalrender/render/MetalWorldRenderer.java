@@ -8,7 +8,6 @@ import com.pebbles_boon.metalrender.backend.MetalRenderer;
 import com.pebbles_boon.metalrender.config.MetalRenderConfig;
 import com.pebbles_boon.metalrender.culling.AsyncCullTask;
 import com.pebbles_boon.metalrender.culling.CullingOrcreator;
-import com.pebbles_boon.metalrender.culling.CullingOrcreator;
 import com.pebbles_boon.metalrender.culling.FrustumCuller;
 import com.pebbles_boon.metalrender.culling.HiZController;
 import com.pebbles_boon.metalrender.draw.TerrainIndirectDraw;
@@ -454,7 +453,9 @@ public class MetalWorldRenderer {
       cullingOrcreator.rebuildFromFrustumCpu(frustumCuller, chunkRadius);
       cullingOrcreator.uploadToGpu(gpuFrustumPlanes);
     }
-    translucencySorter.tickStable(camPos, camera.getYRot());
+    Minecraft mcYaw = Minecraft.getInstance();
+    float playerYaw = mcYaw != null && mcYaw.player != null ? mcYaw.player.getYRot() : 0.0f;
+    translucencySorter.tickStable(camPos, playerYaw);
     terrainIndirectDraw.beginFrame();
 
     lastDrawnChunkCount = 0;
