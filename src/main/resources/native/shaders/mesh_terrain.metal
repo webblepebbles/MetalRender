@@ -1,13 +1,3 @@
-
-
-
-
-
-
-
-
-
-
 #include <metal_stdlib>
 #include <metal_mesh>
 using namespace metal;
