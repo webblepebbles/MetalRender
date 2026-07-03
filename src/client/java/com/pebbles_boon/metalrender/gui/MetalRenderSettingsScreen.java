@@ -411,7 +411,7 @@ public class MetalRenderSettingsScreen extends Screen {
 
     boolean biomeChanged = config.biomeTransitionDetail != initialBiomeDetail;
     com.pebbles_boon.metalrender.util.MetalLogger.info(
-        "Settings closed: needsRebuild=%b (renderDist=%b biome=%b leaf=%b lighting=%b)",
+        "settings close: rebuild=%b rd=%b bm=%b lf=%b lt=%b",
         needsRebuild,
         pendingRenderDist != initialRenderDist,
         biomeChanged,

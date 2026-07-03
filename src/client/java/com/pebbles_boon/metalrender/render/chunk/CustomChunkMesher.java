@@ -453,7 +453,7 @@ public class CustomChunkMesher {
 
   public void initialize(long device) {
     this.deviceHandle = device;
-    MetalLogger.info("CustomChunkMesher initialize: device=%d loadingConfig=%s",
+    MetalLogger.info("mesher init: dev=%d cfg=%s",
         device, MetalRenderClient.getConfig() != null
             ? MetalRenderClient.getConfig().enableMetalRendering
             : false);
@@ -478,9 +478,8 @@ public class CustomChunkMesher {
     NativeBridge.nUploadBufferData(this.globalIndexBufferHandle, ibData, 0,
         ibData.length);
     this.initialized = true;
-    MetalLogger.info("Chunk mesh uploads using fallback path (parallelism=%d)",
-        UPLOAD_PARALLELISM);
-    MetalLogger.info("CustomChunkMesher initialized (maxQuads=%d, ibSize=%d)",
+    MetalLogger.info("mesh upload fallback path (par=%d)", UPLOAD_PARALLELISM);
+    MetalLogger.info("mesher weady (maxq=%d ib=%d)",
         MAX_QUADS, ibData.length);
   }
 
@@ -1198,12 +1197,12 @@ public class CustomChunkMesher {
     boolean shouldThrottle = estimator != null && estimator.shouldThrottle();
 
     MetalLogger.info(
-        "THREAD_BUDGET: loading=%s pending=%d fpsPriority=%s approxLighting=%s ewmaThreads=%d ewmaInFlight=%d throttle=%s",
+        "thread_budget: load=%s p=%d fps=%s approx=%s ewma_t=%d ewma_f=%d throt=%s",
         loadingMode, pending, fpsPriorityMode, aggressiveApproximateLighting,
         ewmaThreads, ewmaInFlight, shouldThrottle);
     if (pending <= 0) {
       resizeBuilderPools(0);
-      MetalLogger.info("THREAD_BUDGET: pools idled");
+      MetalLogger.info("thread_budget: pools idled");
       return;
     }
     if (fpsPriorityMode && !shouldThrottle) {
@@ -1246,7 +1245,7 @@ public class CustomChunkMesher {
     int target = Math.min(budgetCap, baseTarget + backlogBoost);
     resizeBuilderPools(target);
     MetalLogger.info(
-        "THREAD_BUDGET: builder=%d cap=%d backlogBoost=%d ewma=%d",
+        "thread_budget: build=%d cap=%d boost=%d ewma=%d",
         target, budgetCap, backlogBoost, ewmaThreads);
   }
 
@@ -1297,7 +1296,7 @@ public class CustomChunkMesher {
     synchronized (rebuildBatchTick) {
       rebuildBatchTick.clear();
     }
-    MetalLogger.info("All mesh data cleared (%d meshes).", count);
+    MetalLogger.info("mesh data cleared (%d).", count);
   }
 
   public boolean hasMesh(int cx, int cy, int cz) {
@@ -1405,7 +1404,7 @@ public class CustomChunkMesher {
     synchronized (pendingKeys) {
       pendingKeys.add(key);
     }
-    MetalLogger.debug("ASYNC_QUEUE: chunk=[%d,%d,%d] pending=%d",
+    MetalLogger.debug("async_queue: chunk=[%d,%d,%d] p=%d",
         chunkX, chunkY, chunkZ, getPendingCount());
     submitMeshTask(2, () -> {
       try {
@@ -1416,7 +1415,7 @@ public class CustomChunkMesher {
             genAtSubmit, null, null, null, null, null, null, null, null,
             null, null, null, null, context);
       } catch (Exception e) {
-        MetalLogger.error("Meshing error for chunk [%d,%d,%d]: %s", chunkX,
+        MetalLogger.error("mesh fail [%d,%d,%d]: %s", chunkX,
             chunkY, chunkZ, e.getMessage());
       } finally {
         synchronized (pendingKeys) {
@@ -2400,8 +2399,7 @@ public class CustomChunkMesher {
         vertexBuffer.put(waterBuffer);
       }
       if (meshBuildCount <= 3) {
-        MetalLogger.info("[BUILD_V9 DIAG] chunk[%d,%d,%d] quads=%d opaque=%d "
-            + "water=%d baked=%d fallback=%d",
+        MetalLogger.info("[build_v9] chunk[%d,%d,%d] q=%d op=%d wt=%d bak=%d fb=%d",
             chunkX, chunkY, chunkZ, quadCount, opaqueQuadCount,
             waterQuadCount, bakedQuadBlocks, fallbackBlocks);
       }
@@ -2511,8 +2509,7 @@ public class CustomChunkMesher {
         dirtyKeys.remove(key);
       }
     } catch (Exception e) {
-      MetalLogger.error("Meshing error for chunk [%d,%d,%d]", chunkX, chunkY,
-          chunkZ);
+      MetalLogger.error("mesh fail [%d,%d,%d]", chunkX, chunkY, chunkZ);
     } finally {
       long buildElapsed = System.nanoTime() - buildStart;
       MetalRenderProfiler.getInstance().recordMeshingTime(buildElapsed);
@@ -2521,14 +2518,12 @@ public class CustomChunkMesher {
       if (MetalRenderConfig.isDeepDebugActive() && samples % 500 == 0) {
         double avgMs = (meshBuildTimeAcc / 1e6) / samples;
         MetalLogger.info(
-            "MESH_PERF: avg=%.2fms over %d builds | pipeline=%.2fms (%d)",
+            "mesh_perf: avg=%.2fms n=%d pipe=%.2fms (%d)",
             avgMs, samples,
             pipelineCount > 0 ? (pipelineTimeAcc / 1e6) / pipelineCount : 0.0,
             pipelineCount);
         MetalLogger.info(
-            "WATER_DBG: boundaryCullHit=%d boundaryWaterMiss=%d "
-                + "boundaryNullArr=%d | waterBaked=%d waterFallback=%d "
-                + "waterBakedFaceCull=%d nonFullSkip=%d",
+            "water_dbg: bch=%d bwm=%d bna=%d wb=%d wf=%d wbc=%d nfs=%d",
             dbgBoundaryCullHit, dbgBoundaryWaterMiss, dbgBoundaryNullArr,
             dbgWaterBaked, dbgWaterFallback, dbgWaterBakedCull, dbgNonFullSkip);
       }
@@ -2727,7 +2722,7 @@ public class CustomChunkMesher {
   private static void recordLightSampleFallback(String stage, Exception e) {
     int c = ++lightSampleFallbackCount;
     if (c <= 5 || c % 250 == 0) {
-      MetalLogger.warn("LIGHT_FALLBACK[%s]: count=%d reason=%s", stage, c,
+      MetalLogger.warn("light_fallback[%s]: count=%d reason=%s", stage, c,
           e != null ? e.getClass().getSimpleName() + ": " +
               e.getMessage()
               : "unknown");

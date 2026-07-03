@@ -36,8 +36,7 @@ public class MeshShaderBackend {
         terrainPipelineHandles[1] = handles[1];
         terrainPipelineHandles[2] = handles[2];
         if (handles[0] != 0) {
-          MetalLogger.info("Mesh shader terrain pipelines created: "
-              + "opaque=0x%X, cutout=0x%X, emissive=0x%X",
+          MetalLogger.info("mesh pipes made: opaque=0x%X cutout=0x%X em=0x%X",
               handles[0], handles[1], handles[2]);
         }
       }
@@ -54,10 +53,9 @@ public class MeshShaderBackend {
     active = true;
     gpuDrivenEnabled = meshShadersAvailable &&
         (terrainPipelineHandles[0] != 0 || fallbackPipelineHandle != 0);
-    MetalLogger.info("Mesh shader backend initialized (mesh shaders: %s, "
-        + "GPU-driven: %s, pipelines: %d)",
-        meshShadersAvailable ? "supported" : "unsupported",
-        gpuDrivenEnabled ? "enabled" : "disabled",
+    MetalLogger.info("mesh backend weady (mesh=%s gpu=%s pipes=%d)",
+        meshShadersAvailable ? "ok" : "no",
+        gpuDrivenEnabled ? "on" : "off",
         MeshShaderNative.getActivePipelineCount());
   }
 
@@ -177,7 +175,7 @@ public class MeshShaderBackend {
     if (now - lastStatsLogMs > STATS_LOG_INTERVAL_MS) {
       lastStatsLogMs = now;
       MetalLogger.info(
-          "MeshShader: visible=%d, threadgroups=%d, meshlets=%d, pipelines=%d",
+          "mesh stats: vis=%d tg=%d ml=%d p=%d",
           lastVisibleCount, lastDispatchedThreadgroups, currentMeshletCount,
           MeshShaderNative.getActivePipelineCount());
     }

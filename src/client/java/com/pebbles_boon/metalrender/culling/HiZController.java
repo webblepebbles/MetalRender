@@ -32,14 +32,12 @@ public class HiZController {
       if (pyramidHandle != 0) {
         width = w;
         height = h;
-        MetalLogger.info("HiZPyramid created: %dx%d handle=0x%X", w, h,
-            pyramidHandle);
+        MetalLogger.info("hiz made: %dx%d h=0x%X", w, h, pyramidHandle);
       } else {
-        MetalLogger.warn("HiZPyramid init returned 0; cull will fall back to "
-            + "CPU frustum");
+        MetalLogger.warn("hiz init 0; cpu cull fallback");
       }
     } catch (UnsatisfiedLinkError e) {
-      MetalLogger.warn("HiZPyramid init missing native impl: " + e.getMessage());
+      MetalLogger.warn("hiz init missing: " + e.getMessage());
       pyramidHandle = 0L;
       active = false;
     }
@@ -63,7 +61,7 @@ public class HiZController {
           frameHeight);
       lastUpdateNs = System.nanoTime();
     } catch (UnsatisfiedLinkError e) {
-      MetalLogger.warn("updateHiZPyramid missing native impl: " + e.getMessage());
+      MetalLogger.warn("hiz update missing: " + e.getMessage());
       safeDestroy(pyramidHandle);
       pyramidHandle = 0L;
     }

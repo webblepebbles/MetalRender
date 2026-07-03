@@ -159,7 +159,7 @@ public final class IOSurfaceBlitter {
         (width != lastIOSurfaceWidth || height != lastIOSurfaceHeight)) {
       if (blitFrameCount == 1 || blitFrameCount % 6000 == 0) {
         MetalLogger.debugInfo(
-            "[IOSurfaceBlitter] IOSurface resized: %dx%d -> %dx%d",
+            "[iosurface] resize %dx%d->%dx%d",
             lastIOSurfaceWidth, lastIOSurfaceHeight, width, height);
       }
       invalidateTextures();
@@ -196,7 +196,7 @@ public final class IOSurfaceBlitter {
     boundHeight = 0;
     pixelBuffer = null;
     resetFastPathState();
-    MetalLogger.info("[IOSurfaceBlitter] Destroyed");
+    MetalLogger.info("[iosurface] destroyed");
   }
 
   private boolean initialize() {
@@ -219,10 +219,10 @@ public final class IOSurfaceBlitter {
       GL30.glBindVertexArray(0);
       GL15.glBindBuffer(GL15.GL_ARRAY_BUFFER, 0);
       initialized = true;
-      MetalLogger.info("[IOSurfaceBlitter] Initialized");
+      MetalLogger.info("[iosurface] weady");
       return true;
     } catch (Exception e) {
-      MetalLogger.error("[IOSurfaceBlitter] Init failed: %s", e.getMessage());
+      MetalLogger.error("[iosurface] init fail: %s", e.getMessage());
       destroy();
       return false;
     }
@@ -259,8 +259,7 @@ public final class IOSurfaceBlitter {
             double iMs = blitInterAccNs / (blitStageCount * 1_000_000.0);
             double qMs = blitQuadAccNs / (blitStageCount * 1_000_000.0);
             MetalLogger.info(
-                "[IOSurfaceBlitter] STAGE_TIMING: wait=%.2fms "
-                    + "bind=%.2fms inter=%.2fms quad=%.2fms (avg/%d)",
+                "[iosurface] timing w=%.2f b=%.2f i=%.2f q=%.2f (avg/%d)",
                 wMs, bMs, iMs, qMs, blitStageCount);
             blitWaitAccNs = 0;
             blitBindAccNs = 0;
@@ -272,13 +271,11 @@ public final class IOSurfaceBlitter {
         } else {
           consecutiveFastPathFailures++;
           if (blitFrameCount <= 10) {
-            MetalLogger.warn("[IOSurfaceBlitter] Fast path failed (attempt "
-                + "%d), falling back to slow path",
+            MetalLogger.warn("[iosurface] fastpath fail #%d, slow fallback",
                 consecutiveFastPathFailures);
           }
           if (consecutiveFastPathFailures >= MAX_FAST_PATH_FAILURES) {
-            MetalLogger.warn(
-                "[IOSurfaceBlitter] Fast path disabled after %d failures",
+            MetalLogger.warn("[iosurface] fastpath off (%d fails)",
                 MAX_FAST_PATH_FAILURES);
             ioSurfaceFailed = true;
           }
@@ -286,15 +283,14 @@ public final class IOSurfaceBlitter {
       }
       return blitSlowPath(metalHandle, width, height);
     } catch (Exception e) {
-      if (blitFrameCount <= 10) {
-        MetalLogger.error("[IOSurfaceBlitter] GPU composite exception: %s",
-            e.getMessage());
+      if (blitFrameCount <= 10) {        MetalLogger.error("[iosurface] composite eww: %s",
+          e.getMessage());
       }
       int err;
       int drained = 0;
       while ((err = GL11.glGetError()) != GL11.GL_NO_ERROR && drained++ < 8) {
         if (blitFrameCount <= 10) {
-          MetalLogger.warn("[IOSurfaceBlitter] deferred GL error: 0x%X", err);
+          MetalLogger.warn("[iosurface] deferred gl err 0x%X", err);
         }
       }
       return false;
@@ -343,8 +339,7 @@ public final class IOSurfaceBlitter {
       if (!readFboVerified) {
         int status = GL30.glCheckFramebufferStatus(GL30.GL_READ_FRAMEBUFFER);
         if (status != GL30.GL_FRAMEBUFFER_COMPLETE) {
-          MetalLogger.error("[IOSurfaceBlitter] Read FBO incomplete: 0x%X",
-              status);
+          MetalLogger.error("[iosurface] read fbo bad 0x%X", status);
           return false;
         }
         readFboVerified = true;
@@ -353,8 +348,7 @@ public final class IOSurfaceBlitter {
       if (!drawFboVerified) {
         int status = GL30.glCheckFramebufferStatus(GL30.GL_DRAW_FRAMEBUFFER);
         if (status != GL30.GL_FRAMEBUFFER_COMPLETE) {
-          MetalLogger.error(
-              "[IOSurfaceBlitter] Intermediate FBO incomplete: 0x%X", status);
+          MetalLogger.error("[iosurface] inter fbo bad 0x%X", status);
           return false;
         }
         drawFboVerified = true;
@@ -366,8 +360,7 @@ public final class IOSurfaceBlitter {
       if (blitFrameCount <= 10) {
         int err = GL11.glGetError();
         if (err != GL11.GL_NO_ERROR) {
-          MetalLogger.error("[IOSurfaceBlitter] glBlitFramebuffer error: 0x%X",
-              err);
+          MetalLogger.error("[iosurface] glblit err 0x%X", err);
         }
       }
       return true;
@@ -414,8 +407,7 @@ public final class IOSurfaceBlitter {
         GL11.GL_TEXTURE_2D, intermediateTexture, 0);
     int status = GL30.glCheckFramebufferStatus(GL30.GL_FRAMEBUFFER);
     if (status != GL30.GL_FRAMEBUFFER_COMPLETE) {
-      MetalLogger.error(
-          "[IOSurfaceBlitter] Intermediate FBO setup incomplete: 0x%X", status);
+      MetalLogger.error("[iosurface] inter fbo setup bad 0x%X", status);
     }
     GL11.glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
     GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
@@ -423,8 +415,7 @@ public final class IOSurfaceBlitter {
     GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
     boundWidth = width;
     boundHeight = height;
-    MetalLogger.info("[IOSurfaceBlitter] Created intermediate texture: %dx%d",
-        width, height);
+    MetalLogger.info("[iosurface] inter tex %dx%d", width, height);
   }
 
   private boolean blitSlowPath(long metalHandle, int width, int height) {
@@ -551,7 +542,7 @@ public final class IOSurfaceBlitter {
     GL20.glDeleteShader(vs);
     GL20.glDeleteShader(fs);
     if (GL20.glGetProgrami(prog, GL20.GL_LINK_STATUS) == GL11.GL_FALSE) {
-      MetalLogger.error("[IOSurfaceBlitter] Rect shader link failed: %s",
+      MetalLogger.error("[iosurface] rect shader fail: %s",
           GL20.glGetProgramInfoLog(prog));
       GL20.glDeleteProgram(prog);
       return 0;
@@ -563,7 +554,7 @@ public final class IOSurfaceBlitter {
     if (shaderProgram == 0) {
       shaderProgram = createShaderProgram();
       if (shaderProgram == 0) {
-        MetalLogger.error("[IOSurfaceBlitter] Shader program creation failed!");
+        MetalLogger.error("[iosurface] shader create fail");
         return false;
       }
       GL20.glUseProgram(shaderProgram);
@@ -710,7 +701,7 @@ public final class IOSurfaceBlitter {
     GL20.glDeleteShader(vs);
     GL20.glDeleteShader(fs);
     if (GL20.glGetProgrami(prog, GL20.GL_LINK_STATUS) == GL11.GL_FALSE) {
-      MetalLogger.error("[IOSurfaceBlitter] Shader link failed: %s",
+      MetalLogger.error("[iosurface] shader fail: %s",
           GL20.glGetProgramInfoLog(prog));
       GL20.glDeleteProgram(prog);
       return 0;
@@ -723,8 +714,8 @@ public final class IOSurfaceBlitter {
     GL20.glShaderSource(s, source);
     GL20.glCompileShader(s);
     if (GL20.glGetShaderi(s, GL20.GL_COMPILE_STATUS) == GL11.GL_FALSE) {
-      MetalLogger.error("[IOSurfaceBlitter] %s shader compile failed: %s",
-          type == GL20.GL_VERTEX_SHADER ? "vertex" : "fragment",
+      MetalLogger.error("[iosurface] %s shader compile fail: %s",
+          type == GL20.GL_VERTEX_SHADER ? "vert" : "frag",
           GL20.glGetShaderInfoLog(s));
       GL20.glDeleteShader(s);
       return 0;
@@ -747,8 +738,7 @@ public final class IOSurfaceBlitter {
     boolean readOk = NativeBridge.nReadbackDepth(metalHandle, depthPixelBuffer);
     if (!readOk) {
       if (depthBlitFrameCount <= 5) {
-        MetalLogger.warn(
-            "[IOSurfaceBlitter] Failed to read Metal depth buffer");
+        MetalLogger.warn("[iosurface] depth read fail");
       }
       return false;
     }
@@ -768,8 +758,7 @@ public final class IOSurfaceBlitter {
           mx = v;
       }
       MetalLogger.info(
-          "[IOSurfaceBlitter] Depth readback (frame %d): center=%.6f, "
-              + "topLeft=%.6f, bottomRight=%.6f, min=%.6f, max=%.6f",
+          "[iosurface] depth readback #%d c=%.6f tl=%.6f br=%.6f mn=%.6f mx=%.6f",
           depthBlitFrameCount, center, topLeft, bottomRight, mn, mx);
     }
     if (depthTexture == 0 || depthTextureWidth != width ||
@@ -791,7 +780,7 @@ public final class IOSurfaceBlitter {
           GL11.GL_RED, GL11.GL_FLOAT, (ByteBuffer) null);
       depthTextureWidth = width;
       depthTextureHeight = height;
-      MetalLogger.info("[IOSurfaceBlitter] Created depth texture: %d (%dx%d)",
+      MetalLogger.info("[iosurface] depth tex %d %dx%d",
           depthTexture, width, height);
     }
     GL11.glBindTexture(GL11.GL_TEXTURE_2D, depthTexture);
@@ -800,8 +789,7 @@ public final class IOSurfaceBlitter {
     if (depthShaderProgram == 0) {
       depthShaderProgram = createDepthShaderProgram();
       if (depthShaderProgram == 0) {
-        MetalLogger.error(
-            "[IOSurfaceBlitter] Depth shader program creation failed!");
+        MetalLogger.error("[iosurface] depth shader create fail");
         return false;
       }
       GL20.glUseProgram(depthShaderProgram);
@@ -809,8 +797,7 @@ public final class IOSurfaceBlitter {
       if (loc >= 0)
         GL20.glUniform1i(loc, 0);
       GL20.glUseProgram(0);
-      MetalLogger.info("[IOSurfaceBlitter] Created depth shader: %d",
-          depthShaderProgram);
+      MetalLogger.info("[iosurface] depth shader %d", depthShaderProgram);
     }
     int prevProgram = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
     int prevVao = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING);
@@ -857,14 +844,12 @@ public final class IOSurfaceBlitter {
         float quarterDepth = verifyBuf.get(0);
         int glErr = GL11.glGetError();
         MetalLogger.info(
-            "[IOSurfaceBlitter] Depth verify (frame %d, FBO=%d, depthBits=%d): "
-                + "center=%.6f, quarter=%.6f, err=0x%X",
+            "[iosurface] depth verify #%d fbo=%d db=%d c=%.6f q=%.6f e=0x%X",
             depthBlitFrameCount, currentFbo, depthBits, centerDepth,
             quarterDepth, glErr);
       }
       if (depthBlitFrameCount <= 3 || depthBlitFrameCount % 600 == 0) {
-        MetalLogger.info(
-            "[IOSurfaceBlitter] Depth blit complete (frame %d, %dx%d)",
+        MetalLogger.info("[iosurface] depth blit ok #%d %dx%d",
             depthBlitFrameCount, width, height);
       }
       return true;
@@ -916,8 +901,7 @@ public final class IOSurfaceBlitter {
     boolean readOk = NativeBridge.nReadbackDepth(metalHandle, depthPixelBuffer);
     if (!readOk) {
       if (depthBlitFrameCount <= 5) {
-        MetalLogger.warn(
-            "[IOSurfaceBlitter] uploadDepthDirect: failed to read Metal depth");
+        MetalLogger.warn("[iosurface] depth upload read fail");
       }
       return false;
     }
@@ -937,8 +921,7 @@ public final class IOSurfaceBlitter {
           mx = v;
       }
       MetalLogger.info(
-          "[IOSurfaceBlitter] Depth readback (frame %d): center=%.6f, "
-              + "topLeft=%.6f, bottomRight=%.6f, min=%.6f, max=%.6f",
+          "[iosurface] depth readback #%d c=%.6f tl=%.6f br=%.6f mn=%.6f mx=%.6f",
           depthBlitFrameCount, center, topLeft, bottomRight, mn, mx);
     }
     int rowBytes = width * 4;
@@ -962,15 +945,11 @@ public final class IOSurfaceBlitter {
         depthPixelBuffer);
     int err = GL11.glGetError();
     if (err != GL11.GL_NO_ERROR && depthBlitFrameCount <= 5) {
-      MetalLogger.error(
-          "[IOSurfaceBlitter] uploadDepthDirect glTexSubImage2D error: 0x%X",
-          err);
+      MetalLogger.error("[iosurface] depth upload gl err 0x%X", err);
     }
     GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTex);
     if (depthBlitFrameCount <= 3 || depthBlitFrameCount % 600 == 0) {
-      MetalLogger.info(
-          "[IOSurfaceBlitter] uploadDepthDirect complete (frame %d, "
-              + "mcTex=%d, %dx%d)",
+      MetalLogger.info("[iosurface] depth upload ok #%d t=%d %dx%d",
           depthBlitFrameCount, mcDepthTexId, width, height);
     }
     return err == GL11.GL_NO_ERROR;
@@ -992,7 +971,7 @@ public final class IOSurfaceBlitter {
     boolean readOk = NativeBridge.nReadbackDepth(metalHandle, depthPixelBuffer);
     if (!readOk) {
       if (depthBlitFrameCount <= 5) {
-        MetalLogger.warn("[IOSurfaceBlitter] blitDepthViaFBO: readback failed");
+        MetalLogger.warn("[iosurface] depth fbo read fail");
       }
       return false;
     }
@@ -1010,9 +989,7 @@ public final class IOSurfaceBlitter {
         if (v > mx)
           mx = v;
       }
-      MetalLogger.info(
-          "[IOSurfaceBlitter] Depth readback (frame %d): center=%.6f, "
-              + "topLeft=%.6f, min=%.6f, max=%.6f",
+      MetalLogger.info("[iosurface] depth readback #%d c=%.6f tl=%.6f mn=%.6f mx=%.6f",
           depthBlitFrameCount, center, topLeft, mn, mx);
     }
     int rowBytes = width * 4;
@@ -1044,9 +1021,7 @@ public final class IOSurfaceBlitter {
           GL11.GL_FLOAT, (ByteBuffer) null);
       depthTextureWidth = width;
       depthTextureHeight = height;
-      MetalLogger.info(
-          "[IOSurfaceBlitter] Created depth texture (DEPTH_COMPONENT32F): "
-              + "%d (%dx%d)",
+      MetalLogger.info("[iosurface] depth tex (r32f) %d %dx%d",
           depthTexture, width, height);
     } else {
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, depthTexture);
@@ -1056,8 +1031,7 @@ public final class IOSurfaceBlitter {
         depthPixelBuffer);
     int err = GL11.glGetError();
     if (err != GL11.GL_NO_ERROR && depthBlitFrameCount <= 5) {
-      MetalLogger.error(
-          "[IOSurfaceBlitter] blitDepthViaFBO texUpload error: 0x%X", err);
+      MetalLogger.error("[iosurface] depth fbo upload err 0x%X", err);
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, 0);
       return false;
     }
@@ -1074,9 +1048,7 @@ public final class IOSurfaceBlitter {
     int srcStatus = GL30.glCheckFramebufferStatus(GL30.GL_READ_FRAMEBUFFER);
     if (srcStatus != GL30.GL_FRAMEBUFFER_COMPLETE) {
       if (depthBlitFrameCount <= 3) {
-        MetalLogger.error(
-            "[IOSurfaceBlitter] blitDepthViaFBO: src FBO incomplete: 0x%X",
-            srcStatus);
+        MetalLogger.error("[iosurface] depth fbo src bad 0x%X", srcStatus);
       }
       GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevReadFbo);
       return false;
@@ -1086,17 +1058,13 @@ public final class IOSurfaceBlitter {
         GL11.GL_DEPTH_BUFFER_BIT, GL11.GL_NEAREST);
     err = GL11.glGetError();
     if (err != GL11.GL_NO_ERROR && depthBlitFrameCount <= 5) {
-      MetalLogger.error(
-          "[IOSurfaceBlitter] blitDepthViaFBO glBlitFramebuffer error: 0x%X",
-          err);
+      MetalLogger.error("[iosurface] depth fbo blit err 0x%X", err);
     }
     GL30.glBindFramebuffer(GL30.GL_READ_FRAMEBUFFER, prevReadFbo);
     GL30.glBindFramebuffer(GL30.GL_DRAW_FRAMEBUFFER, prevDrawFbo);
     if (depthBlitFrameCount <= 3 || depthBlitFrameCount % 600 == 0) {
-      MetalLogger.info("[IOSurfaceBlitter] blitDepthViaFBO complete (frame %d, "
-          + "srcFBO=%d, dstFBO=%d, %dx%d)",
-          depthBlitFrameCount, depthSrcFbo, mcFboId, width,
-          height);
+      MetalLogger.info("[iosurface] depth fbo ok #%d s=%d d=%d %dx%d",
+          depthBlitFrameCount, depthSrcFbo, mcFboId, width, height);
     }
     return err == GL11.GL_NO_ERROR;
   }
@@ -1121,7 +1089,7 @@ public final class IOSurfaceBlitter {
     GL20.glDeleteShader(fragShader);
     if (GL20.glGetProgrami(prog, GL20.GL_LINK_STATUS) == GL11.GL_FALSE) {
       String log = GL20.glGetProgramInfoLog(prog);
-      MetalLogger.error("[IOSurfaceBlitter] Depth shader link failed: %s", log);
+      MetalLogger.error("[iosurface] depth shader fail: %s", log);
       GL20.glDeleteProgram(prog);
       return 0;
     }

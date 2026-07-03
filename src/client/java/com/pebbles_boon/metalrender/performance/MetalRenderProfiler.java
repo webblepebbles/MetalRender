@@ -330,17 +330,17 @@ public final class MetalRenderProfiler {
     double totalBase = Math.max(frameMs, totalTracked);
 
     StringBuilder sb = new StringBuilder();
-    sb.append("[PROFILER] ");
-    sb.append(String.format(Locale.ROOT, "Frame=%.2fms CPU=%.2fms Render=%.2fms | ", frameMs, cpuMs, renderMs));
-    sb.append(String.format(Locale.ROOT, "Mesh=%.2fms(%.1f%%) ", meshMs, pct(meshMs, totalBase)));
-    sb.append(String.format(Locale.ROOT, "Upload=%.2fms(%.1f%%) ", uploadMs, pct(uploadMs, totalBase)));
-    sb.append(String.format(Locale.ROOT, "Cull=%.2fms(%.1f%%) ", cullMs, pct(cullMs, totalBase)));
-    sb.append(String.format(Locale.ROOT, "Scan=%.2fms(%.1f%%) ", scanMs, pct(scanMs, totalBase)));
-    sb.append(String.format(Locale.ROOT, "Tex=%.2fms(%.1f%%) ", textureMs, pct(textureMs, totalBase)));
-    sb.append(String.format(Locale.ROOT, "Entity=%.2fms(%.1f%%) ", entityMs, pct(entityMs, totalBase)));
-    sb.append(String.format(Locale.ROOT, "Particle=%.2fms(%.1f%%) ", particleMs, pct(particleMs, totalBase)));
-    sb.append(String.format(Locale.ROOT, "Other=%.2fms(%.1f%%) | ", otherMs, pct(otherMs, totalBase)));
-    sb.append(String.format(Locale.ROOT, "MeshesBuilt=%d Uploads=%d Scanned=%d Drawn=%d",
+    sb.append("[profiler] ");
+    sb.append(String.format(Locale.ROOT, "frame=%.2fms cpu=%.2fms render=%.2fms | ", frameMs, cpuMs, renderMs));
+    sb.append(String.format(Locale.ROOT, "mesh=%.2fms(%.1f%%) ", meshMs, pct(meshMs, totalBase)));
+    sb.append(String.format(Locale.ROOT, "upload=%.2fms(%.1f%%) ", uploadMs, pct(uploadMs, totalBase)));
+    sb.append(String.format(Locale.ROOT, "cull=%.2fms(%.1f%%) ", cullMs, pct(cullMs, totalBase)));
+    sb.append(String.format(Locale.ROOT, "scan=%.2fms(%.1f%%) ", scanMs, pct(scanMs, totalBase)));
+    sb.append(String.format(Locale.ROOT, "tex=%.2fms(%.1f%%) ", textureMs, pct(textureMs, totalBase)));
+    sb.append(String.format(Locale.ROOT, "entity=%.2fms(%.1f%%) ", entityMs, pct(entityMs, totalBase)));
+    sb.append(String.format(Locale.ROOT, "particle=%.2fms(%.1f%%) ", particleMs, pct(particleMs, totalBase)));
+    sb.append(String.format(Locale.ROOT, "other=%.2fms(%.1f%%) | ", otherMs, pct(otherMs, totalBase)));
+    sb.append(String.format(Locale.ROOT, "meshes_built=%d uploads=%d scanned=%d drawn=%d",
         meshesBuilt, uploadsDone, chunksScanned, chunksDrawn));
     MetalLogger.info(sb.toString());
   }

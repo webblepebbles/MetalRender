@@ -45,8 +45,7 @@ public class StartupBlockerScreen extends Screen {
       float delta) {
     if (!loggedRender) {
       loggedRender = true;
-      MetalLogger.info("STARTUP_BLOCKER: render width=%d height=%d", width,
-          height);
+      MetalLogger.info("startup_blocker: wendew %dx%d", width, height);
     }
     ctx.fill(0, 0, width, height, 0xFF000000);
     var font = getFont();
@@ -82,7 +81,7 @@ public class StartupBlockerScreen extends Screen {
     }
     try (InputStream stream = StartupBlockerScreen.class.getResourceAsStream(IMAGE_RESOURCE)) {
       if (stream == null) {
-        MetalLogger.warn("STARTUP_BLOCKER: resource stream missing: %s",
+        MetalLogger.warn("startup_blocker: stream missing: %s",
             IMAGE_RESOURCE);
         return;
       }
@@ -93,10 +92,10 @@ public class StartupBlockerScreen extends Screen {
       mc.getTextureManager().register(RUNTIME_IMAGE, texture);
       texture.upload();
       runtimeImageLoaded = true;
-      MetalLogger.info("STARTUP_BLOCKER: image registered %dx%d",
+      MetalLogger.info("startup_blocker: img weady %dx%d",
           runtimeImageWidth, runtimeImageHeight);
     } catch (IOException ignored) {
-      MetalLogger.warn("STARTUP_BLOCKER: failed to load image: %s",
+      MetalLogger.warn("startup_blocker: load fail: %s",
           ignored.getMessage());
     }
   }

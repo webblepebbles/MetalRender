@@ -44,7 +44,7 @@ public class AsyncCullTask {
           }
         } while (!latestRef.compareAndSet(prev, result));
       } catch (Throwable t) {
-        MetalLogger.error("AsyncCullTask error: " + t.getMessage());
+        MetalLogger.error("async cull ewwor: " + t.getMessage());
       }
     });
   }

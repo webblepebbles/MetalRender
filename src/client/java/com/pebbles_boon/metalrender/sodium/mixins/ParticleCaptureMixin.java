@@ -56,8 +56,7 @@ public class ParticleCaptureMixin {
       }
     } catch (Exception e) {
       if (metalrender$captureFrameCount < 5) {
-        MetalLogger.error("[ParticleCaptureMixin] Failed to capture: %s",
-            e.getMessage());
+        MetalLogger.error("[particlemix] cap fail: %s", e.getMessage());
         e.printStackTrace();
       }
     }
@@ -66,7 +65,7 @@ public class ParticleCaptureMixin {
         (metalrender$captureFrameCount <= 3 ||
             metalrender$captureFrameCount % 500 == 0)) {
       MetalLogger.info(
-          "[ParticleCaptureMixin] Captured particles frame %d, cancelling GL",
+          "[particlemix] cap frame %d, cancel gl",
           metalrender$captureFrameCount);
     }
     ci.cancel();

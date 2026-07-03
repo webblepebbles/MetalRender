@@ -52,7 +52,7 @@ public final class PerformanceLogger {
 
   private void logPerformanceStats() {
     if (!MetalRenderConfig.isDeepDebugActive()) {
-      MetalLogger.info("[PERF] FPS: %.1f | FrameTime: %.2fms", currentFPS,
+      MetalLogger.info("[perf] fps %.1f ft %.2fms", currentFPS,
           avgFrameTime);
       resetCounters();
       return;
@@ -61,20 +61,19 @@ public final class PerformanceLogger {
         ? (double) (totalFrustumCulled + totalOcclusionCulled) /
             totalChunksProcessed * 100
         : 0;
-    MetalLogger.info("[PERF] FPS: %.1f | FrameTime: %.2fms | Chunks: P:%d "
-        + "D:%d | Culled: F:%d O:%d (%.1f%%)",
+    MetalLogger.info("[perf] fps %.1f ft %.2fms ch p=%d d=%d cl f=%d o=%d (%.1f%%)",
         currentFPS, avgFrameTime, totalChunksProcessed,
         totalChunksDrawn, totalFrustumCulled, totalOcclusionCulled,
         cullingEfficiency);
     try {
-      MetalLogger.info("[PERF][DQ] Scale=%.2f",
+      MetalLogger.info("[perf][dq] sc=%.2f",
           MetalRenderConfig.resolutionScale());
     } catch (Exception ignored) {
     }
     Runtime rt = Runtime.getRuntime();
     long usedMb = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024);
     long maxMb = rt.maxMemory() / (1024 * 1024);
-    MetalLogger.info("[PERF][MEM] Heap=%d/%dMB Frames=%d", usedMb, maxMb,
+    MetalLogger.info("[perf][mem] h=%d/%dmb f=%d", usedMb, maxMb,
         frameCount);
     resetCounters();
   }

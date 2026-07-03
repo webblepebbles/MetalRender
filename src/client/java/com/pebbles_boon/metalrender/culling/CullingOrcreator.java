@@ -49,7 +49,7 @@ public class CullingOrcreator {
       MeshShaderNative.uploadClusterVisibilitySSBO(regionCount, clusterBuffer);
       lastUploadNs = System.nanoTime();
     } catch (UnsatisfiedLinkError e) {
-      MetalLogger.warn("Cluster SSBO upload missing native impl: " + e.getMessage());
+      MetalLogger.warn("cluster ssbo missing: " + e.getMessage());
       active = false;
     }
   }

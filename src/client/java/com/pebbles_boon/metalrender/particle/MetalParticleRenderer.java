@@ -106,7 +106,7 @@ public class MetalParticleRenderer {
       collect(engine, camera, delta);
     } catch (Exception e) {
       if (frameCount < 5) {
-        MetalLogger.error("Failed to capture particles: %s", e.getMessage());
+        MetalLogger.error("particle cap fail: %s", e.getMessage());
         e.printStackTrace();
       }
     }
@@ -201,14 +201,14 @@ public class MetalParticleRenderer {
       cp.light = camLight;
     }
     if (frameCount < 5 && captured > 0) {
-      MetalLogger.info("Captured %d billboard particles from queue", captured);
+      MetalLogger.info("captured %d billboard particles", captured);
 
       int logged = 0;
       for (int _di = 0; _di < count; _di++) {
         CapturedParticle dbg = capturedParticlePool.get(_di);
         if (logged >= 5)
           break;
-        MetalLogger.info("  Particle scale=%.4f class=%s pos=(%.1f,%.1f,%.1f)",
+        MetalLogger.info("  particle scale=%.4f cls=%s pos=(%.1f,%.1f,%.1f)",
             dbg.scale, "captured", dbg.x, dbg.y, dbg.z);
         logged++;
       }
@@ -262,7 +262,7 @@ public class MetalParticleRenderer {
     }
     if (particlePipeline == 0) {
       if (frameCount < 5)
-        MetalLogger.warn("No particle pipeline available");
+        MetalLogger.warn("no particle pipe");
       frameCount++;
       return;
     }
@@ -299,8 +299,7 @@ public class MetalParticleRenderer {
     }
     frameCount++;
     if (frameCount <= 5 || frameCount % 3000 == 0) {
-      MetalLogger.info(
-          "MetalParticleRenderer: frame %d, %d particles, %d verts, %d draws",
+      MetalLogger.info("particle wendew: f=%d p=%d v=%d d=%d",
           frameCount, count, vtxCount, drawsDone);
     }
     pendingDrawCount = 0;
@@ -369,7 +368,7 @@ public class MetalParticleRenderer {
       pendingDrawCount++;
     }
     if (frameCount < 5 && vtxCount > 0) {
-      MetalLogger.info("Built %d particle verts in %d draw batches", vtxCount,
+      MetalLogger.info("built %d particle verts in %d batches", vtxCount,
           pendingDrawCount);
     }
   }
@@ -502,12 +501,12 @@ public class MetalParticleRenderer {
       }
       if (metalTex != 0 && frameCount < 3) {
         MetalLogger.info(
-            "Created/refreshed Metal particle texture: glId=%d %dx%d handle=%d",
+            "particle tex: gl=%d %dx%d h=%d",
             glTextureId, width, height, metalTex);
       }
       return metalTex;
     } catch (Exception e) {
-      MetalLogger.error("Failed to create Metal particle texture glId=%d: %s",
+      MetalLogger.error("particle tex create fail gl=%d: %s",
           glTextureId, e.getMessage());
       if (inBounds)
         textureCache[glTextureId] = 0L;
@@ -551,7 +550,7 @@ public class MetalParticleRenderer {
     }
     java.util.Arrays.fill(textureCache, TEXTURE_UNCACHED);
     java.util.Arrays.fill(textureUploadFrame, -1);
-    MetalLogger.info("Particle texture cache invalidated");
+    MetalLogger.info("particle tex cache cleared");
   }
 
   public int getLastParticleCount() {
@@ -585,7 +584,7 @@ public class MetalParticleRenderer {
       }
     }
     device = 0;
-    MetalLogger.info("MetalParticleRenderer shut down");
+    MetalLogger.info("particle wendewer shut down");
   }
 
   private static class CapturedParticle {

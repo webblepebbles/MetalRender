@@ -27,7 +27,7 @@ public class ClientWorldMixin {
     MetalWorldRenderer worldRenderer = MetalWorldRenderer.getInstance();
     if (worldRenderer == null || !worldRenderer.isReady()) {
       MetalLogger.debug(
-          "Block update ignored because renderer is not ready at [%d,%d,%d]",
+          "block [%d,%d,%d] skip; wendewer not weady",
           pos.getX(), pos.getY(), pos.getZ());
       return;
     }

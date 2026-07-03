@@ -86,23 +86,21 @@ public class MinecraftClientMixin {
       metalrender$debugCounter++;
       if (metalrender$debugCounter % 600 == 1) {
         MetalLogger.deepInfo(
-            "[MinecraftClientMixin] level=" +
-                (level != null ? "present" : "null") +
-                " levelWasLoaded=" + metalrender$levelWasLoaded + " wr=" +
-                (MetalRenderClient.getWorldRenderer() != null ? "present"
+            "[mcmix] lvl=" +
+                (level != null ? "ok" : "null") +
+                " was=" + metalrender$levelWasLoaded + " wr=" +
+                (MetalRenderClient.getWorldRenderer() != null ? "ok"
                     : "null"));
       }
       if (level != null && !metalrender$levelWasLoaded) {
         MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
-        MetalLogger.info("[MinecraftClientMixin] Level detected! wr=" +
-            (wr != null));
+        MetalLogger.info("[mcmix] level found wr=" + (wr != null));
         if (wr != null) {
           try {
             wr.onWorldLoad();
-            MetalLogger.info(
-                "[MinecraftClientMixin] onWorldLoad() completed successfully");
+            MetalLogger.info("[mcmix] onworldload ok");
           } catch (Exception e) {
-            MetalLogger.error("[MinecraftClientMixin] onWorldLoad() FAILED", e);
+            MetalLogger.error("[mcmix] onworldload fail", e);
           }
         }
         metalrender$levelWasLoaded = true;

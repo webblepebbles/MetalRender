@@ -137,16 +137,14 @@ public class EntityRenderMixin {
           (capturedThisFrame > 0 || culledThisFrame > 0) &&
           (metalrender$entityCullFrame <= 5 ||
               metalrender$entityCullFrame % 600 == 0)) {
-        MetalLogger.info("[EntityRenderMixin] Captured %d entities, culled "
-            + "%d this frame (totals: captured=%d culled=%d)",
+        MetalLogger.info("[entitymix] cap=%d cull=%d (tot cap=%d tot cull=%d)",
             capturedThisFrame, culledThisFrame,
             metalrender$entityCaptureCount,
             metalrender$entityCullCount);
       }
     } catch (Exception e) {
       if (metalrender$entityCaptureCount < 10) {
-        MetalLogger.error("[EntityRenderMixin] Failed to capture entities: %s",
-            e.getMessage());
+        MetalLogger.error("[entitymix] cap fail: %s", e.getMessage());
       }
     }
   }

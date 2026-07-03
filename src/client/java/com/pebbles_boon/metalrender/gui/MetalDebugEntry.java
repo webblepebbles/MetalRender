@@ -49,7 +49,7 @@ public final class MetalDebugEntry implements DebugScreenEntry {
       reg.put(DBG_ID, new MetalDebugEntry());
       reg.put(DebugScreenEntries.SYSTEM_SPECS, new SysSpecEntry());
     } catch (ReflectiveOperationException err) {
-      MetalLogger.error("fail to get metalrender easter egg", err);
+      MetalLogger.error("easter egg fail", err);
     }
   }
 

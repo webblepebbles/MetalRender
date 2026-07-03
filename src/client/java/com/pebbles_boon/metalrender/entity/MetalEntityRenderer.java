@@ -81,7 +81,7 @@ public class MetalEntityRenderer {
         .order(ByteOrder.nativeOrder());
     metalVertexConsumer = new MetalVertexConsumer(vertexStagingBuffer, MAX_BATCH_VERTICES);
     java.util.Arrays.fill(textureCache, TEXTURE_UNCACHED);
-    MetalLogger.info("MetalEntityRenderer initialized.");
+    MetalLogger.info("entity wendewer weady");
   }
 
   public void setup(long device, long pipeline) {
@@ -95,8 +95,7 @@ public class MetalEntityRenderer {
         ResidencySetManager.initialize(device);
         residencySetsInitialized = true;
       }
-      MetalLogger.info(
-          "MetalEntityRenderer initialized: device=%d vb0=%d vb1=%d vb2=%d",
+      MetalLogger.info("entity wendewer: dev=%d vb0=%d vb1=%d vb2=%d",
           device, vbufs[0], vbufs[1], vbufs[2]);
     }
   }
@@ -223,7 +222,7 @@ public class MetalEntityRenderer {
             camY, camZ, delta);
       } catch (Exception e) {
         if (frameCount < 5) {
-          MetalLogger.warn("Failed to render entity model for %s: %s",
+          MetalLogger.warn("entity wendewer fail %s: %s",
               entity.getType().toString(), e.getMessage());
         }
       }
@@ -272,7 +271,7 @@ public class MetalEntityRenderer {
     vtxCount = metalVertexConsumer.getVertexCount();
     if (frameCount < 3 && drawn > 0) {
       MetalLogger.info(
-          "buildMeshes: %d entities (%d model, %d box) -> %d verts", drawn,
+          "build meshes: %d ent (m=%d box=%d) -> %d verts", drawn,
           modelCaptures, boxFallbacks, vtxCount);
     }
   }
@@ -351,7 +350,7 @@ public class MetalEntityRenderer {
 
     if (frameCount % 3000 == 1 && state instanceof LivingEntityRenderState livingState) {
       MetalLogger.info(
-          "[ENTITY_DIAG] entity=%s bodyRot=%.1f scale=%.2f livingState=true",
+          "[entity_diag] ent=%s body=%.1f sc=%.2f living=true",
           entity.getType().toString(), livingState.bodyRot, livingState.scale);
     }
 
@@ -804,7 +803,7 @@ public class MetalEntityRenderer {
       return true;
     } catch (Exception e) {
       if (frameCount < 5) {
-        MetalLogger.warn("renderItemEntity failed: %s", e.getMessage());
+        MetalLogger.warn("item entity fail: %s", e.getMessage());
       }
       return false;
     }
@@ -877,7 +876,7 @@ public class MetalEntityRenderer {
     if (MetalRenderConfig.isDeepDebugActive() &&
         now - lastEntityLogTime >= 10000) {
       MetalLogger.info(
-          "Entity stats: captures=%d/10s renders=%d/10s entities=%d/10s",
+          "entity stats: cap=%d/10s wendew=%d/10s ent=%d/10s",
           captureCallsPerSec, renderCallsPerSec, entitiesCapturedPerSec);
       captureCallsPerSec = 0;
       renderCallsPerSec = 0;
@@ -906,7 +905,7 @@ public class MetalEntityRenderer {
     MetalRenderer renderer = MetalRenderClient.getRenderer();
     if (renderer == null) {
       if (frameCount < 5) {
-        MetalLogger.warn("MetalEntityRenderer: renderer null");
+        MetalLogger.warn("entity wendewer: wendewer null");
       }
       return;
     }
@@ -925,7 +924,7 @@ public class MetalEntityRenderer {
       long inhousePipeline = renderer.getBackend().getInhousePipelineHandle();
       if (inhousePipeline == 0) {
         if (frameCount < 5) {
-          MetalLogger.warn("MetalEntityRenderer: no pipeline available");
+          MetalLogger.warn("entity wendewer: no pipe");
         }
       } else {
         NativeBridge.nSetPipelineState(ctx, inhousePipeline);
@@ -980,7 +979,7 @@ public class MetalEntityRenderer {
     if (MetalRenderConfig.isDeepDebugActive() &&
         (frameCount <= 5 || frameCount % 3000 == 0)) {
       MetalLogger.info(
-          "MetalEntityRenderer: frame %d, %d entities, %d verts, %d draws",
+          "entity wendewer: f=%d ent=%d v=%d d=%d",
           frameCount, pendingDrawCount, vtxCount, drawsDone);
     }
 
@@ -1029,7 +1028,7 @@ public class MetalEntityRenderer {
       }
       return metalTexture;
     } catch (Exception e) {
-      MetalLogger.error("Failed to create Metal entity texture for glId=%d: %s",
+      MetalLogger.error("entity tex create fail gl=%d: %s",
           glTextureId, e.getMessage());
       if (glTextureId >= 0 && glTextureId < TEXTURE_CACHE_SIZE) {
         textureCache[glTextureId] = 0L;
@@ -1046,7 +1045,7 @@ public class MetalEntityRenderer {
       }
     }
     java.util.Arrays.fill(textureCache, TEXTURE_UNCACHED);
-    MetalLogger.info("Entity texture cache invalidated");
+    MetalLogger.info("entity tex cache cleared");
   }
 
   public int getLastEntityCount() {
@@ -1085,7 +1084,7 @@ public class MetalEntityRenderer {
     ResidencySetManager.shutdown();
     residencySetsInitialized = false;
     device = 0;
-    MetalLogger.info("MetalEntityRenderer shut down");
+    MetalLogger.info("entity wendewer shut down");
   }
 
   private static class CapturedEntity {

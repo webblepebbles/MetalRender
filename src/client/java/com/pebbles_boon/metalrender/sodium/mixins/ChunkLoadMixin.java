@@ -26,7 +26,7 @@ public class ChunkLoadMixin {
     MetalWorldRenderer wr = MetalWorldRenderer.getInstance();
     if (wr == null || !wr.isReady()) {
       MetalLogger.debug(
-          "Chunk packet ignored because renderer is not ready for chunk [%d,%d]",
+          "chunk [%d,%d] skip; wendewer not weady",
           x, z);
       return;
     }
@@ -34,7 +34,7 @@ public class ChunkLoadMixin {
     if (chunk != null) {
       wr.onChunkLoaded(x, z, chunk);
     } else {
-      MetalLogger.warn("Chunk packet produced a null chunk for [%d,%d]", x, z);
+      MetalLogger.warn("chunk [%d,%d] null", x, z);
     }
   }
 }

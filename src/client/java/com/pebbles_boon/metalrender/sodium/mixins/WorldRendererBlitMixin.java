@@ -85,12 +85,11 @@ public class WorldRendererBlitMixin {
       metalrender$frameActive = true;
       metalrender$beginFrameCount++;
       if (metalrender$beginFrameCount <= 3) {
-        MetalLogger.info("[WorldRendererBlitMixin] renderLevel begin hook #%d",
+        MetalLogger.info("[blitmix] begin hook #%d",
             metalrender$beginFrameCount);
       }
     } catch (Exception e) {
-      MetalLogger.error("[WorldRendererBlitMixin] Metal frame begin failed: %s",
-          e.getMessage());
+      MetalLogger.error("[blitmix] begin fail: %s", e.getMessage());
     }
   }
 
@@ -121,12 +120,11 @@ public class WorldRendererBlitMixin {
       }
       metalrender$endFrameCount++;
       if (metalrender$endFrameCount <= 3) {
-        MetalLogger.info("[WorldRendererBlitMixin] renderLevel end hook #%d",
+        MetalLogger.info("[blitmix] end hook #%d",
             metalrender$endFrameCount);
       }
     } catch (Exception e) {
-      MetalLogger.error("[WorldRendererBlitMixin] Metal frame end failed: %s",
-          e.getMessage());
+      MetalLogger.error("[blitmix] end fail: %s", e.getMessage());
     }
   }
 }

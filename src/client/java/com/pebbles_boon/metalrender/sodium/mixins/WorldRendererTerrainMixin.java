@@ -33,8 +33,7 @@ public class WorldRendererTerrainMixin {
     }
 
     if (!metalrender$loggedWaitingForMetalDraw) {
-      MetalLogger.info("[WorldRendererTerrainMixin] Metal active; vanilla "
-          + "terrain suppression locked on");
+      MetalLogger.info("[terrainmix] metal on; vanilla locked");
       metalrender$loggedWaitingForMetalDraw = true;
     }
     return true;
@@ -72,8 +71,7 @@ public class WorldRendererTerrainMixin {
       metalrender$skippedTerrainGroups++;
       if (metalrender$skippedTerrainGroups <= 3 ||
           metalrender$skippedTerrainGroups % 1000 == 0) {
-        MetalLogger.info("[WorldRendererTerrainMixin] Skipped vanilla "
-            + "terrain group #%d (%s)",
+        MetalLogger.info("[terrainmix] skip group #%d (%s)",
             metalrender$skippedTerrainGroups,
             String.valueOf(group));
       }
@@ -86,8 +84,7 @@ public class WorldRendererTerrainMixin {
   private void metalrender$terrainHookHeartbeat(CallbackInfo ci) {
     if (metalrender$shouldSkipVanillaTerrain() &&
         metalrender$skippedTerrainGroups == 0) {
-      MetalLogger.info(
-          "[WorldRendererTerrainMixin] Terrain redirect hook active");
+      MetalLogger.info("[terrainmix] hook live");
     }
   }
 }

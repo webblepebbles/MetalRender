@@ -41,17 +41,17 @@ public class MetalRenderClient implements ClientModInitializer {
       return;
     }
     instance = this;
-    MetalLogger.info("MetalRender can render");
+    MetalLogger.info("metalrender ready");
     config = MetalRenderConfig.load();
     cfgWasOn = config != null && config.enableMetalRendering;
     MetalDebugEntry.register();
     MetalRenderProfilerOverlay.register();
     if (MetalRenderConfig.isDeepDebugActive()) {
-      MetalLogger.info("logging more");
+      MetalLogger.info("deep debug on");
     }
     MetalRenderCommands.register();
     if (!config.enableMetalRendering) {
-      MetalLogger.info("metalrender disabled");
+      MetalLogger.info("metalrender off");
     }
 
     ClientTickEvents.START_CLIENT_TICK.register(client -> {
@@ -169,9 +169,7 @@ public class MetalRenderClient implements ClientModInitializer {
       NativeBridge.nFlushFrames();
       NativeBridge.nWaitForRender(renderer.getHandle());
     } catch (Throwable t) {
-      MetalLogger.warn(
-          "failed to drain Metal renderer before lifecycle change: %s",
-          t.getMessage());
+      MetalLogger.warn("drain fail: %s", t.getMessage());
     }
   }
 
@@ -181,10 +179,9 @@ public class MetalRenderClient implements ClientModInitializer {
     }
     try {
       mc.execute(() -> mc.setScreen(new MetalRenderSettingsScreen(mc.screen)));
-      MetalLogger.info("open metalrender scween");
+      MetalLogger.info("open scween ok");
     } catch (Exception e) {
-      MetalLogger.warn("failed to open MetalRender settings scween: %s",
-          e.getMessage());
+      MetalLogger.warn("open scween fail: %s", e.getMessage());
     }
   }
 
@@ -192,13 +189,13 @@ public class MetalRenderClient implements ClientModInitializer {
     try {
       NativeBridge.loadLibrary();
     } catch (UnsatisfiedLinkError e) {
-      MetalLogger.error("failed to load native metalrender libwawy.", e);
+      MetalLogger.error("lib load fail.", e);
       return;
     }
 
     try {
       if (!MetalHardwareChecker.isMetalSupported()) {
-        MetalLogger.warn("metalrender cannot run on device");
+        MetalLogger.warn("no metal");
         return;
       }
 
@@ -218,9 +215,9 @@ public class MetalRenderClient implements ClientModInitializer {
       meshShaderBackend = new MeshShaderBackend();
       meshShaderBackend.initialize();
       logStartDiag(mc);
-      MetalLogger.info("Metal weady: " + MetalHardwareChecker.getDeviceName());
+      MetalLogger.info("metal weady: " + MetalHardwareChecker.getDeviceName());
     } catch (Exception e) {
-      MetalLogger.error("failuwe", e);
+      MetalLogger.error("init fail", e);
       metalUp = false;
     }
   }
@@ -300,19 +297,17 @@ public class MetalRenderClient implements ClientModInitializer {
 
       if (cfg != null && cfg.enableMeshShaders && !meshOn) {
         MetalLogger.warn("starting: asked for mesh shader but refused " +
-            "Check capability gates/fallback path selection.");
+            "check capability fallback path selection.");
       }
       if (cfg != null && cfg.enableIndirectCommandBuffers && !indOk) {
-        MetalLogger.warn("starting: ICBs requested " +
-            "but not supported on this runtime/device.");
+        MetalLogger.warn("starting: icb unsupported");
       }
       if (vsync || (fpsCap > 0 && fpsCap <= 60)) {
-        MetalLogger.warn("starting: FPS might be limited " +
-            "(vsync=%s, framerateLimit=%d).",
+        MetalLogger.warn("starting: fps capped (vsync=%s cap=%d)",
             vsync, fpsCap);
       }
     } catch (Throwable t) {
-      MetalLogger.warn("starting: failed: %s", t.getMessage());
+      MetalLogger.warn("starting diag fail: %s", t.getMessage());
     }
   }
 }

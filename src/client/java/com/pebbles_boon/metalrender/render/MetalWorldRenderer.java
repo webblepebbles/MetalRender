@@ -208,8 +208,7 @@ public class MetalWorldRenderer {
     if (sortEnabled) {
       translucencySorter.ensureInitialized(0);
     }
-    MetalLogger.info(
-        "Phase4A orchestrators: cluster=%s hiZ=%s sort=%s icb=%s",
+    MetalLogger.info("orchestrators: cluster=%s hiz=%s sort=%s icb=%s",
         clusterEnabled, hiZEnabled, sortEnabled, icbEnabled);
     MetalRenderer renderer = MetalRenderClient.getRenderer();
     if (renderer != null && renderer.isAvailable()) {
@@ -241,24 +240,21 @@ public class MetalWorldRenderer {
               subChunkUploadCapacity * 16,
               NativeMemory.STORAGE_MODE_SHARED);
           if (argumentBufferHandle != 0) {
-            MetalLogger.info("Mesh argument buffer allocated: handle=%d size=%d",
+            MetalLogger.info("mesh arg buf: h=%d sz=%d",
                 argumentBufferHandle, subChunkUploadCapacity * 16);
           }
         }
       }
       applyFeatureConfig(MetalRenderClient.getConfig());
       boolean meshShadersActive = NativeBridge.isLibLoaded() && NativeBridge.nAreMeshShadersActive();
-      MetalLogger.info(
-          "GPU-driven pipeline initialized (mesh shaders: %s, enabled: %s)",
-          meshShadersActive
-              ? "active"
-              : (meshShadersSupported ? "available" : "unsupported"),
+      MetalLogger.info("gpu pipeline weady (mesh=%s on=%s)",
+          meshShadersActive ? "on" : (meshShadersSupported ? "avail" : "no"),
           gpuDrivenEnabled ? "yes" : "no");
-      MetalLogger.info("Metal world rendering activated (" + w + "x" + h + ")");
+      MetalLogger.info("world wendew on (" + w + "x" + h + ")");
     } else if (!loggedWorldLoadWithoutRenderer) {
       loggedWorldLoadWithoutRenderer = true;
       MetalLogger.warn(
-          "World load observed before renderer was available; terrain capture is deferred until the backend comes up");
+          "world load before wendewer weady; capture deferred");
     }
   }
 
@@ -350,9 +346,9 @@ public class MetalWorldRenderer {
         now - lastDiagLogMs > diagInterval) {
       lastDiagLogMs = now;
       MetalLogger.info(
-          "DiagWorld: texturesReady=" + texturesReady +
-              ", atlasFallback=" + textureManager.isUsingFallbackBlockAtlas() +
-              ", meshCount=" + chunkMesher.getMeshCount());
+          "diag: texReady=" + texturesReady +
+              " fb=" + textureManager.isUsingFallbackBlockAtlas() +
+              " m=" + chunkMesher.getMeshCount());
     }
     Camera camera = mc.gameRenderer.getMainCamera();
     Vector3f camPos = new Vector3f((float) camera.position().x, (float) camera.position().y,
@@ -380,10 +376,8 @@ public class MetalWorldRenderer {
         double pruneMs = jPruneAcc / 1e6 / jProfCount;
         double buildMs = jBuildAcc / 1e6 / jProfCount;
         MetalLogger.info(
-            "JAVA_PROFILE: texture=%.2fms prune=%.2fms build=%.2fms "
-                + "(avg/%d) pending=%d queued=%d meshes=%d | lanes "
-                + "builder=%d/%d instant=%d/%d interactive=%d/%d | "
-                + "visible=%.2fms/%d block=%.2fms/%d tracked=%d/%d",
+            "java_profile: tex=%.2f prune=%.2f build=%.2f (avg/%d) p=%d q=%d m=%d "
+                + "build=%d/%d inst=%d/%d int=%d/%d vis=%.2f/%d blk=%.2f/%d t=%d/%d",
             textureMs, pruneMs, buildMs, jProfCount,
             pendingBuildSet.size(), chunkMesher.getPendingCount(),
             chunkMesher.getMeshCount(), chunkMesher.getBuilderActiveCount(),
@@ -518,7 +512,7 @@ public class MetalWorldRenderer {
               lastDrawnChunkCount = drawn;
               MetalRenderProfiler.getInstance().incrementChunksDrawn(drawn);
               if (frameCount < 10 || frameCount % 1000 == 0) {
-                MetalLogger.info("Frame %d: V18 native drew %d chunks",
+                MetalLogger.info("frame %d: drew %d chunks",
                     frameCount, drawn);
               }
             } else {
@@ -686,7 +680,7 @@ public class MetalWorldRenderer {
       NativeBridge.nDrawTriangleBuffer(frameCtx, outlineBufferHandle,
           vertexCount);
     } catch (Exception e) {
-      MetalLogger.error("[BlockOutline] Exception: %s", e.getMessage());
+      MetalLogger.error("[blockoutline] eww: %s", e.getMessage());
     }
   }
 
@@ -822,7 +816,7 @@ public class MetalWorldRenderer {
           new Vector3f((float) mc.player.getX(), (float) mc.player.getY(), (float) mc.player.getZ()),
           mc.player.getYRot());
       if (shouldSortTranslucent && MetalRenderConfig.isDeepDebugActive()) {
-        MetalLogger.debug("TranslucencyTrigger: re-sort triggered (stable=%s)",
+        MetalLogger.debug("sort trigger: stable=%s",
             translucencyTrigger.isStable());
       }
       boolean turnBurstActive = turnPriorityFrames > 0;
@@ -1054,7 +1048,7 @@ public class MetalWorldRenderer {
     if (removed) {
       sortedListDirty = true;
       MetalLogger.info(
-          "QUEUE_TRIM: keepRange=%d player=[%d,%d] pending=%d chunkPending=%d meshes=%d",
+          "queue_trim: keep=%d player=[%d,%d] p=%d cp=%d m=%d",
           keepRange, playerChunkX, playerChunkZ, pendingBuildSet.size(),
           chunkMesher.getPendingCount(), chunkMesher.getMeshCount());
     }
@@ -1079,8 +1073,7 @@ public class MetalWorldRenderer {
     LevelChunk chunk = world.getChunkSource().getChunkNow(chunkX, chunkZ);
     if (chunk == null) {
       if (MetalRenderConfig.isDeepDebugActive()) {
-        MetalLogger.debug("SCAN_SKIP: chunk [%d,%d] not available", chunkX,
-            chunkZ);
+        MetalLogger.debug("scan_skip: chunk [%d,%d]", chunkX, chunkZ);
       }
       return;
     }
@@ -1116,7 +1109,7 @@ public class MetalWorldRenderer {
           sortedListDirty = true;
           if (MetalRenderConfig.isDeepDebugActive()) {
             MetalLogger.debug(
-                "QUEUE_ADD: chunk=[%d,%d,%d] dist=%d pending=%d",
+                "queue_add: chunk=[%d,%d,%d] dist=%d p=%d",
                 chunkX, worldY, chunkZ, chunkDistance, pendingBuildSet.size());
           }
         }
@@ -1154,7 +1147,7 @@ public class MetalWorldRenderer {
         maxRingAvail = ring;
     }
     MetalLogger.info(
-        "CHUNK_AVAIL: server=%d/%d (max_ring=%d) meshes=%d pending=%d",
+        "chunk_avail: server=%d/%d (max_ring=%d) m=%d p=%d",
         available, total, maxRingAvail, chunkMesher.getMeshCount(),
         pendingBuildSet.size());
   }
@@ -1184,7 +1177,7 @@ public class MetalWorldRenderer {
     }
     if (totalBuilt > 0 || MetalRenderConfig.isDeepDebugActive()) {
       MetalLogger.info(
-          "WAIT_BUILD: built=%d pending=%d chunkPending=%d meshes=%d ready=%s",
+          "wait_build: built=%d p=%d cp=%d m=%d ready=%s",
           totalBuilt, pendingBuildSet.size(), chunkMesher.getPendingCount(),
           chunkMesher.getMeshCount(), NativeBridge.nIsFrameReady(metalHandle));
     }
@@ -1346,7 +1339,7 @@ public class MetalWorldRenderer {
           if (!bypassReadiness && !isSectionBuildReady(world, cx, cy, cz)) {
             if (MetalRenderConfig.isDeepDebugActive()) {
               MetalLogger.debug(
-                  "BUILD_DEFER: chunk=[%d,%d,%d] dist=%d readiness=false",
+                  "build_defer: chunk=[%d,%d,%d] dist=%d",
                   cx, cy, cz, chunkDist);
             }
             index++;
@@ -1427,7 +1420,7 @@ public class MetalWorldRenderer {
       }
       if (built < 5 || MetalRenderConfig.isDeepDebugActive()) {
         MetalLogger.debug(
-            "BUILD_QUEUE: chunk=[%d,%d,%d] high=%s interactive=%s pending=%d meshes=%d",
+            "build_queue: chunk=[%d,%d,%d] high=%s int=%s p=%d m=%d",
             candidate.chunkX, candidate.chunkY, candidate.chunkZ,
             highPriority, interactivePriority,
             pendingBuildSet.size(), chunkMesher.getMeshCount());
@@ -1442,7 +1435,7 @@ public class MetalWorldRenderer {
     if (built > 0 && System.currentTimeMillis() - lastQueuePressureLogMs >= 1000) {
       lastQueuePressureLogMs = System.currentTimeMillis();
       MetalLogger.info(
-          "BUILD_PASS: built=%d important=%d background=%d pending=%d chunkPending=%d meshes=%d budgetNs=%d",
+          "build_pass: built=%d imp=%d bg=%d p=%d cp=%d m=%d bud=%d",
           built, importantSubmitted, backgroundSubmissions,
           pendingBuildSet.size(), chunkMesher.getPendingCount(),
           chunkMesher.getMeshCount(), budgetNanos);
@@ -1621,7 +1614,7 @@ public class MetalWorldRenderer {
           requestArgumentBuffers, config.enableProgrammableBlending);
       gpuDrivenEnabled = NativeBridge.nIsGPUDrivenActive();
       MetalLogger.info(
-          "RUNTIME_FEATURES: mesh=%s gpuDriven=%s argBuf=%s",
+          "runtime_features: mesh=%s gpu=%s arg=%s",
           NativeBridge.nAreMeshShadersActive(), gpuDrivenEnabled,
           NativeBridge.nAreArgumentBuffersActive());
     }
@@ -1667,7 +1660,7 @@ public class MetalWorldRenderer {
         System.currentTimeMillis() - lastLoadingModeLogMs >= 1000) {
       lastLoadingModeLogMs = System.currentTimeMillis();
       MetalLogger.info(
-          "LOAD_STATE: loaded=%s active=%s loading=%s pending=%d chunkPending=%d meshes=%d",
+          "load_state: ok=%s act=%s loading=%s p=%d cp=%d m=%d",
           worldLoaded, renderingActive, loadingMode, loadingModePendingCount,
           chunkMesher.getPendingCount(), loadingModeMeshCount);
     }
@@ -1678,7 +1671,7 @@ public class MetalWorldRenderer {
       if (!loggedChunkLoadDropNotReady) {
         loggedChunkLoadDropNotReady = true;
         MetalLogger.warn(
-            "Chunk load received while renderer is not ready; dropping chunk [%d,%d] (worldLoaded=%s renderingActive=%s)",
+            "chunk load drop [%d,%d] (loaded=%s active=%s)",
             chunkX, chunkZ, worldLoaded, renderingActive);
       }
       return;
@@ -1727,7 +1720,7 @@ public class MetalWorldRenderer {
       refreshLoadedNeighborSection(chunkX, worldY, chunkZ + 1);
     }
     MetalLogger.info(
-        "CHUNK_LOAD: chunk=[%d,%d] sections=%d nonAir=%d distance=%d immediate=%s priority=%s pending=%d chunkPending=%d",
+        "chunk_load: c=[%d,%d] sec=%d air=%d d=%d imm=%s pri=%s p=%d cp=%d",
         chunkX, chunkZ, sections.length, nonAirSections, loadedChunkDistance,
         immediateBuildChunk, highPriorityChunk, pendingBuildSet.size(),
         chunkMesher.getPendingCount());
@@ -1765,7 +1758,7 @@ public class MetalWorldRenderer {
       }
     }
     if (queued > 0 || MetalRenderConfig.isDeepDebugActive()) {
-      MetalLogger.debug("REQUEUE_READY: neighbor=[%d,%d] queued=%d pending=%d",
+      MetalLogger.debug("requeue_ready: nb=[%d,%d] q=%d p=%d",
           chunkX, chunkZ, queued, pendingBuildSet.size());
     }
   }
@@ -1893,7 +1886,7 @@ public class MetalWorldRenderer {
       if (!loggedBlockUpdateDropNotReady) {
         loggedBlockUpdateDropNotReady = true;
         MetalLogger.warn(
-            "Block update rebuild dropped while renderer is not ready at [%d,%d,%d]",
+            "block rebuild drop [%d,%d,%d]",
             blockX, blockY, blockZ);
       }
       return;
@@ -1914,7 +1907,7 @@ public class MetalWorldRenderer {
       markDirtyAndQueue(cx, cy, cz + 1);
     }
     MetalLogger.info(
-        "BLOCK_REBUILD: block=[%d,%d,%d] section=[%d,%d,%d] pending=%d chunkPending=%d meshes=%d",
+        "block_rebuild: b=[%d,%d,%d] s=[%d,%d,%d] p=%d cp=%d m=%d",
         blockX, blockY, blockZ, cx, cy, cz, pendingBuildSet.size(),
         chunkMesher.getPendingCount(), chunkMesher.getMeshCount());
     updateLoadingModeState();

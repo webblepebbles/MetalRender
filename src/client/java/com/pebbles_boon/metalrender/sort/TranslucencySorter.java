@@ -31,12 +31,10 @@ public class TranslucencySorter {
     try {
       ssboHandle = MeshShaderNative.createTranslucencySortSSBO(cap);
       if (ssboHandle == 0) {
-        MetalLogger.warn("Translucency sort SSBO init returned 0; "
-            + "falling back to CPU-driven order");
+        MetalLogger.warn("sort ssbo init 0; cpu fallback");
       }
     } catch (UnsatisfiedLinkError e) {
-      MetalLogger.warn(
-          "createTranslucencySortSSBO missing native impl: " + e.getMessage());
+      MetalLogger.warn("sort ssbo make missing: " + e.getMessage());
       ssboHandle = 0L;
       active = false;
     }
@@ -68,8 +66,7 @@ public class TranslucencySorter {
         lastDispatchNs = System.nanoTime();
         return true;
       } catch (UnsatisfiedLinkError e) {
-        MetalLogger.warn(
-            "dispatchTranslucencySort missing native impl: " + e.getMessage());
+        MetalLogger.warn("sort dispatch missing: " + e.getMessage());
         active = false;
       }
     }
@@ -84,9 +81,7 @@ public class TranslucencySorter {
       int written = MeshShaderNative.readTranslucencyOrder(ssboHandle, out);
       sortPendingResult = false;
       return Math.max(0, written);
-    } catch (UnsatisfiedLinkError e) {
-      MetalLogger.warn(
-          "readTranslucencyOrder missing native impl: " + e.getMessage());
+    } catch (UnsatisfiedLinkError e) {        MetalLogger.warn("sort read missing: " + e.getMessage());
       return -1;
     }
   }

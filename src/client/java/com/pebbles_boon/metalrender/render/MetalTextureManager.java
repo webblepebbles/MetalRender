@@ -51,7 +51,7 @@ public class MetalTextureManager {
         return;
       AbstractTexture atlasTexture = mc.getTextureManager().getTexture(BLOCKS_ATLAS_ID);
       if (atlasTexture == null) {
-        MetalLogger.info("Block atlas texture not available yet");
+        MetalLogger.info("atlas not weady");
         blockAtlasLoaded = true;
         usingFallbackBlockAtlas = true;
         return;
@@ -62,7 +62,7 @@ public class MetalTextureManager {
         glTexId = glTex.glId();
       }
       if (glTexId == 0) {
-        MetalLogger.info("Block atlas GL texture ID is 0");
+        MetalLogger.info("atlas gl id 0");
         blockAtlasLoaded = true;
         usingFallbackBlockAtlas = true;
         return;
@@ -75,8 +75,7 @@ public class MetalTextureManager {
           GL11.GL_TEXTURE_HEIGHT);
       if (width <= 0 || height <= 0) {
         GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTex);
-        MetalLogger.info("Block atlas dimensions invalid: %dx%d", width,
-            height);
+        MetalLogger.info("atlas bad dim %dx%d", width, height);
         blockAtlasLoaded = true;
         usingFallbackBlockAtlas = true;
         return;
@@ -97,15 +96,14 @@ public class MetalTextureManager {
         blockAtlasHeight = height;
         blockAtlasLoaded = true;
         usingFallbackBlockAtlas = false;
-        MetalLogger.info("Block atlas loaded: %dx%d, Metal handle=%d", width,
-            height, newTexture);
+        MetalLogger.info("atlas weady: %dx%d h=%d", width, height, newTexture);
       } else {
-        MetalLogger.error("Failed to create Metal texture for block atlas");
+        MetalLogger.error("atlas tex create fail");
         blockAtlasLoaded = true;
         usingFallbackBlockAtlas = true;
       }
     } catch (Exception e) {
-      MetalLogger.error("Error loading block atlas: %s", e.getMessage());
+      MetalLogger.error("atlas load fail: %s", e.getMessage());
       blockAtlasLoaded = true;
       usingFallbackBlockAtlas = true;
     }
@@ -269,16 +267,14 @@ public class MetalTextureManager {
         }
         lightmapTexture = newTexture;
         lightmapWidth = width;
-        lightmapHeight = height;
-        MetalLogger.info("Lightmap loaded: %dx%d, Metal handle=%d", width,
-            height, newTexture);
+        lightmapHeight = height;          MetalLogger.info("lightmap weady: %dx%d h=%d", width, height, newTexture);
       } else {
         NativeBridge.nUpdateTexture2D(lightmapTexture, width, height,
             lightmapUploadData);
       }
       lightmapLoaded = true;
     } catch (Exception e) {
-      MetalLogger.error("Error loading lightmap: %s", e.getMessage());
+      MetalLogger.error("lightmap load fail: %s", e.getMessage());
     }
   }
 

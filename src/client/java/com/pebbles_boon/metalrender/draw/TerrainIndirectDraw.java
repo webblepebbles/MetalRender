@@ -23,12 +23,10 @@ public class TerrainIndirectDraw {
       icbHandle = NativeBridge.nCreateIndirectCommandBuffer(deviceHandle,
           maxCommands);
       if (icbHandle == 0) {
-        MetalLogger.warn("ICB allocation returned 0; "
-            + "MultiPass fallback will be used");
+        MetalLogger.warn("icb alloc 0; multipass fallback");
       }
     } catch (UnsatisfiedLinkError e) {
-      MetalLogger.warn(
-          "nCreateIndirectCommandBuffer missing native impl: " + e.getMessage());
+      MetalLogger.warn("icb make missing: " + e.getMessage());
       icbHandle = 0L;
       active = false;
     }
@@ -51,8 +49,7 @@ public class TerrainIndirectDraw {
       }
       return true;
     } catch (UnsatisfiedLinkError e) {
-      MetalLogger.warn(
-          "nEncodeChunkDrawICBCmd missing native impl: " + e.getMessage());
+      MetalLogger.warn("icb encode missing: " + e.getMessage());
       return false;
     }
   }
@@ -71,8 +68,7 @@ public class TerrainIndirectDraw {
       lastExecuteNs = System.nanoTime();
       return true;
     } catch (UnsatisfiedLinkError e) {
-      MetalLogger.warn(
-          "nExecuteIndirectCommandBuffer missing native impl: " + e.getMessage());
+      MetalLogger.warn("icb exec missing: " + e.getMessage());
       return false;
     }
   }
