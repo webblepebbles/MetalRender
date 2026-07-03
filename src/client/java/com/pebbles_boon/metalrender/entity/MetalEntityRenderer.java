@@ -81,8 +81,7 @@ public class MetalEntityRenderer {
         .order(ByteOrder.nativeOrder());
     metalVertexConsumer = new MetalVertexConsumer(vertexStagingBuffer, MAX_BATCH_VERTICES);
     java.util.Arrays.fill(textureCache, TEXTURE_UNCACHED);
-    MetalLogger.info(
-        "[BUILD_V9] MetalEntityRenderer constructed for 26.1 official names");
+    MetalLogger.info("MetalEntityRenderer initialized.");
   }
 
   public void setup(long device, long pipeline) {

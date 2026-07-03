@@ -1,22 +1,12 @@
 package com.pebbles_boon.metalrender.culling;
 
-import net.minecraft.client.Camera;
 import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
 public class FrustumCuller {
-  public enum MovementState {
-    STANDING, WALKING, FLYING
-  }
-
   private final float[][] planes = new float[6][4];
 
-  private final Matrix4f mvp = new Matrix4f();  public void update(Matrix4f viewProjection) {
-    update(viewProjection, new Matrix4f(), new Vector3f());
-  }
-
-  public void updateFrustum(Camera camera, MovementState movement, float aspect, float zNear, float zFar) {
-  }
+  private final Matrix4f mvp = new Matrix4f();
 
   public void update(Matrix4f projection, Matrix4f modelView,
       Vector3f cameraPos) {

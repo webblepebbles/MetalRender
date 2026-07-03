@@ -158,8 +158,12 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_dispatchTerrain
       [g_currentEncoder setMeshBuffer:argBuf offset:0 atIndex:2];
     }
     if (g_clusterVisibilityBuffer) {
-      [g_currentEncoder setObjectBuffer:g_clusterVisibilityBuffer offset:0 atIndex:4];
-      [g_currentEncoder setMeshBuffer:g_clusterVisibilityBuffer offset:0 atIndex:3];
+      [g_currentEncoder setObjectBuffer:g_clusterVisibilityBuffer
+                                 offset:0
+                                atIndex:4];
+      [g_currentEncoder setMeshBuffer:g_clusterVisibilityBuffer
+                               offset:0
+                              atIndex:3];
     }
     MTLSize objectThreadgroups = MTLSizeMake(regionCount, 1, 1);
     MTLSize objectThreadsPerGroup = MTLSizeMake(256, 1, 1);
@@ -298,9 +302,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_uploadMeshletBu
   if ((size_t)cap < totalSize)
     return;
   if (!g_subChunkBuffer || g_subChunkBuffer.length < totalSize) {
-    g_subChunkBuffer =
-        [g_device newBufferWithLength:totalSize
-                              options:MTLStorageModeShared];
+    g_subChunkBuffer = [g_device newBufferWithLength:totalSize
+                                             options:MTLStorageModeShared];
   }
   memcpy([g_subChunkBuffer contents], ptr, totalSize);
   g_gpuSubChunkCount = (uint32_t)count;
@@ -378,7 +381,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_uploadClusterVi
   jsize len = env->GetArrayLength(data);
   if (len <= 0)
     return;
-  if (!g_clusterVisibilityBuffer || g_clusterVisibilityBuffer.length < (NSUInteger)len) {
+  if (!g_clusterVisibilityBuffer ||
+      g_clusterVisibilityBuffer.length < (NSUInteger)len) {
     if (g_clusterVisibilityBuffer)
       [g_clusterVisibilityBuffer release];
     g_clusterVisibilityBuffer =
@@ -434,8 +438,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_createTransluce
   id<MTLBuffer> keyBuf = [g_device newBufferWithLength:keySize
                                                options:MTLStorageModeShared];
   if (!idxBuf || !keyBuf) {
-    if (idxBuf) [idxBuf release];
-    if (keyBuf) [keyBuf release];
+    if (idxBuf)
+      [idxBuf release];
+    if (keyBuf)
+      [keyBuf release];
     return 0;
   }
   std::lock_guard<std::mutex> lock(g_sortMutex);
@@ -514,8 +520,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_destroyTransluc
   std::lock_guard<std::mutex> lock(g_sortMutex);
   auto it = g_sortSSBOs.find((uint64_t)ssboHandle);
   if (it != g_sortSSBOs.end()) {
-    if (it->second.indexBuffer) [it->second.indexBuffer release];
-    if (it->second.keyBuffer) [it->second.keyBuffer release];
+    if (it->second.indexBuffer)
+      [it->second.indexBuffer release];
+    if (it->second.keyBuffer)
+      [it->second.keyBuffer release];
     g_sortSSBOs.erase(it);
   }
 }

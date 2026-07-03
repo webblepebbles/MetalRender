@@ -25,10 +25,6 @@ import com.pebbles_boon.metalrender.sort.TranslucencySorter;
 import com.pebbles_boon.metalrender.util.MetalLogger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.util.ArrayList;
-import java.util.HashSet;
-import java.util.List;
-import java.util.Set;
 import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
@@ -131,16 +127,11 @@ public class MetalWorldRenderer {
   private int frameCount;
   private int maxMeshes = DEFAULT_MAX_MESHES;
   private int maxDrawnChunksPerFrame = 65536;
-  private final Set<Long> pendingChunkRebuilds = new HashSet<>();
-  private final List<long[]> pendingSectionKeys = new ArrayList<>();
   private int lastDrawnChunkCount;
   private long lastDiagLogMs;
   private long outlineBufferHandle;
   private long jTextureAcc = 0, jPruneAcc = 0, jBuildAcc = 0, jLodAcc = 0;
   private int jProfCount = 0;
-  private float[] batchDrawData;
-  private float[] batchPackedData;
-  private final float[] sortTmp = new float[7];
   private boolean gpuDrivenEnabled;
   private MeshShaderBackend meshShaderBackend;
   private ByteBuffer subChunkUploadBuffer;
@@ -280,8 +271,6 @@ public class MetalWorldRenderer {
     textureManager.destroy();
     ioSurfaceBlitter.destroy();
     chunkMesher.clear();
-    pendingChunkRebuilds.clear();
-    pendingSectionKeys.clear();
     loggedChunkLoadDropNotReady = false;
     loggedBlockUpdateDropNotReady = false;
     loggedWorldLoadWithoutRenderer = false;
@@ -1644,8 +1633,6 @@ public class MetalWorldRenderer {
       return;
     }
     chunkMesher.clearAllMeshes();
-    pendingChunkRebuilds.clear();
-    pendingSectionKeys.clear();
     pendingBuildSet.clear();
     sortedBuildList.clear();
     sortedListDirty = true;
@@ -1684,10 +1671,6 @@ public class MetalWorldRenderer {
           worldLoaded, renderingActive, loadingMode, loadingModePendingCount,
           chunkMesher.getPendingCount(), loadingModeMeshCount);
     }
-  }
-
-  public void renderFrame(Object viewport, Object matrices, double x, double y,
-      double z) {
   }
 
   public void onChunkLoaded(int chunkX, int chunkZ, LevelChunk chunk) {
