@@ -7,8 +7,6 @@ public final class NativeBridge {
       System.loadLibrary("metalrender");
       libLoaded = true;
     } catch (UnsatisfiedLinkError e) {
-      // Surface the cause but never propagating it: System.err is safe to use
-      // even before the Fabric logger has finished initializing.
       System.err.println("[MetalRender] native metalrender library unavailable: "
           + e.getMessage());
       libLoaded = false;

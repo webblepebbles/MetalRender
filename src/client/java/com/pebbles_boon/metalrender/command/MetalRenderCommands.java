@@ -57,13 +57,13 @@ public final class MetalRenderCommands {
                                         MetalRenderConfig cfg = MetalRenderClient.getConfig();
                                         if (cfg != null)
                                             cfg.save();
-                                        msg(ctx.getSource(), "§aConfig saved to disk.");
+                                        msg(ctx.getSource(), "§aConfig saved to diks");
                                         return 1;
                                     }))
                                     .then(literal("reload").executes(ctx -> {
 
                                         msg(ctx.getSource(),
-                                                "§eConfig reloaded. Some changes may require /metalrender restart.");
+                                                "§eConfig weloaded. some changes would need westart");
                                         return 1;
                                     }))
                                     .then(literal("reset").executes(ctx -> {
@@ -75,14 +75,14 @@ public final class MetalRenderCommands {
                                     .then(literal("reset").executes(ctx -> {
                                         MetalRenderConfig.setResolutionScale(1.0f);
                                         msg(ctx.getSource(),
-                                                "§ePerformance settings reset to defaults.");
+                                                "§epewfowmance settings reset");
                                         return 1;
                                     })))
 
                             .then(literal("profile").executes(ctx -> {
                                 com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance().toggleVisible();
                                 boolean nowVisible = com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance().isVisible();
-                                msg(ctx.getSource(), nowVisible ? "§aMetalRender profiler enabled." : "§eMetalRender profiler disabled.");
+                                msg(ctx.getSource(), nowVisible ? "§aMetalRender profiler starts" : "§eMetalRender profiler unstarts");
                                 return 1;
                             }))
 
@@ -91,7 +91,7 @@ public final class MetalRenderCommands {
                                 return 1;
                             }));
         });
-        MetalLogger.info("MetalRender commands registered.");
+        MetalLogger.info("metalwender command");
     }
 
     private static void msg(FabricClientCommandSource src, String text) {
@@ -103,14 +103,14 @@ public final class MetalRenderCommands {
 
     private static void sendHelp(FabricClientCommandSource src) {
         msg(src, "§6§l--- MetalRender Commands ---");
-        msg(src, "§e/metalrender status §7- Show renderer status");
-        msg(src, "§e/metalrender help §7- This help menu");
-        msg(src, "§e/metalrender cache clear §7- Clear cache & restart renderer");
-        msg(src, "§e/metalrender reload §7- Reload world renderer");
-        msg(src, "§e/metalrender restart §7- Full renderer restart");
+        msg(src, "§e/metalrender status §7- Show wendewer status");
+        msg(src, "§e/metalrender help §7- help menu");
+        msg(src, "§e/metalrender cache clear §7- Clear cache & westart wendewer");
+        msg(src, "§e/metalrender reload §7- weload world wendewer");
+        msg(src, "§e/metalrender restart §7- Full wendewer westart");
         msg(src, "§e/metalrender config open §7- Open MetalRender settings screen");
         msg(src, "§e/metalrender config save|reload|reset §7- Config management");
-        msg(src, "§e/metalrender performance reset §7- Reset perf settings");
+        msg(src, "§e/metalrender performance reset §7- weset perf settings");
         msg(src, "§e/metalrender profile §7- Toggle profiler overlay");
     }
 
@@ -118,13 +118,13 @@ public final class MetalRenderCommands {
         try {
             Minecraft mc = Minecraft.getInstance();
             if (mc == null) {
-                msg(src, "§cMinecraft client unavailable.");
+                msg(src, "§cminecwaft die");
                 return;
             }
             MetalRenderClient.openSettingsScreen(mc);
-            msg(src, "§aOpening MetalRender settings...");
+            msg(src, "§aopen metalrender setting");
         } catch (Exception e) {
-            msg(src, "§cFailed to open config screen: " + e.getMessage());
+            msg(src, "§cfailed to open config screen: " + e.getMessage());
         }
     }
 
@@ -134,7 +134,7 @@ public final class MetalRenderCommands {
         boolean enabled = cfg != null && cfg.enableMetalRendering;
 
         msg(src, "§6§l--- MetalRender Status ---");
-        msg(src, "§7Enabled: " + (enabled ? "§aYes" : "§cNo"));
+        msg(src, "§7Enabled: " + (enabled ? "§cyea" : "§cnah"));
         msg(src, "§7Hardware: "
                 + (available ? "§a" + MetalHardwareChecker.getDeviceName() : "§cUnavailable"));
         msg(src, "§7Resolution scale: §f" + String.format("%.2fx", MetalRenderConfig.resolutionScale()));
@@ -150,9 +150,9 @@ public final class MetalRenderCommands {
         MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
         if (wr != null) {
             wr.getChunkMesher().clearAllMeshes();
-            msg(src, "§aCache cleared. Renderer restarting...");
+            msg(src, "§acache cleared wendewer westawting");
         } else {
-            msg(src, "§cWorld renderer not available.");
+            msg(src, "§cworld wendewer not available です");
         }
     }
 
@@ -166,9 +166,9 @@ public final class MetalRenderCommands {
             if (wr != null) {
                 wr.getChunkMesher().clearAllMeshes();
             }
-            msg(src, "§aWorld renderer reloaded.");
+            msg(src, "§aworld wendewer weloaded");
         } catch (Exception e) {
-            msg(src, "§cReload failed: " + e.getMessage());
+            msg(src, "§cweload failed: " + e.getMessage());
         }
     }
 
@@ -183,9 +183,9 @@ public final class MetalRenderCommands {
             if (wr != null) {
                 wr.getChunkMesher().clearAllMeshes();
             }
-            msg(src, "§aMetalRender restarted.");
+            msg(src, "§aMetalRender westarted");
         } catch (Exception e) {
-            msg(src, "§cRestart failed: " + e.getMessage());
+            msg(src, "§cRestart fail: " + e.getMessage());
         }
     }
 
@@ -193,7 +193,7 @@ public final class MetalRenderCommands {
         MetalRenderConfig.setResolutionScale(1.0f);
         MetalRenderConfig.setMirrorUploads(false);
         invalidateAllMeshes();
-        msg(src, "§eAll settings reset to defaults. Rebuilding...");
+        msg(src, "§esettings weturned to default");
     }
 
     private static String fmtPx(float value) {

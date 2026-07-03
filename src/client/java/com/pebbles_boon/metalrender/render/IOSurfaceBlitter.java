@@ -290,7 +290,6 @@ public final class IOSurfaceBlitter {
         MetalLogger.error("[IOSurfaceBlitter] GPU composite exception: %s",
             e.getMessage());
       }
-      // Drain any pending GL errors with a hard upper bound so we never spin.
       int err;
       int drained = 0;
       while ((err = GL11.glGetError()) != GL11.GL_NO_ERROR && drained++ < 8) {
