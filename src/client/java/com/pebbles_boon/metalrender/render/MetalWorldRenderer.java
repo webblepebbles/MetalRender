@@ -91,7 +91,6 @@ public class MetalWorldRenderer {
   private static final int ACTIVE_CLOSE_RANGE_RESCAN_INTERVAL = 3;
   private static final int IDLE_CLOSE_RANGE_RESCAN_INTERVAL = 8;
   private static final int HOT_LOAD_REBUILD_RANGE = 12;
-  private static final int STARTUP_SOLID_FILL_MESH_THRESHOLD = 3072;
   private static final int LOADING_FRONTIER_RING_SCAN_SPAN = 12;
   private static final int NORMAL_FRONTIER_RING_SCAN_SPAN = 6;
 
@@ -820,8 +819,6 @@ public class MetalWorldRenderer {
             translucencyTrigger.isStable());
       }
       boolean turnBurstActive = turnPriorityFrames > 0;
-      boolean startupSolidFill = loadingMode &&
-          loadingModeMeshCount < STARTUP_SOLID_FILL_MESH_THRESHOLD;
       int mesherPending = chunkMesher.getPendingCount();
       int visibleBacklog = pendingBuildSet.size() + mesherPending;
       boolean fpsPriorityMode = MetalRenderClient.getConfig() != null &&
@@ -831,12 +828,6 @@ public class MetalWorldRenderer {
           : MIN_CHUNK_BUILDS_PER_FRAME;
       int highPrioritySubmissions = turnBurstActive ? TURN_HIGH_PRIORITY_SUBMISSIONS_PER_PASS
           : BASE_HIGH_PRIORITY_SUBMISSIONS_PER_PASS;
-      if (startupSolidFill) {
-        buildBudget = Math.max(buildBudget, CHUNK_HEAVY_BACKLOG_BUILD_BURST_NS);
-        minBuilds = Math.max(minBuilds, MIN_CHUNK_HEAVY_BACKLOG_BUILDS_PER_FRAME);
-        highPrioritySubmissions = Math.max(highPrioritySubmissions,
-            HEAVY_BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS);
-      }
       if (mesherPending >= CHUNK_SCAN_SATURATED_THRESHOLD) {
         buildBudget = Math.min(buildBudget, CHUNK_SATURATED_BUILD_BUDGET_NS);
         minBuilds = Math.min(minBuilds, MIN_CHUNK_SATURATED_BUILDS_PER_FRAME);
@@ -854,16 +845,12 @@ public class MetalWorldRenderer {
             BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS);
       }
       if (fpsPriorityMode) {
-        buildBudget = Math.max(buildBudget,
-            loadingMode ? CHUNK_HEAVY_BACKLOG_BUILD_BURST_NS
-                : CHUNK_BACKLOG_BUILD_BURST_NS);
+        buildBudget = Math.max(buildBudget, CHUNK_BACKLOG_BUILD_BURST_NS);
         minBuilds = Math.max(
-            minBuilds, loadingMode ? MIN_CHUNK_HEAVY_BACKLOG_BUILDS_PER_FRAME
-                : MIN_CHUNK_BACKLOG_BUILDS_PER_FRAME);
+            minBuilds, MIN_CHUNK_BACKLOG_BUILDS_PER_FRAME);
         highPrioritySubmissions = Math.max(
             highPrioritySubmissions,
-            loadingMode ? HEAVY_BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS
-                : BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS);
+            BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS);
       }
       buildFromPendingSet(playerChunkX, playerSectionY, playerChunkZ,
           buildBudget, minBuilds, highPrioritySubmissions);
@@ -887,7 +874,7 @@ public class MetalWorldRenderer {
     int renderDist = mc.options.renderDistance().get();
     int mesherPending = chunkMesher.getPendingCount();
     int visibleBacklog = pendingBuildSet.size() + mesherPending;
-    boolean coverageFillActive = loadingMode;
+    boolean coverageFillActive = false;
     boolean scanPressured = visibleBacklog >= CHUNK_SCAN_PRESSURE_THRESHOLD;
     boolean scanSaturated = visibleBacklog >= CHUNK_SCAN_SATURATED_THRESHOLD;
     int closeRange = Math.min(HOT_LOAD_REBUILD_RANGE, renderDist);
@@ -1213,8 +1200,6 @@ public class MetalWorldRenderer {
         final int pcz = playerChunkZ;
         final float fwdX = cachedForwardX;
         final float fwdZ = cachedForwardZ;
-        final boolean startupSolidFill = loadingMode &&
-            loadingModeMeshCount < STARTUP_SOLID_FILL_MESH_THRESHOLD;
         sortedBuildList.sort((a, b) -> {
           int ax = (int) ((a >> 42) & 0x3FFFFF);
           if ((ax & 0x200000) != 0)
@@ -1238,7 +1223,7 @@ public class MetalWorldRenderer {
           float dotB = (bx - pcx) * fwdX + (bz - pcz) * fwdZ;
           boolean frontA = dotA >= 0;
           boolean frontB = dotB >= 0;
-          if (!startupSolidFill && frontA != frontB)
+          if (frontA != frontB)
             return frontA ? -1 : 1;
           int distA = Math.abs(ax - pcx) + Math.abs(az - pcz);
           int distB = Math.abs(bx - pcx) + Math.abs(bz - pcz);
@@ -1293,16 +1278,14 @@ public class MetalWorldRenderer {
         ? FPS_PRIORITY_MAX_IN_FLIGHT_BUILD_TASKS
         : MAX_IN_FLIGHT_BUILD_TASKS;
     int backgroundInFlightLimit = Math.max(1, maxInFlightBuildTasks - RESERVED_PRIORITY_IN_FLIGHT_SLOTS);
-    int backgroundSubmissionBudget = loadingMode ? LOADING_BACKGROUND_SUBMISSIONS_PER_PASS
-        : (turnPriorityFrames > 0
-            ? TURN_PRIORITY_BACKGROUND_SUBMISSIONS_PER_PASS
-            : NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS);
+    int backgroundSubmissionBudget = turnPriorityFrames > 0
+        ? TURN_PRIORITY_BACKGROUND_SUBMISSIONS_PER_PASS
+        : NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS;
     if (fpsPriorityMode) {
       backgroundInFlightLimit = maxInFlightBuildTasks;
       backgroundSubmissionBudget = Math.max(
           backgroundSubmissionBudget,
-          loadingMode ? FPS_PRIORITY_LOADING_BACKGROUND_SUBMISSIONS_PER_PASS
-              : FPS_PRIORITY_NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS);
+          FPS_PRIORITY_NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS);
     }
     int currentMeshCount = chunkMesher.getMeshCount();
     while (!sortedBuildList.isEmpty() && built < maxSubmit &&
@@ -1334,8 +1317,7 @@ public class MetalWorldRenderer {
           int dx = cx - playerChunkX;
           int dz = cz - playerChunkZ;
           int chunkDist = Math.max(Math.abs(dx), Math.abs(dz));
-          boolean bypassReadiness = chunkDist <= IMPORTANT_REBUILD_CHUNK_RANGE ||
-              (loadingMode && chunkDist <= HOT_LOAD_REBUILD_RANGE);
+          boolean bypassReadiness = chunkDist <= IMPORTANT_REBUILD_CHUNK_RANGE;
           if (!bypassReadiness && !isSectionBuildReady(world, cx, cy, cz)) {
             if (MetalRenderConfig.isDeepDebugActive()) {
               MetalLogger.debug(
@@ -1401,7 +1383,7 @@ public class MetalWorldRenderer {
 
       boolean interactivePriority = highPriority &&
           candidate.chunkDist <= INTERACTIVE_PRIORITY_CHUNK_RANGE &&
-          (loadingMode || turnPriorityFrames > 0) &&
+          turnPriorityFrames > 0 &&
           chunkMesher.getInteractiveQueueDepth() < MAX_INTERACTIVE_PRIORITY_QUEUE_DEPTH;
       if (!highPriority && !interactivePriority) {
         if (backgroundSubmissions >= backgroundSubmissionBudget) {
@@ -1647,21 +1629,16 @@ public class MetalWorldRenderer {
   }
 
   private void updateLoadingModeState() {
-    int prevPending = loadingModePendingCount;
-    int prevMeshes = loadingModeMeshCount;
-    boolean prevLoadingMode = loadingMode;
     loadingModeMeshCount = chunkMesher.getMeshCount();
     loadingModePendingCount = pendingBuildSet.size() + chunkMesher.getPendingCount();
-    loadingMode = worldLoaded && renderingActive && loadingModePendingCount > 0;
+    loadingMode = false;
     chunkMesher.setLoadingModeThreadBudget(loadingMode,
         loadingModePendingCount);
-    if ((prevPending != loadingModePendingCount || prevMeshes != loadingModeMeshCount ||
-        prevLoadingMode != loadingMode) &&
-        System.currentTimeMillis() - lastLoadingModeLogMs >= 1000) {
+    if (System.currentTimeMillis() - lastLoadingModeLogMs >= 1000) {
       lastLoadingModeLogMs = System.currentTimeMillis();
       MetalLogger.info(
-          "load_state: ok=%s act=%s loading=%s p=%d cp=%d m=%d",
-          worldLoaded, renderingActive, loadingMode, loadingModePendingCount,
+          "load_state: ok=%s act=%s p=%d cp=%d m=%d",
+          worldLoaded, renderingActive, loadingModePendingCount,
           chunkMesher.getPendingCount(), loadingModeMeshCount);
     }
   }
@@ -1832,12 +1809,6 @@ public class MetalWorldRenderer {
   }
 
   private void updateTextureBackoffState() {
-    if (loadingMode) {
-      consecutiveHighMeshMsFrames = 0;
-      consecutiveCoolMeshMsFrames = 0;
-      textureBackoffActive = false;
-      return;
-    }
     BuildBudgetEstimator estimator = PerformanceController.getBudgetEstimator();
     double meshMs = estimator != null ? estimator.getEwmaMeshMs() : 0.0;
     if (meshMs > TEXTURE_BACKOFF_HARD_TRIP_MESH_MS) {
@@ -1898,14 +1869,12 @@ public class MetalWorldRenderer {
     chunkMesher.noteBlockUpdate(cx, cy, cz);
     chunkMesher.markDirty(cx, cy, cz);
     chunkMesher.buildMeshFromWorldInteractive(cx, cy, cz);
-    if (!loadingMode) {
-      markDirtyAndQueue(cx - 1, cy, cz);
-      markDirtyAndQueue(cx + 1, cy, cz);
-      markDirtyAndQueue(cx, cy - 1, cz);
-      markDirtyAndQueue(cx, cy + 1, cz);
-      markDirtyAndQueue(cx, cy, cz - 1);
-      markDirtyAndQueue(cx, cy, cz + 1);
-    }
+    markDirtyAndQueue(cx - 1, cy, cz);
+    markDirtyAndQueue(cx + 1, cy, cz);
+    markDirtyAndQueue(cx, cy - 1, cz);
+    markDirtyAndQueue(cx, cy + 1, cz);
+    markDirtyAndQueue(cx, cy, cz - 1);
+    markDirtyAndQueue(cx, cy, cz + 1);
     MetalLogger.info(
         "block_rebuild: b=[%d,%d,%d] s=[%d,%d,%d] p=%d cp=%d m=%d",
         blockX, blockY, blockZ, cx, cy, cz, pendingBuildSet.size(),
