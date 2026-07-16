@@ -63,7 +63,7 @@ public final class MetalRenderCommands {
                                     .then(literal("reload").executes(ctx -> {
 
                                         msg(ctx.getSource(),
-                                                "§eConfig weloaded. some changes would need westart");
+                                                "§eConfig reloaded. some changes would need restart");
                                         return 1;
                                     }))
                                     .then(literal("reset").executes(ctx -> {
@@ -110,7 +110,7 @@ public final class MetalRenderCommands {
         msg(src, "§e/metalrender restart §7- Full wendewer westart");
         msg(src, "§e/metalrender config open §7- Open MetalRender settings screen");
         msg(src, "§e/metalrender config save|reload|reset §7- Config management");
-        msg(src, "§e/metalrender performance reset §7- weset perf settings");
+        msg(src, "§e/metalrender performance reset §7- reset perf settings");
         msg(src, "§e/metalrender profile §7- Toggle profiler overlay");
     }
 
@@ -166,9 +166,9 @@ public final class MetalRenderCommands {
             if (wr != null) {
                 wr.getChunkMesher().clearAllMeshes();
             }
-            msg(src, "§aworld wendewer weloaded");
+            msg(src, "§aworld rendrer reloaded");
         } catch (Exception e) {
-            msg(src, "§cweload failed: " + e.getMessage());
+            msg(src, "§creload failed: " + e.getMessage());
         }
     }
 
@@ -193,7 +193,7 @@ public final class MetalRenderCommands {
         MetalRenderConfig.setResolutionScale(1.0f);
         MetalRenderConfig.setMirrorUploads(false);
         invalidateAllMeshes();
-        msg(src, "§esettings weturned to default");
+        msg(src, "§esettings wreturned to default");
     }
 
     private static String fmtPx(float value) {
