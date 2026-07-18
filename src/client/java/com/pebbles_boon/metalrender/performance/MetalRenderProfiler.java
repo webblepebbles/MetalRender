@@ -21,15 +21,13 @@ public final class MetalRenderProfiler {
   private static final int HISTORY_SIZE = 120;
   private static final double HANG_THRESHOLD_MS = 100.0;
   private static final long LOG_INTERVAL_MS = 5000;
+  private static final long SNAPSHOT_INTERVAL_MS = 500;
 
   private boolean visible;
   private long frameStartNs;
   private long renderStartNs;
   private long frameEndNs;
   private long renderEndNs;
-  private final double[] frameTimes = new double[HISTORY_SIZE];
-  private final double[] cpuTimes = new double[HISTORY_SIZE];
-  private final double[] renderTimes = new double[HISTORY_SIZE];
   private int writeIndex;
   private int sampleCount;
   private long totalFrames;
@@ -41,10 +39,6 @@ public final class MetalRenderProfiler {
   private final AtomicLong meshTimeAccNs = new AtomicLong(0);
   private final AtomicLong uploadTimeAccNs = new AtomicLong(0);
   private final AtomicLong cullTimeAccNs = new AtomicLong(0);
-  private final AtomicLong scanTimeAccNs = new AtomicLong(0);
-  private final AtomicLong textureTimeAccNs = new AtomicLong(0);
-  private final AtomicLong entityTimeAccNs = new AtomicLong(0);
-  private final AtomicLong particleTimeAccNs = new AtomicLong(0);
   private final AtomicLong gpuTimeAccNs = new AtomicLong(0);
 
   private final AtomicInteger meshesBuiltAcc = new AtomicInteger(0);
@@ -52,20 +46,20 @@ public final class MetalRenderProfiler {
   private final AtomicInteger chunksScannedAcc = new AtomicInteger(0);
   private final AtomicInteger chunksDrawnAcc = new AtomicInteger(0);
 
-  private final double[] meshTimes = new double[HISTORY_SIZE];
-  private final double[] uploadTimes = new double[HISTORY_SIZE];
-  private final double[] cullTimes = new double[HISTORY_SIZE];
-  private final double[] scanTimes = new double[HISTORY_SIZE];
-  private final double[] textureTimes = new double[HISTORY_SIZE];
-  private final double[] entityTimes = new double[HISTORY_SIZE];
-  private final double[] particleTimes = new double[HISTORY_SIZE];
-  private final double[] gpuTimes = new double[HISTORY_SIZE];
+  private final MetricHistory frameHistory = new MetricHistory(HISTORY_SIZE);
+  private final MetricHistory cpuHistory = new MetricHistory(HISTORY_SIZE);
+  private final MetricHistory renderHistory = new MetricHistory(HISTORY_SIZE);
+  private final MetricHistory meshHistory = new MetricHistory(HISTORY_SIZE);
+  private final MetricHistory uploadHistory = new MetricHistory(HISTORY_SIZE);
+  private final MetricHistory cullHistory = new MetricHistory(HISTORY_SIZE);
+  private final MetricHistory gpuHistory = new MetricHistory(HISTORY_SIZE);
 
   private long lastLogTimeMs;
   private long lastCsvEmitMs;
+  private long lastSnapshotUpdateMs;
   private boolean csvHeaderWritten;
   private static final String CSV_HEADER =
-      "epoch_ms,loading,frame_ms,mesh_ms,upload_ms,cull_ms,scan_ms," +
+      "epoch_ms,loading,frame_ms,mesh_ms,upload_ms,cull_ms," +
           "meshes_built,chunks_drawn,meshes,pending,vertex_count,builder_pool,queued";
 
   private MetalRenderProfiler() {
@@ -111,26 +105,6 @@ public final class MetalRenderProfiler {
       cullTimeAccNs.addAndGet(nanos);
   }
 
-  public void recordScanTime(long nanos) {
-    if (nanos > 0)
-      scanTimeAccNs.addAndGet(nanos);
-  }
-
-  public void recordTextureTime(long nanos) {
-    if (nanos > 0)
-      textureTimeAccNs.addAndGet(nanos);
-  }
-
-  public void recordEntityTime(long nanos) {
-    if (nanos > 0)
-      entityTimeAccNs.addAndGet(nanos);
-  }
-
-  public void recordParticleTime(long nanos) {
-    if (nanos > 0)
-      particleTimeAccNs.addAndGet(nanos);
-  }
-
   public void recordGpuTime(long nanos) {
     if (nanos > 0)
       gpuTimeAccNs.addAndGet(nanos);
@@ -161,22 +135,16 @@ public final class MetalRenderProfiler {
     totalFrames++;
 
     double frameMs = (frameEndNs - frameStartNs) / 1_000_000.0;
-    double renderMs = 0.0;
-    if (renderEndNs > renderStartNs) {
-      renderMs = (renderEndNs - renderStartNs) / 1_000_000.0;
-    }
+    double renderMs = renderEndNs > renderStartNs ? (renderEndNs - renderStartNs) / 1_000_000.0 : 0.0;
     double cpuMs = Math.max(0.0, frameMs - renderMs);
 
     if (frameMs > HANG_THRESHOLD_MS) {
       hangCount++;
     }
+
     double meshMs = meshTimeAccNs.getAndSet(0) / 1_000_000.0;
     double uploadMs = uploadTimeAccNs.getAndSet(0) / 1_000_000.0;
     double cullMs = cullTimeAccNs.getAndSet(0) / 1_000_000.0;
-    double scanMs = scanTimeAccNs.getAndSet(0) / 1_000_000.0;
-    double textureMs = textureTimeAccNs.getAndSet(0) / 1_000_000.0;
-    double entityMs = entityTimeAccNs.getAndSet(0) / 1_000_000.0;
-    double particleMs = particleTimeAccNs.getAndSet(0) / 1_000_000.0;
     double gpuMs = gpuTimeAccNs.getAndSet(0) / 1_000_000.0;
     if (gpuMs <= 0.0) {
       try {
@@ -191,46 +159,52 @@ public final class MetalRenderProfiler {
     int chunksDrawn = chunksDrawnAcc.getAndSet(0);
 
     int idx = writeIndex % HISTORY_SIZE;
-    frameTimes[idx] = frameMs;
-    cpuTimes[idx] = cpuMs;
-    renderTimes[idx] = renderMs;
-    meshTimes[idx] = meshMs;
-    uploadTimes[idx] = uploadMs;
-    cullTimes[idx] = cullMs;
-    scanTimes[idx] = scanMs;
-    textureTimes[idx] = textureMs;
-    entityTimes[idx] = entityMs;
-    particleTimes[idx] = particleMs;
-    gpuTimes[idx] = gpuMs;
+    frameHistory.record(frameMs);
+    cpuHistory.record(cpuMs);
+    renderHistory.record(renderMs);
+    meshHistory.record(meshMs);
+    uploadHistory.record(uploadMs);
+    cullHistory.record(cullMs);
+    gpuHistory.record(gpuMs);
+    frameHistory.commit(idx, sampleCount);
+    cpuHistory.commit(idx, sampleCount);
+    renderHistory.commit(idx, sampleCount);
+    meshHistory.commit(idx, sampleCount);
+    uploadHistory.commit(idx, sampleCount);
+    cullHistory.commit(idx, sampleCount);
+    gpuHistory.commit(idx, sampleCount);
     writeIndex++;
     if (sampleCount < HISTORY_SIZE) {
       sampleCount++;
     }
 
-    if (visible) {
+    long nowMs = System.currentTimeMillis();
+
+    if (visible && nowMs - lastSnapshotUpdateMs >= SNAPSHOT_INTERVAL_MS) {
+      lastSnapshotUpdateMs = nowMs;
       snapshot = buildSnapshot(frameMs, cpuMs, renderMs,
-          meshMs, uploadMs, cullMs, scanMs, textureMs, entityMs, particleMs,
+          meshMs, uploadMs, cullMs, gpuMs,
           meshesBuilt, uploadsDone, chunksScanned, chunksDrawn);
     }
 
-    long nowMs = System.currentTimeMillis();
     if (nowMs - lastLogTimeMs >= LOG_INTERVAL_MS) {
       lastLogTimeMs = nowMs;
       logPeriodic(frameMs, cpuMs, renderMs,
-          meshMs, uploadMs, cullMs, scanMs, textureMs, entityMs, particleMs,
+          meshMs, uploadMs, cullMs, gpuMs,
           meshesBuilt, uploadsDone, chunksScanned, chunksDrawn);
     }
+
     MetalWorldRenderer wrForCsv = MetalRenderClient.getWorldRenderer();
     if (wrForCsv != null && wrForCsv.isLoadingMode() &&
         nowMs - lastCsvEmitMs >= 1000L) {
       lastCsvEmitMs = nowMs;
-      emitCsvSample(nowMs, frameMs, meshMs, uploadMs, cullMs, scanMs,
+      emitCsvSample(nowMs, frameMs, meshMs, uploadMs, cullMs,
           meshesBuilt, chunksDrawn, wrForCsv);
     }
   }
 
   private void emitCsvSample(long tsMs, double frameMs, double meshMs,
-      double uploadMs, double cullMs, double scanMs,
+      double uploadMs, double cullMs,
       int meshesBuilt, int chunksDrawn, MetalWorldRenderer wr) {
     ensureCsvWorker();
     CustomChunkMesherAccess access = CustomChunkMesherAccess.of(wr);
@@ -240,11 +214,10 @@ public final class MetalRenderProfiler {
       sb.append(CSV_HEADER).append('\n');
     }
     sb.append(tsMs).append(',').append(true).append(',')
-        .append(String.format(Locale.ROOT, "%.3f", frameMs)).append(',')
-        .append(String.format(Locale.ROOT, "%.3f", meshMs)).append(',')
-        .append(String.format(Locale.ROOT, "%.3f", uploadMs)).append(',')
-        .append(String.format(Locale.ROOT, "%.3f", cullMs)).append(',')
-        .append(String.format(Locale.ROOT, "%.3f", scanMs)).append(',')
+        .append(fmt(frameMs)).append(',')
+        .append(fmt(meshMs)).append(',')
+        .append(fmt(uploadMs)).append(',')
+        .append(fmt(cullMs)).append(',')
         .append(meshesBuilt).append(',')
         .append(chunksDrawn).append(',')
         .append(access.meshCount).append(',')
@@ -253,6 +226,10 @@ public final class MetalRenderProfiler {
         .append(access.builderActive).append(',')
         .append(access.builderQueued).append('\n');
     csvQueue.offer(sb.toString());
+  }
+
+  private static String fmt(double ms) {
+    return String.format(Locale.ROOT, "%.3f", ms);
   }
 
   private void ensureCsvWorker() {
@@ -321,10 +298,9 @@ public final class MetalRenderProfiler {
   }
 
   private void logPeriodic(double frameMs, double cpuMs, double renderMs,
-      double meshMs, double uploadMs, double cullMs, double scanMs,
-      double textureMs, double entityMs, double particleMs,
+      double meshMs, double uploadMs, double cullMs, double gpuMs,
       int meshesBuilt, int uploadsDone, int chunksScanned, int chunksDrawn) {
-    double totalTracked = meshMs + uploadMs + cullMs + scanMs + textureMs + entityMs + particleMs;
+    double totalTracked = meshMs + uploadMs + cullMs + gpuMs;
     double otherMs = Math.max(0.0, frameMs - totalTracked);
     double totalBase = Math.max(frameMs, totalTracked);
 
@@ -334,10 +310,7 @@ public final class MetalRenderProfiler {
     sb.append(String.format(Locale.ROOT, "mesh=%.2fms(%.1f%%) ", meshMs, pct(meshMs, totalBase)));
     sb.append(String.format(Locale.ROOT, "upload=%.2fms(%.1f%%) ", uploadMs, pct(uploadMs, totalBase)));
     sb.append(String.format(Locale.ROOT, "cull=%.2fms(%.1f%%) ", cullMs, pct(cullMs, totalBase)));
-    sb.append(String.format(Locale.ROOT, "scan=%.2fms(%.1f%%) ", scanMs, pct(scanMs, totalBase)));
-    sb.append(String.format(Locale.ROOT, "tex=%.2fms(%.1f%%) ", textureMs, pct(textureMs, totalBase)));
-    sb.append(String.format(Locale.ROOT, "entity=%.2fms(%.1f%%) ", entityMs, pct(entityMs, totalBase)));
-    sb.append(String.format(Locale.ROOT, "particle=%.2fms(%.1f%%) ", particleMs, pct(particleMs, totalBase)));
+    sb.append(String.format(Locale.ROOT, "gpu=%.2fms(%.1f%%) ", gpuMs, pct(gpuMs, totalBase)));
     sb.append(String.format(Locale.ROOT, "other=%.2fms(%.1f%%) | ", otherMs, pct(otherMs, totalBase)));
     sb.append(String.format(Locale.ROOT, "meshes_built=%d uploads=%d scanned=%d drawn=%d",
         meshesBuilt, uploadsDone, chunksScanned, chunksDrawn));
@@ -349,162 +322,41 @@ public final class MetalRenderProfiler {
   }
 
   private ProfileSnapshot buildSnapshot(double currentFrameMs, double currentCpuMs, double currentRenderMs,
-      double currentMeshMs, double currentUploadMs, double currentCullMs,
-      double currentScanMs, double currentTextureMs,
-      double currentEntityMs, double currentParticleMs,
+      double currentMeshMs, double currentUploadMs, double currentCullMs, double currentGpuMs,
       int meshesBuilt, int uploadsDone, int chunksScanned, int chunksDrawn) {
     ProfileSnapshot s = new ProfileSnapshot();
     s.totalFrames = totalFrames;
     s.hangCount = hangCount;
 
-    if (sampleCount > 0) {
-      double frameSum = 0.0, frameMin = Double.MAX_VALUE, frameMax = 0.0;
-      double cpuSum = 0.0, cpuMin = Double.MAX_VALUE, cpuMax = 0.0;
-      double renderSum = 0.0, renderMin = Double.MAX_VALUE, renderMax = 0.0;
-      double meshSum = 0.0, meshMin = Double.MAX_VALUE, meshMax = 0.0;
-      double uploadSum = 0.0, uploadMin = Double.MAX_VALUE, uploadMax = 0.0;
-      double cullSum = 0.0, cullMin = Double.MAX_VALUE, cullMax = 0.0;
-      double scanSum = 0.0, scanMin = Double.MAX_VALUE, scanMax = 0.0;
-      double textureSum = 0.0, textureMin = Double.MAX_VALUE, textureMax = 0.0;
-      double entitySum = 0.0, entityMin = Double.MAX_VALUE, entityMax = 0.0;
-      double particleSum = 0.0, particleMin = Double.MAX_VALUE, particleMax = 0.0;
-      for (int i = 0; i < sampleCount; i++) {
-        double ft = frameTimes[i];
-        double ct = cpuTimes[i];
-        double rt = renderTimes[i];
-        double mt = meshTimes[i];
-        double ut = uploadTimes[i];
-        double cut = cullTimes[i];
-        double st = scanTimes[i];
-        double tt = textureTimes[i];
-        double et = entityTimes[i];
-        double pt = particleTimes[i];
-        frameSum += ft;
-        cpuSum += ct;
-        renderSum += rt;
-        meshSum += mt;
-        uploadSum += ut;
-        cullSum += cut;
-        scanSum += st;
-        textureSum += tt;
-        entitySum += et;
-        particleSum += pt;
-        if (ft < frameMin)
-          frameMin = ft;
-        if (ft > frameMax)
-          frameMax = ft;
-        if (ct < cpuMin)
-          cpuMin = ct;
-        if (ct > cpuMax)
-          cpuMax = ct;
-        if (rt < renderMin)
-          renderMin = rt;
-        if (rt > renderMax)
-          renderMax = rt;
-        if (mt < meshMin)
-          meshMin = mt;
-        if (mt > meshMax)
-          meshMax = mt;
-        if (ut < uploadMin)
-          uploadMin = ut;
-        if (ut > uploadMax)
-          uploadMax = ut;
-        if (cut < cullMin)
-          cullMin = cut;
-        if (cut > cullMax)
-          cullMax = cut;
-        if (st < scanMin)
-          scanMin = st;
-        if (st > scanMax)
-          scanMax = st;
-        if (tt < textureMin)
-          textureMin = tt;
-        if (tt > textureMax)
-          textureMax = tt;
-        if (et < entityMin)
-          entityMin = et;
-        if (et > entityMax)
-          entityMax = et;
-        if (pt < particleMin)
-          particleMin = pt;
-        if (pt > particleMax)
-          particleMax = pt;
-      }
-      s.avgFrameMs = frameSum / sampleCount;
-      s.minFrameMs = frameMin;
-      s.maxFrameMs = frameMax;
-      s.avgCpuMs = cpuSum / sampleCount;
-      s.minCpuMs = cpuMin;
-      s.maxCpuMs = cpuMax;
-      s.avgRenderMs = renderSum / sampleCount;
-      s.minRenderMs = renderMin;
-      s.maxRenderMs = renderMax;
-      s.avgMeshMs = meshSum / sampleCount;
-      s.minMeshMs = meshMin;
-      s.maxMeshMs = meshMax;
-      s.avgUploadMs = uploadSum / sampleCount;
-      s.minUploadMs = uploadMin;
-      s.maxUploadMs = uploadMax;
-      s.avgCullMs = cullSum / sampleCount;
-      s.minCullMs = cullMin;
-      s.maxCullMs = cullMax;
-      s.avgScanMs = scanSum / sampleCount;
-      s.minScanMs = scanMin;
-      s.maxScanMs = scanMax;
-      s.avgTextureMs = textureSum / sampleCount;
-      s.minTextureMs = textureMin;
-      s.maxTextureMs = textureMax;
-      s.avgEntityMs = entitySum / sampleCount;
-      s.minEntityMs = entityMin;
-      s.maxEntityMs = entityMax;
-      s.avgParticleMs = particleSum / sampleCount;
-      s.minParticleMs = particleMin;
-      s.maxParticleMs = particleMax;
-      s.fps = s.avgFrameMs > 0.0 ? 1000.0 / s.avgFrameMs : 0.0;
-    } else {
-      s.avgFrameMs = currentFrameMs;
-      s.minFrameMs = currentFrameMs;
-      s.maxFrameMs = currentFrameMs;
-      s.avgCpuMs = currentCpuMs;
-      s.minCpuMs = currentCpuMs;
-      s.maxCpuMs = currentCpuMs;
-      s.avgRenderMs = currentRenderMs;
-      s.minRenderMs = currentRenderMs;
-      s.maxRenderMs = currentRenderMs;
-      s.avgMeshMs = currentMeshMs;
-      s.minMeshMs = currentMeshMs;
-      s.maxMeshMs = currentMeshMs;
-      s.avgUploadMs = currentUploadMs;
-      s.minUploadMs = currentUploadMs;
-      s.maxUploadMs = currentUploadMs;
-      s.avgCullMs = currentCullMs;
-      s.minCullMs = currentCullMs;
-      s.maxCullMs = currentCullMs;
-      s.avgScanMs = currentScanMs;
-      s.minScanMs = currentScanMs;
-      s.maxScanMs = currentScanMs;
-      s.avgTextureMs = currentTextureMs;
-      s.minTextureMs = currentTextureMs;
-      s.maxTextureMs = currentTextureMs;
-      s.avgEntityMs = currentEntityMs;
-      s.minEntityMs = currentEntityMs;
-      s.maxEntityMs = currentEntityMs;
-      s.avgParticleMs = currentParticleMs;
-      s.minParticleMs = currentParticleMs;
-      s.maxParticleMs = currentParticleMs;
-      s.fps = currentFrameMs > 0.0 ? 1000.0 / currentFrameMs : 0.0;
-    }
-
     s.currentFrameMs = currentFrameMs;
+    s.avgFrameMs = frameHistory.avg;
+    s.minFrameMs = frameHistory.min;
+    s.maxFrameMs = frameHistory.max;
     s.currentCpuMs = currentCpuMs;
+    s.avgCpuMs = cpuHistory.avg;
+    s.minCpuMs = cpuHistory.min;
+    s.maxCpuMs = cpuHistory.max;
     s.currentRenderMs = currentRenderMs;
+    s.avgRenderMs = renderHistory.avg;
+    s.minRenderMs = renderHistory.min;
+    s.maxRenderMs = renderHistory.max;
     s.currentMeshMs = currentMeshMs;
+    s.avgMeshMs = meshHistory.avg;
+    s.minMeshMs = meshHistory.min;
+    s.maxMeshMs = meshHistory.max;
     s.currentUploadMs = currentUploadMs;
+    s.avgUploadMs = uploadHistory.avg;
+    s.minUploadMs = uploadHistory.min;
+    s.maxUploadMs = uploadHistory.max;
     s.currentCullMs = currentCullMs;
-    s.currentScanMs = currentScanMs;
-    s.currentTextureMs = currentTextureMs;
-    s.currentEntityMs = currentEntityMs;
-    s.currentParticleMs = currentParticleMs;
+    s.avgCullMs = cullHistory.avg;
+    s.minCullMs = cullHistory.min;
+    s.maxCullMs = cullHistory.max;
+    s.currentGpuMs = currentGpuMs;
+    s.avgGpuMs = gpuHistory.avg;
+    s.minGpuMs = gpuHistory.min;
+    s.maxGpuMs = gpuHistory.max;
+    s.fps = s.avgFrameMs > 0.0 ? 1000.0 / s.avgFrameMs : 0.0;
 
     s.meshesBuilt = meshesBuilt;
     s.uploadsDone = uploadsDone;
@@ -527,14 +379,9 @@ public final class MetalRenderProfiler {
     entries.add(new TimeEntry("Mesh", s.currentMeshMs));
     entries.add(new TimeEntry("Upload", s.currentUploadMs));
     entries.add(new TimeEntry("Cull", s.currentCullMs));
-    entries.add(new TimeEntry("Scan", s.currentScanMs));
-    entries.add(new TimeEntry("Tex", s.currentTextureMs));
-    entries.add(new TimeEntry("Entity", s.currentEntityMs));
-    entries.add(new TimeEntry("Particle", s.currentParticleMs));
-    double tracked = s.currentMeshMs + s.currentUploadMs + s.currentCullMs + s.currentScanMs
-        + s.currentTextureMs + s.currentEntityMs + s.currentParticleMs + s.currentGpuMs;
-    double other = Math.max(0.0, s.currentFrameMs - tracked);
     entries.add(new TimeEntry("GPU", s.currentGpuMs));
+    double tracked = s.currentMeshMs + s.currentUploadMs + s.currentCullMs + s.currentGpuMs;
+    double other = Math.max(0.0, s.currentFrameMs - tracked);
     entries.add(new TimeEntry("Other", other));
     Collections.sort(entries);
     s.breakdown = entries;
@@ -545,6 +392,40 @@ public final class MetalRenderProfiler {
 
   public ProfileSnapshot getSnapshot() {
     return snapshot;
+  }
+
+  private static final class MetricHistory {
+    final double[] values;
+    double current;
+    double avg;
+    double min;
+    double max;
+
+    MetricHistory(int size) {
+      this.values = new double[size];
+    }
+
+    void record(double value) {
+      this.current = value;
+    }
+
+    void commit(int index, int sampleCount) {
+      values[index] = current;
+      if (sampleCount <= 0) {
+        avg = min = max = current;
+        return;
+      }
+      double sum = 0.0;
+      min = Double.MAX_VALUE;
+      max = 0.0;
+      for (int i = 0; i < sampleCount; i++) {
+        double v = values[i];
+        sum += v;
+        if (v < min) min = v;
+        if (v > max) max = v;
+      }
+      avg = sum / sampleCount;
+    }
   }
 
   private static final class TimeEntry implements Comparable<TimeEntry> {
@@ -591,22 +472,6 @@ public final class MetalRenderProfiler {
     public double avgCullMs;
     public double minCullMs;
     public double maxCullMs;
-    public double currentScanMs;
-    public double avgScanMs;
-    public double minScanMs;
-    public double maxScanMs;
-    public double currentTextureMs;
-    public double avgTextureMs;
-    public double minTextureMs;
-    public double maxTextureMs;
-    public double currentEntityMs;
-    public double avgEntityMs;
-    public double minEntityMs;
-    public double maxEntityMs;
-    public double currentParticleMs;
-    public double avgParticleMs;
-    public double minParticleMs;
-    public double maxParticleMs;
     public double currentGpuMs;
     public double avgGpuMs;
     public double minGpuMs;
