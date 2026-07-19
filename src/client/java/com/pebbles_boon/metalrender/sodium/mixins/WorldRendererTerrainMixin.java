@@ -47,14 +47,6 @@ public class WorldRendererTerrainMixin {
       ChunkSectionLayerGroup group,
       GpuSampler sampler) {
     if (metalrender$shouldSkipVanillaTerrain()) {
-      metalrender$skippedTerrainGroups++;
-      if (metalrender$skippedTerrainGroups <= 3 ||
-          metalrender$skippedTerrainGroups % 1000 == 0) {
-        MetalLogger.info("[WorldRendererTerrainMixin] Skipped vanilla "
-            + "terrain group #%d (%s)",
-            metalrender$skippedTerrainGroups,
-            String.valueOf(group));
-      }
       return;
     }
     sections.renderGroup(group, sampler);
@@ -68,23 +60,24 @@ public class WorldRendererTerrainMixin {
       ChunkSectionLayerGroup group,
       GpuSampler sampler) {
     if (metalrender$shouldSkipVanillaTerrain()) {
-      metalrender$skippedTerrainGroups++;
-      if (metalrender$skippedTerrainGroups <= 3 ||
-          metalrender$skippedTerrainGroups % 1000 == 0) {
-        MetalLogger.info("[terrainmix] skip group #%d (%s)",
-            metalrender$skippedTerrainGroups,
-            String.valueOf(group));
-      }
       return;
     }
     sections.renderGroup(group, sampler);
   }
 
-  @Inject(method = "lambda$addMainPass$0", at = @At("HEAD"), require = 0)
+  @Inject(method = "lambda$addMainPass$0", at = @At("HEAD"),
+      cancellable = true, require = 0)
   private void metalrender$terrainHookHeartbeat(CallbackInfo ci) {
-    if (metalrender$shouldSkipVanillaTerrain() &&
-        metalrender$skippedTerrainGroups == 0) {
-      MetalLogger.info("[terrainmix] hook live");
+    if (!metalrender$shouldSkipVanillaTerrain()) {
+      return;
     }
+    metalrender$skippedTerrainGroups++;
+    if (metalrender$skippedTerrainGroups <= 3 ||
+        metalrender$skippedTerrainGroups % 1000 == 0) {
+      MetalLogger.info(
+          "[terrainmix] cancelled pass #%d (section iteration skipped)",
+          metalrender$skippedTerrainGroups);
+    }
+    ci.cancel();
   }
 }
