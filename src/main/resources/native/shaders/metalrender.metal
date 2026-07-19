@@ -31,16 +31,80 @@ float4 decodePackedColor(uint c) {
 }
 
 float2 decodePackedTexCoord(uint tex) {
-    float u = float(tex & 0x7FFF) / 32768.0;
-    float v = float((tex >> 16) & 0x7FFF) / 32768.0;
+    float u = float(tex & 0xFFFFu) / 65535.0;
+    float v = float((tex >> 16) & 0xFFFFu) / 65535.0;
     return float2(u, v);
 }
 
+constant half2 kLightmapLut[256] = {
+    half2(0.031250h, 0.031250h), half2(0.093750h, 0.031250h), half2(0.156250h, 0.031250h), half2(0.218750h, 0.031250h),
+    half2(0.281250h, 0.031250h), half2(0.343750h, 0.031250h), half2(0.406250h, 0.031250h), half2(0.468750h, 0.031250h),
+    half2(0.531250h, 0.031250h), half2(0.593750h, 0.031250h), half2(0.656250h, 0.031250h), half2(0.718750h, 0.031250h),
+    half2(0.781250h, 0.031250h), half2(0.843750h, 0.031250h), half2(0.906250h, 0.031250h), half2(0.968750h, 0.031250h),
+    half2(0.031250h, 0.093750h), half2(0.093750h, 0.093750h), half2(0.156250h, 0.093750h), half2(0.218750h, 0.093750h),
+    half2(0.281250h, 0.093750h), half2(0.343750h, 0.093750h), half2(0.406250h, 0.093750h), half2(0.468750h, 0.093750h),
+    half2(0.531250h, 0.093750h), half2(0.593750h, 0.093750h), half2(0.656250h, 0.093750h), half2(0.718750h, 0.093750h),
+    half2(0.781250h, 0.093750h), half2(0.843750h, 0.093750h), half2(0.906250h, 0.093750h), half2(0.968750h, 0.093750h),
+    half2(0.031250h, 0.156250h), half2(0.093750h, 0.156250h), half2(0.156250h, 0.156250h), half2(0.218750h, 0.156250h),
+    half2(0.281250h, 0.156250h), half2(0.343750h, 0.156250h), half2(0.406250h, 0.156250h), half2(0.468750h, 0.156250h),
+    half2(0.531250h, 0.156250h), half2(0.593750h, 0.156250h), half2(0.656250h, 0.156250h), half2(0.718750h, 0.156250h),
+    half2(0.781250h, 0.156250h), half2(0.843750h, 0.156250h), half2(0.906250h, 0.156250h), half2(0.968750h, 0.156250h),
+    half2(0.031250h, 0.218750h), half2(0.093750h, 0.218750h), half2(0.156250h, 0.218750h), half2(0.218750h, 0.218750h),
+    half2(0.281250h, 0.218750h), half2(0.343750h, 0.218750h), half2(0.406250h, 0.218750h), half2(0.468750h, 0.218750h),
+    half2(0.531250h, 0.218750h), half2(0.593750h, 0.218750h), half2(0.656250h, 0.218750h), half2(0.718750h, 0.218750h),
+    half2(0.781250h, 0.218750h), half2(0.843750h, 0.218750h), half2(0.906250h, 0.218750h), half2(0.968750h, 0.218750h),
+    half2(0.031250h, 0.281250h), half2(0.093750h, 0.281250h), half2(0.156250h, 0.281250h), half2(0.218750h, 0.281250h),
+    half2(0.281250h, 0.281250h), half2(0.343750h, 0.281250h), half2(0.406250h, 0.281250h), half2(0.468750h, 0.281250h),
+    half2(0.531250h, 0.281250h), half2(0.593750h, 0.281250h), half2(0.656250h, 0.281250h), half2(0.718750h, 0.281250h),
+    half2(0.781250h, 0.281250h), half2(0.843750h, 0.281250h), half2(0.906250h, 0.281250h), half2(0.968750h, 0.281250h),
+    half2(0.031250h, 0.343750h), half2(0.093750h, 0.343750h), half2(0.156250h, 0.343750h), half2(0.218750h, 0.343750h),
+    half2(0.281250h, 0.343750h), half2(0.343750h, 0.343750h), half2(0.406250h, 0.343750h), half2(0.468750h, 0.343750h),
+    half2(0.531250h, 0.343750h), half2(0.593750h, 0.343750h), half2(0.656250h, 0.343750h), half2(0.718750h, 0.343750h),
+    half2(0.781250h, 0.343750h), half2(0.843750h, 0.343750h), half2(0.906250h, 0.343750h), half2(0.968750h, 0.343750h),
+    half2(0.031250h, 0.406250h), half2(0.093750h, 0.406250h), half2(0.156250h, 0.406250h), half2(0.218750h, 0.406250h),
+    half2(0.281250h, 0.406250h), half2(0.343750h, 0.406250h), half2(0.406250h, 0.406250h), half2(0.468750h, 0.406250h),
+    half2(0.531250h, 0.406250h), half2(0.593750h, 0.406250h), half2(0.656250h, 0.406250h), half2(0.718750h, 0.406250h),
+    half2(0.781250h, 0.406250h), half2(0.843750h, 0.406250h), half2(0.906250h, 0.406250h), half2(0.968750h, 0.406250h),
+    half2(0.031250h, 0.468750h), half2(0.093750h, 0.468750h), half2(0.156250h, 0.468750h), half2(0.218750h, 0.468750h),
+    half2(0.281250h, 0.468750h), half2(0.343750h, 0.468750h), half2(0.406250h, 0.468750h), half2(0.468750h, 0.468750h),
+    half2(0.531250h, 0.468750h), half2(0.593750h, 0.468750h), half2(0.656250h, 0.468750h), half2(0.718750h, 0.468750h),
+    half2(0.781250h, 0.468750h), half2(0.843750h, 0.468750h), half2(0.906250h, 0.468750h), half2(0.968750h, 0.468750h),
+    half2(0.031250h, 0.531250h), half2(0.093750h, 0.531250h), half2(0.156250h, 0.531250h), half2(0.218750h, 0.531250h),
+    half2(0.281250h, 0.531250h), half2(0.343750h, 0.531250h), half2(0.406250h, 0.531250h), half2(0.468750h, 0.531250h),
+    half2(0.531250h, 0.531250h), half2(0.593750h, 0.531250h), half2(0.656250h, 0.531250h), half2(0.718750h, 0.531250h),
+    half2(0.781250h, 0.531250h), half2(0.843750h, 0.531250h), half2(0.906250h, 0.531250h), half2(0.968750h, 0.531250h),
+    half2(0.031250h, 0.593750h), half2(0.093750h, 0.593750h), half2(0.156250h, 0.593750h), half2(0.218750h, 0.593750h),
+    half2(0.281250h, 0.593750h), half2(0.343750h, 0.593750h), half2(0.406250h, 0.593750h), half2(0.468750h, 0.593750h),
+    half2(0.531250h, 0.593750h), half2(0.593750h, 0.593750h), half2(0.656250h, 0.593750h), half2(0.718750h, 0.593750h),
+    half2(0.781250h, 0.593750h), half2(0.843750h, 0.593750h), half2(0.906250h, 0.593750h), half2(0.968750h, 0.593750h),
+    half2(0.031250h, 0.656250h), half2(0.093750h, 0.656250h), half2(0.156250h, 0.656250h), half2(0.218750h, 0.656250h),
+    half2(0.281250h, 0.656250h), half2(0.343750h, 0.656250h), half2(0.406250h, 0.656250h), half2(0.468750h, 0.656250h),
+    half2(0.531250h, 0.656250h), half2(0.593750h, 0.656250h), half2(0.656250h, 0.656250h), half2(0.718750h, 0.656250h),
+    half2(0.781250h, 0.656250h), half2(0.843750h, 0.656250h), half2(0.906250h, 0.656250h), half2(0.968750h, 0.656250h),
+    half2(0.031250h, 0.718750h), half2(0.093750h, 0.718750h), half2(0.156250h, 0.718750h), half2(0.218750h, 0.718750h),
+    half2(0.281250h, 0.718750h), half2(0.343750h, 0.718750h), half2(0.406250h, 0.718750h), half2(0.468750h, 0.718750h),
+    half2(0.531250h, 0.718750h), half2(0.593750h, 0.718750h), half2(0.656250h, 0.718750h), half2(0.718750h, 0.718750h),
+    half2(0.781250h, 0.718750h), half2(0.843750h, 0.718750h), half2(0.906250h, 0.718750h), half2(0.968750h, 0.718750h),
+    half2(0.031250h, 0.781250h), half2(0.093750h, 0.781250h), half2(0.156250h, 0.781250h), half2(0.218750h, 0.781250h),
+    half2(0.281250h, 0.781250h), half2(0.343750h, 0.781250h), half2(0.406250h, 0.781250h), half2(0.468750h, 0.781250h),
+    half2(0.531250h, 0.781250h), half2(0.593750h, 0.781250h), half2(0.656250h, 0.781250h), half2(0.718750h, 0.781250h),
+    half2(0.781250h, 0.781250h), half2(0.843750h, 0.781250h), half2(0.906250h, 0.781250h), half2(0.968750h, 0.781250h),
+    half2(0.031250h, 0.843750h), half2(0.093750h, 0.843750h), half2(0.156250h, 0.843750h), half2(0.218750h, 0.843750h),
+    half2(0.281250h, 0.843750h), half2(0.343750h, 0.843750h), half2(0.406250h, 0.843750h), half2(0.468750h, 0.843750h),
+    half2(0.531250h, 0.843750h), half2(0.593750h, 0.843750h), half2(0.656250h, 0.843750h), half2(0.718750h, 0.843750h),
+    half2(0.781250h, 0.843750h), half2(0.843750h, 0.843750h), half2(0.906250h, 0.843750h), half2(0.968750h, 0.843750h),
+    half2(0.031250h, 0.906250h), half2(0.093750h, 0.906250h), half2(0.156250h, 0.906250h), half2(0.218750h, 0.906250h),
+    half2(0.281250h, 0.906250h), half2(0.343750h, 0.906250h), half2(0.406250h, 0.906250h), half2(0.468750h, 0.906250h),
+    half2(0.531250h, 0.906250h), half2(0.593750h, 0.906250h), half2(0.656250h, 0.906250h), half2(0.718750h, 0.906250h),
+    half2(0.781250h, 0.906250h), half2(0.843750h, 0.906250h), half2(0.906250h, 0.906250h), half2(0.968750h, 0.906250h),
+    half2(0.031250h, 0.968750h), half2(0.093750h, 0.968750h), half2(0.156250h, 0.968750h), half2(0.218750h, 0.968750h),
+    half2(0.281250h, 0.968750h), half2(0.343750h, 0.968750h), half2(0.406250h, 0.968750h), half2(0.468750h, 0.968750h),
+    half2(0.531250h, 0.968750h), half2(0.593750h, 0.968750h), half2(0.656250h, 0.968750h), half2(0.718750h, 0.968750h),
+    half2(0.781250h, 0.968750h), half2(0.843750h, 0.968750h), half2(0.906250h, 0.968750h), half2(0.968750h, 0.968750h),
+};
+
 float2 decodePackedLight(uint lightData) {
-    uint light = lightData & 0xFFFF;
-    float blockLight = float(light & 0xFF) / 256.0;
-    float skyLight   = float((light >> 8) & 0xFF) / 256.0;
-    return float2(blockLight, skyLight);
+    return float2(kLightmapLut[lightData & 0xFFu]);
 }
 constant half kFaceShade[6] = {
     half(0.65),
@@ -121,7 +185,7 @@ fragment half4 fragment_water_surface(
     texture2d<half> blockAtlas  [[texture(0)]],
     texture2d<half> lightmap    [[texture(1)]]
 ) {
-    constexpr sampler atlasSampler(mag_filter::linear, min_filter::linear, mip_filter::none, address::clamp_to_edge);
+    constexpr sampler atlasSampler(mag_filter::nearest, min_filter::nearest, mip_filter::nearest, address::clamp_to_edge);
     constexpr sampler lightSampler(mag_filter::nearest, min_filter::nearest, mip_filter::nearest, address::clamp_to_edge);
     half4 texColor = blockAtlas.sample(atlasSampler, in.texCoord);
     half vertAlpha = in.color.a;
@@ -193,10 +257,7 @@ vertex SimpleVertexOut vertex_terrain_inhouse(
     out.position = projectionMatrix * viewPos;
     out.texCoord = float2(v.texCoord) / 65535.0;
     out.color    = half4(float4(v.color) / 255.0);
-    uint blockLight = uint(v.packedLight & 0xFu);
-    uint skyLight   = uint((v.packedLight >> 4) & 0xFu);
-    out.lightUV = float2((float(blockLight) + 0.5f) / 16.0f,
-                         (float(skyLight) + 0.5f) / 16.0f);
+    out.lightUV = decodePackedLight(uint(v.packedLight));
     out.light = half(max(max(out.lightUV.x,
                              out.lightUV.y * cameraPosition.w), 0.15f));
     out.normalIndex = uint(v.normalIndex & 0x7);
