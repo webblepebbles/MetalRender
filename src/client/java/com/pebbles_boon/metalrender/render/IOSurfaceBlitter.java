@@ -232,7 +232,7 @@ public final class IOSurfaceBlitter {
       boolean skipWait) {
     try {
       long t0 = System.nanoTime();
-      if (!skipWait) {
+      if (!skipWait && !NativeBridge.nIsFrameReady(metalHandle)) {
         NativeBridge.nWaitForRender(metalHandle);
       }
       long t1 = System.nanoTime();
