@@ -4,7 +4,6 @@ import com.mojang.blaze3d.buffers.GpuBufferSlice;
 import com.mojang.blaze3d.resource.GraphicsResourceAllocator;
 import com.mojang.blaze3d.systems.RenderSystem;
 import com.pebbles_boon.metalrender.MetalRenderClient;
-import com.pebbles_boon.metalrender.backend.MetalRenderer;
 import com.pebbles_boon.metalrender.render.CapturedMatrices;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
 import com.pebbles_boon.metalrender.util.MetalLogger;
@@ -107,19 +106,11 @@ public class WorldRendererBlitMixin {
     MetalWorldRenderer worldRenderer = MetalRenderClient.getWorldRenderer();
     if (worldRenderer == null) {
       return;
-    }
-    try {
+    }    try {
       com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance().endRender();
       worldRenderer.endFrame();
-      MetalRenderer renderer = MetalRenderClient.getRenderer();
-      if (renderer != null) {
-        long handle = renderer.getHandle();
-        if (handle != 0) {
-          worldRenderer.buildMeshesDuringWait(handle);
-        }
-      }
-      metalrender$endFrameCount++;
-      if (metalrender$endFrameCount <= 3) {
+      //no need no more
+      metalrender$endFrameCount++;if (metalrender$endFrameCount <= 3) {
         MetalLogger.info("[blitmix] end hook #%d",
             metalrender$endFrameCount);
       }
