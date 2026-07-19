@@ -121,7 +121,6 @@ public class CustomChunkMesher {
 
   private final java.util.concurrent.ThreadPoolExecutor immediatePool;
   private final java.util.concurrent.ThreadPoolExecutor backgroundPool;
-  private final java.util.concurrent.ThreadPoolExecutor transientPool;
 
   private final Long2LongOpenHashMap dirtyGeneration = new Long2LongOpenHashMap();
   private final Long2LongOpenHashMap pendingVisibleSectionNanos = new Long2LongOpenHashMap();
@@ -138,11 +137,8 @@ public class CustomChunkMesher {
   private final java.util.concurrent.atomic.AtomicInteger meshUpdateGeneration = new java.util.concurrent.atomic.AtomicInteger(
       0);
 
-  private final int boostedBuilderThreadCount;
-  private final int steadyBuilderThreadCount;
-  private final int maxBuilderThreadCount;
-  private final int steadyInstantThreadCount;
-  private final int maxInstantThreadCount;
+  private final int immediateThreadCount;
+  private final int backgroundThreadCount;
 
   private volatile boolean aggressiveApproximateLighting;
   private final java.util.concurrent.atomic.AtomicLong visibleSectionLatencyAccNs = new java.util.concurrent.atomic.AtomicLong(
@@ -165,88 +161,32 @@ public class CustomChunkMesher {
     this.snapshotCacheGen.defaultReturnValue(Long.MIN_VALUE);
 
     int processors = Runtime.getRuntime().availableProcessors();
-    int reservedCores = processors >= 12 ? 2 : 1;
-    int warmupThreads = Math.max(4, Math.min(12, processors - reservedCores));
-    int steadyThreads = Math.max(3, Math.min(10, warmupThreads - 1));
-    int maxBuilderThreads = Math.max(warmupThreads, Math.min(20, processors + 2));
-    int steadyInstantThreads = processors >= 10 ? 4 : 3;
-    int maxInstantThreads = processors >= 16 ? 8 : (processors >= 10 ? 6 : 4);
-    int transientThreads = Math.max(2, Math.min(4, processors / 2));
-
-    this.boostedBuilderThreadCount = warmupThreads;
-    this.steadyBuilderThreadCount = steadyThreads;
-    this.maxBuilderThreadCount = maxBuilderThreads;
-    this.steadyInstantThreadCount = steadyInstantThreads;
-    this.maxInstantThreadCount = Math.max(steadyInstantThreads, maxInstantThreads);
+    this.immediateThreadCount = Math.max(2, Math.min(6, processors / 4 + 1));
+    this.backgroundThreadCount = Math.max(2, Math.min(14, processors - immediateThreadCount - 1));
 
     final java.util.concurrent.ThreadFactory immediateFactory = r -> {
-      Thread t = new Thread(r, "MetalRender-SodiumMeshBuilder-Immediate");
+      Thread t = new Thread(r, "MetalRender-MeshBuilder-Immediate");
       t.setDaemon(true);
       t.setPriority(Thread.NORM_PRIORITY);
       return t;
     };
     final java.util.concurrent.ThreadFactory backgroundFactory = r -> {
-      Thread t = new Thread(r, "MetalRender-SodiumMeshBuilder-Background");
+      Thread t = new Thread(r, "MetalRender-MeshBuilder-Background");
       t.setDaemon(true);
       t.setPriority(Thread.NORM_PRIORITY - 1);
       return t;
     };
 
-    int immediateWarmupThreads = Math.max(2, warmupThreads / 2 + 1);
-    int backgroundWarmupThreads = Math.max(2, warmupThreads - immediateWarmupThreads);
-    int immediateMaxThreads = Math.max(immediateWarmupThreads, maxBuilderThreads / 2);
-    int backgroundMaxThreads = Math.max(backgroundWarmupThreads, maxBuilderThreads - immediateMaxThreads);
-
     this.immediatePool = new java.util.concurrent.ThreadPoolExecutor(
-        immediateWarmupThreads, immediateMaxThreads, 10L,
+        immediateThreadCount, immediateThreadCount, 10L,
         java.util.concurrent.TimeUnit.SECONDS,
         new java.util.concurrent.PriorityBlockingQueue<>(), immediateFactory);
     this.immediatePool.allowCoreThreadTimeOut(true);
     this.backgroundPool = new java.util.concurrent.ThreadPoolExecutor(
-        backgroundWarmupThreads, backgroundMaxThreads, 10L,
+        backgroundThreadCount, backgroundThreadCount, 10L,
         java.util.concurrent.TimeUnit.SECONDS,
         new java.util.concurrent.PriorityBlockingQueue<>(), backgroundFactory);
     this.backgroundPool.allowCoreThreadTimeOut(true);
-
-    final int transientThreadCount = transientThreads;
-    java.util.concurrent.ThreadFactory transientFactory = r -> {
-      Thread t = new Thread(r, "MetalRender-SodiumMeshBuilder-Transient");
-      t.setDaemon(true);
-      t.setPriority(Thread.NORM_PRIORITY - 1);
-      return t;
-    };
-    this.transientPool = new java.util.concurrent.ThreadPoolExecutor(
-        transientThreadCount, transientThreadCount, 60L,
-        java.util.concurrent.TimeUnit.SECONDS,
-        new java.util.concurrent.LinkedBlockingQueue<>(), transientFactory);
-    this.transientPool.allowCoreThreadTimeOut(true);
-
-    java.util.concurrent.ScheduledExecutorService transientTimer = java.util.concurrent.Executors
-        .newSingleThreadScheduledExecutor(r -> {
-          Thread t = new Thread(r, "MetalRender-TransientShutdown");
-          t.setDaemon(true);
-          return t;
-        });
-    transientTimer.schedule(() -> {
-      transientPool.shutdown();
-      transientTimer.shutdown();
-    }, 60L, java.util.concurrent.TimeUnit.SECONDS);
-
-    java.util.concurrent.ScheduledExecutorService warmupTimer = java.util.concurrent.Executors
-        .newSingleThreadScheduledExecutor(r -> {
-          Thread t = new Thread(r, "MetalRender-WarmupTimer");
-          t.setDaemon(true);
-          return t;
-        });
-    warmupTimer.schedule(() -> {
-      if (getPendingCount() == 0) {
-        int immediateSteady = Math.max(2, steadyThreads / 2 + 1);
-        int backgroundSteady = Math.max(2, steadyThreads - immediateSteady);
-        updateThreadPoolSize(immediatePool, immediateSteady);
-        updateThreadPoolSize(backgroundPool, backgroundSteady);
-      }
-      warmupTimer.shutdown();
-    }, 30, java.util.concurrent.TimeUnit.SECONDS);
   }
 
   public long getGlobalIndexBuffer() {
@@ -255,7 +195,7 @@ public class CustomChunkMesher {
 
   public void initialize(long device) {
     this.deviceHandle = device;
-    MetalLogger.info("sodium mesher init: dev=%d cfg=%s",
+    MetalLogger.info("mesher init: dev=%d cfg=%s",
         device, MetalRenderClient.getConfig() != null
             ? MetalRenderClient.getConfig().enableMetalRendering
             : false);
@@ -280,7 +220,7 @@ public class CustomChunkMesher {
     NativeBridge.nUploadBufferData(this.globalIndexBufferHandle, ibData, 0,
         ibData.length);
     this.initialized = true;
-    MetalLogger.info("sodium mesher ready (maxq=%d ib=%d)",
+    MetalLogger.info("mesher ready (maxq=%d ib=%d)",
         MAX_QUADS, ibData.length);
   }
 
@@ -325,7 +265,7 @@ public class CustomChunkMesher {
         }
         doMeshBuild(chunkX, chunkY, chunkZ, snapshot, key, genAtSubmit, context);
       } catch (Exception e) {
-        MetalLogger.error("sodium mesh fail [%d,%d,%d]: %s", chunkX,
+        MetalLogger.error("mesher fail [%d,%d,%d]: %s", chunkX,
             chunkY, chunkZ, e.getMessage());
       } finally {
         synchronized (pendingKeys) {
@@ -487,7 +427,7 @@ public class CustomChunkMesher {
     synchronized (rebuildBatchTick) {
       rebuildBatchTick.clear();
     }
-    MetalLogger.info("sodium mesh data cleared (%d).", count);
+    MetalLogger.info("mesher data cleared (%d).", count);
   }
 
   public int getMeshCount() {
@@ -585,42 +525,9 @@ public class CustomChunkMesher {
     int approximateLightingThreshold = fpsPriorityMode ? 2048 : 256;
     aggressiveApproximateLighting = loadingMode || pending >= approximateLightingThreshold;
 
-    BuildBudgetEstimator estimator = PerformanceController.getBudgetEstimator();
-    int ewmaThreads = estimator != null ? estimator.recommendedThreadCount(pending) : -1;
-    boolean shouldThrottle = estimator != null && estimator.shouldThrottle();
-
     MetalLogger.info(
-        "sodium_thread_budget: load=%s p=%d fps=%s approx=%s ewma_t=%d throt=%s",
-        loadingMode, pending, fpsPriorityMode, aggressiveApproximateLighting,
-        ewmaThreads, shouldThrottle);
-    if (pending <= 0) {
-      resizeBuilderPools(0);
-      return;
-    }
-    if (fpsPriorityMode && !shouldThrottle) {
-      int target = Math.min(maxBuilderThreadCount,
-          ewmaThreads > 0 ? Math.min(maxBuilderThreadCount, ewmaThreads) : maxBuilderThreadCount);
-      resizeBuilderPools(target);
-      return;
-    }
-    if (fpsPriorityMode && shouldThrottle) {
-      int target = Math.max(2, Math.min(maxBuilderThreadCount, ewmaThreads > 0 ? ewmaThreads / 2 : 2));
-      resizeBuilderPools(target);
-      return;
-    }
-    int baseTarget = loadingMode ? boostedBuilderThreadCount : steadyBuilderThreadCount;
-    if (ewmaThreads > 0) {
-      baseTarget = Math.max(2, Math.min(ewmaThreads, maxBuilderThreadCount));
-    }
-    int budgetCap = maxBuilderThreadCount;
-    if (shouldThrottle) {
-      budgetCap = Math.max(2, budgetCap / 2);
-    }
-    int target = Math.min(budgetCap, baseTarget);
-    resizeBuilderPools(target);
-    MetalLogger.info(
-        "sodium_thread_budget: build=%d cap=%d",
-        target, budgetCap);
+        "thread_budget: load=%s p=%d fps=%s approx=%s",
+        loadingMode, pending, fpsPriorityMode, aggressiveApproximateLighting);
   }
 
   public void flushMeshRegistrations() {
@@ -673,31 +580,6 @@ public class CustomChunkMesher {
     if (size <= 262144)
       return 262144;
     return (size + 255) & ~255;
-  }
-
-  private static void updateThreadPoolSize(java.util.concurrent.ThreadPoolExecutor pool,
-      int target) {
-    int normalizedCore = Math.max(0, target);
-    int normalizedMax = Math.max(1, target);
-    int currentCore = pool.getCorePoolSize();
-    int currentMax = pool.getMaximumPoolSize();
-    if (currentCore == normalizedCore && currentMax == normalizedMax) {
-      return;
-    }
-    if (normalizedMax > currentMax) {
-      pool.setMaximumPoolSize(normalizedMax);
-      pool.setCorePoolSize(normalizedCore);
-    } else {
-      pool.setCorePoolSize(normalizedCore);
-      pool.setMaximumPoolSize(normalizedMax);
-    }
-  }
-
-  private void resizeBuilderPools(int totalTarget) {
-    int immediate = Math.max(2, totalTarget / 2 + 1);
-    int background = Math.max(0, totalTarget - immediate);
-    updateThreadPoolSize(immediatePool, immediate);
-    updateThreadPoolSize(backgroundPool, background);
   }
 
   private static final class PrioritizedMeshTask implements Runnable, Comparable<PrioritizedMeshTask> {
@@ -756,13 +638,6 @@ public class CustomChunkMesher {
     if (isImmediate) {
       immediatePool.execute(ptask);
     } else {
-      if (aggressiveApproximateLighting && transientPool != null &&
-          !transientPool.isShutdown() &&
-          transientPool.getActiveCount() < transientPool.getMaximumPoolSize() &&
-          (backgroundPool.getQueue().size() > 0 || pendingKeys.size() >= 512)) {
-        transientPool.execute(ptask);
-        return;
-      }
       backgroundPool.execute(ptask);
     }
   }
@@ -843,6 +718,14 @@ public class CustomChunkMesher {
     }
   }
 
+  private static final class SnapshotData {
+    final int[] paddedBlockStates = new int[PADDED_VOLUME];
+    final byte[] paddedLight = new byte[PADDED_VOLUME];
+    final int[] biomeTints = new int[SECTION_SIZE * SECTION_SIZE * SECTION_SIZE];
+  }
+
+  private static final ThreadLocal<SnapshotData> SNAPSHOT_POOL = ThreadLocal.withInitial(SnapshotData::new);
+
   private static final class MeshBuildContext {
     final BlockStateModelSet blockModels;
     final int buildPlayerCX, buildPlayerCY, buildPlayerCZ;
@@ -882,9 +765,7 @@ public class CustomChunkMesher {
         buildPCZ = mc.player.chunkPosition().z();
         buildPCY = (int) Math.floor(mc.player.getY()) >> 4;
       }
-      waterStill = getFluidSprite(mc, net.minecraft.world.level.material.Fluids.WATER, false);
       waterFlow = getFluidSprite(mc, net.minecraft.world.level.material.Fluids.WATER, true);
-      lavaStill = getFluidSprite(mc, net.minecraft.world.level.material.Fluids.LAVA, false);
       lavaFlow = getFluidSprite(mc, net.minecraft.world.level.material.Fluids.LAVA, true);
     }
     return new MeshBuildContext(blockModels, buildPCX, buildPCY, buildPCZ,
@@ -947,9 +828,10 @@ public class CustomChunkMesher {
       return new SectionSnapshot(true, true, null, null, null);
     }
 
-    int[] paddedBlockStates = new int[PADDED_VOLUME];
-    byte[] paddedLight = new byte[PADDED_VOLUME];
-    int[] biomeTints = new int[SECTION_SIZE * SECTION_SIZE * SECTION_SIZE];
+    SnapshotData data = SNAPSHOT_POOL.get();
+    int[] paddedBlockStates = data.paddedBlockStates;
+    byte[] paddedLight = data.paddedLight;
+    int[] biomeTints = data.biomeTints;
     boolean hasAnyBlock = false;
 
     Object2IntOpenHashMap<BlockState> bsIdCache = BS_ID_CACHE.get();
@@ -960,14 +842,31 @@ public class CustomChunkMesher {
     int baseY = chunkY * 16;
     int baseZ = chunkZ * 16;
 
+    net.minecraft.world.level.chunk.PalettedContainer<BlockState> localStates = section.getStates();
+
     for (int py = 0; py < PADDED_SIZE; py++) {
       for (int pz = 0; pz < PADDED_SIZE; pz++) {
         for (int px = 0; px < PADDED_SIZE; px++) {
           int wx = baseX + px - 1;
           int wy = baseY + py - 1;
           int wz = baseZ + pz - 1;
-          mutablePos.set(wx, wy, wz);
-          BlockState state = world.getBlockState(mutablePos);
+          int pIdx = (py * PADDED_SIZE + pz) * PADDED_SIZE + px;
+
+          BlockState state;
+          boolean inner = px >= 1 && px <= SECTION_SIZE && py >= 1 && py <= SECTION_SIZE && pz >= 1
+              && pz <= SECTION_SIZE;
+          if (inner) {
+            try {
+              state = localStates.get(px - 1, py - 1, pz - 1);
+            } catch (Exception e) {
+              mutablePos.set(wx, wy, wz);
+              state = world.getBlockState(mutablePos);
+            }
+          } else {
+            mutablePos.set(wx, wy, wz);
+            state = world.getBlockState(mutablePos);
+          }
+
           int stateId = 0;
           if (!state.isAir()) {
             hasAnyBlock = true;
@@ -981,7 +880,6 @@ public class CustomChunkMesher {
               }
             }
           }
-          int pIdx = (py * PADDED_SIZE + pz) * PADDED_SIZE + px;
           paddedBlockStates[pIdx] = stateId;
 
           if (useApproximateLight) {
@@ -991,44 +889,41 @@ public class CustomChunkMesher {
             int sl = world.getBrightness(LightLayer.SKY, mutablePos);
             paddedLight[pIdx] = (byte) ((bl & 0xF) | ((sl & 0xF) << 4));
           }
-        }
-      }
-    }
 
-    for (int y = 0; y < SECTION_SIZE; y++) {
-      for (int z = 0; z < SECTION_SIZE; z++) {
-        for (int x = 0; x < SECTION_SIZE; x++) {
-          int pIdx = ((y + 1) * PADDED_SIZE + (z + 1)) * PADDED_SIZE + (x + 1);
-          int stateId = paddedBlockStates[pIdx];
-          if (stateId == 0) {
-            biomeTints[y * 256 + z * 16 + x] = 0xFFFFFF;
-            continue;
-          }
-          BlockState state = Block.stateById(stateId);
-          mutablePos.set(baseX + x, baseY + y, baseZ + z);
-          int tint = 0xFFFFFF;
-          try {
-            FluidState fluid = state.getFluidState();
-            if (!fluid.isEmpty() &&
-                (fluid.getType() == net.minecraft.world.level.material.Fluids.WATER ||
-                    fluid.getType() == net.minecraft.world.level.material.Fluids.FLOWING_WATER)) {
-              tint = net.minecraft.client.renderer.BiomeColors.getAverageWaterColor(world, mutablePos);
-            } else if (!fluid.isEmpty() &&
-                (fluid.getType() == net.minecraft.world.level.material.Fluids.LAVA ||
-                    fluid.getType() == net.minecraft.world.level.material.Fluids.FLOWING_LAVA)) {
-              tint = 0xFF4500;
+          if (inner) {
+            int x = px - 1;
+            int y = py - 1;
+            int z = pz - 1;
+            int tIdx = y * 256 + z * 16 + x;
+            if (stateId == 0) {
+              biomeTints[tIdx] = 0xFFFFFF;
             } else {
-              net.minecraft.client.color.block.BlockTintSource source = blockColors.getTintSource(state, 0);
-              if (source != null) {
-                tint = source.colorInWorld(state, world, mutablePos);
+              mutablePos.set(baseX + x, baseY + y, baseZ + z);
+              int tint = 0xFFFFFF;
+              try {
+                FluidState fluid = state.getFluidState();
+                if (!fluid.isEmpty() &&
+                    (fluid.getType() == net.minecraft.world.level.material.Fluids.WATER ||
+                        fluid.getType() == net.minecraft.world.level.material.Fluids.FLOWING_WATER)) {
+                  tint = net.minecraft.client.renderer.BiomeColors.getAverageWaterColor(world, mutablePos);
+                } else if (!fluid.isEmpty() &&
+                    (fluid.getType() == net.minecraft.world.level.material.Fluids.LAVA ||
+                        fluid.getType() == net.minecraft.world.level.material.Fluids.FLOWING_LAVA)) {
+                  tint = 0xFF4500;
+                } else {
+                  net.minecraft.client.color.block.BlockTintSource source = blockColors.getTintSource(state, 0);
+                  if (source != null) {
+                    tint = source.colorInWorld(state, world, mutablePos);
+                  }
+                }
+              } catch (Exception ignored) {
               }
+              if (tint == -1) {
+                tint = 0xFFFFFF;
+              }
+              biomeTints[tIdx] = tint;
             }
-          } catch (Exception ignored) {
           }
-          if (tint == -1) {
-            tint = 0xFFFFFF;
-          }
-          biomeTints[y * 256 + z * 16 + x] = tint;
         }
       }
     }
@@ -1046,9 +941,6 @@ public class CustomChunkMesher {
     return m;
   });
   private static final int BS_ID_CACHE_CAP = 32768;
-
-  private static final java.util.concurrent.atomic.AtomicReferenceArray<Boolean> OPACITY_CACHE = new java.util.concurrent.atomic.AtomicReferenceArray<>(
-      65536);
 
   private static final ThreadLocal<RandomSource> REUSABLE_RANDOM = ThreadLocal
       .withInitial(() -> RandomSource.create(0));
@@ -1172,7 +1064,7 @@ public class CustomChunkMesher {
         dirtyKeys.remove(key);
       }
     } catch (Exception e) {
-      MetalLogger.error("sodium mesh fail [%d,%d,%d]: %s", chunkX, chunkY, chunkZ, e.getMessage());
+      MetalLogger.error("`mesh fail [%d,%d,%d]: %s", chunkX, chunkY, chunkZ, e.getMessage());
     } finally {
       long buildElapsed = System.nanoTime() - buildStart;
       MetalRenderProfiler.getInstance().recordMeshingTime(buildElapsed);
@@ -1779,13 +1671,7 @@ public class CustomChunkMesher {
   }
 
   private static boolean isOpaqueState(int stateId) {
-    Boolean cached = OPACITY_CACHE.get(stateId);
-    if (cached != null) {
-      return cached;
-    }
     BlockState state = Block.stateById(stateId);
-    boolean opaque = state.isSolidRender();
-    OPACITY_CACHE.set(stateId, opaque);
-    return opaque;
+    return state.isSolidRender();
   }
 }
