@@ -55,13 +55,10 @@ public class MetalWorldRenderer {
   private static final int MIN_CHUNK_SATURATED_BUILDS_PER_FRAME = 4;
   private static final long CHUNK_TURN_BUILD_BURST_NS = 6_000_000L;
   private static final int MIN_CHUNK_TURN_BUILDS_PER_FRAME = 18;
-  private static final long CHUNK_BUILD_WAIT_BUDGET_NS = 1_000_000L;
-  private static final int MIN_CHUNK_BUILDS_DURING_WAIT = 2;
   private static final int BASE_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 8;
   private static final int BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 16;
   private static final int HEAVY_BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 24;
   private static final int TURN_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 24;
-  private static final int WAIT_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 8;
   private static final int SATURATED_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 2;
   private static final int PRIORITIZED_BUILD_STREAK_LIMIT = 2;
   private static final int MAX_IN_FLIGHT_BUILD_TASKS = 192;
@@ -69,7 +66,6 @@ public class MetalWorldRenderer {
   private static final int FPS_PRIORITY_MAX_IN_FLIGHT_BUILD_TASKS = 192;
   private static final int FPS_PRIORITY_LOADING_BACKGROUND_SUBMISSIONS_PER_PASS = 128;
   private static final int FPS_PRIORITY_NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS = 96;
-  private static final long CHUNK_BUILD_WAIT_WINDOW_NS = 3_000_000L;
   private static final int HIGH_PRIORITY_LOADED_VERTICAL_RANGE = 3;
   private static final int MID_DISTANCE_SCAN_VERTICAL_RANGE = 8;
   private static final int FAR_DISTANCE_SCAN_VERTICAL_RANGE = 5;
@@ -129,7 +125,7 @@ public class MetalWorldRenderer {
   private int lastDrawnChunkCount;
   private long lastDiagLogMs;
   private long outlineBufferHandle;
-  private long jTextureAcc = 0, jPruneAcc = 0, jBuildAcc = 0, jLodAcc = 0;
+  private long jPruneAcc = 0, jBuildAcc = 0, jLodAcc = 0;
   private int jProfCount = 0;
   private boolean gpuDrivenEnabled;
   private MeshShaderBackend meshShaderBackend;
@@ -305,7 +301,6 @@ public class MetalWorldRenderer {
     int w = mc.getWindow().getWidth();
     int h = mc.getWindow().getHeight();
     renderer.resize(w, h);
-    long tTexture0 = System.nanoTime();
     if (!texturesReady && frameCount > 2) {
       textureManager.loadBlockAtlas();
       textureManager.loadLightmap();
@@ -337,8 +332,6 @@ public class MetalWorldRenderer {
         textureManager.updateLightmap();
       }
     }
-    long tTexture1 = System.nanoTime();
-    MetalRenderProfiler.getInstance().recordTextureTime(tTexture1 - tTexture0);
     long now = System.currentTimeMillis();
     long diagInterval = chunkMesher.getMeshCount() < 2000 ? 1000 : 5000;
     if (MetalRenderConfig.isDeepDebugActive() &&
@@ -365,19 +358,17 @@ public class MetalWorldRenderer {
       buildPendingChunkMeshes(mc);
       long t2 = System.nanoTime();
       long t3 = t2;
-      jTextureAcc += (tTexture1 - tTexture0);
       jPruneAcc += (t1 - t0);
       jBuildAcc += (t2 - t1);
       jLodAcc += (t3 - t2);
       jProfCount++;
       if (jProfCount >= 120) {
-        double textureMs = jTextureAcc / 1e6 / jProfCount;
         double pruneMs = jPruneAcc / 1e6 / jProfCount;
         double buildMs = jBuildAcc / 1e6 / jProfCount;
         MetalLogger.info(
-            "java_profile: tex=%.2f prune=%.2f build=%.2f (avg/%d) p=%d q=%d m=%d "
+            "java_profile: prune=%.2f build=%.2f (avg/%d) p=%d q=%d m=%d "
                 + "build=%d/%d inst=%d/%d int=%d/%d vis=%.2f/%d blk=%.2f/%d t=%d/%d",
-            textureMs, pruneMs, buildMs, jProfCount,
+            pruneMs, buildMs, jProfCount,
             pendingBuildSet.size(), chunkMesher.getPendingCount(),
             chunkMesher.getMeshCount(), chunkMesher.getBuilderActiveCount(),
             chunkMesher.getBuilderQueueDepth(),
@@ -391,7 +382,6 @@ public class MetalWorldRenderer {
             chunkMesher.getBlockUpdateLatencySamples(),
             chunkMesher.getTrackedVisibleSectionCount(),
             chunkMesher.getTrackedBlockUpdateCount());
-        jTextureAcc = 0;
         jPruneAcc = 0;
         jBuildAcc = 0;
         jLodAcc = 0;
@@ -610,15 +600,11 @@ public class MetalWorldRenderer {
       if (mc != null && mc.getCameraEntity() != null) {
         inWater = mc.getCameraEntity().isUnderWater();
       }
-      long entityStart = System.nanoTime();
-      entityRenderer.renderCapturedEntities(frameCtx, inWater);
-      MetalRenderProfiler.getInstance().recordEntityTime(System.nanoTime() - entityStart);
-      NativeBridge.nDrawDeferredWaterPass(frameCtx);
+    entityRenderer.renderCapturedEntities(frameCtx, inWater);
+    NativeBridge.nDrawDeferredWaterPass(frameCtx);
       NativeBridge.nDrawOITPass(frameCtx);
-      long particleStart = System.nanoTime();
-      particleRenderer.render(frameCtx);
-      MetalRenderProfiler.getInstance().recordParticleTime(System.nanoTime() - particleStart);
-      renderBlockOutline(frameCtx);
+    particleRenderer.render(frameCtx);
+    renderBlockOutline(frameCtx);
     }
     renderer.endFrame();
     frameCount++;
@@ -801,12 +787,10 @@ public class MetalWorldRenderer {
         scanFrameCounter = 0;
       }
     }
-    long scanStart = System.nanoTime();
     if (pendingBuildSet.size() < CHUNK_SCAN_SATURATED_THRESHOLD ||
         (frameCount & 1) == 0) {
       scanForPendingChunks(mc);
     }
-    MetalRenderProfiler.getInstance().recordScanTime(System.nanoTime() - scanStart);
     if (mc.player != null && chunkMesher.getMeshCount() < maxMeshes) {
       int playerChunkX = mc.player.chunkPosition().x();
       int playerChunkZ = mc.player.chunkPosition().z();
@@ -1137,38 +1121,6 @@ public class MetalWorldRenderer {
         "chunk_avail: server=%d/%d (max_ring=%d) m=%d p=%d",
         available, total, maxRingAvail, chunkMesher.getMeshCount(),
         pendingBuildSet.size());
-  }
-
-  public int buildMeshesDuringWait(long metalHandle) {
-    Minecraft mc = Minecraft.getInstance();
-    if (mc == null || mc.player == null || mc.level == null)
-      return 0;
-    if (chunkMesher.getMeshCount() >= maxMeshes)
-      return 0;
-    int playerChunkX = mc.player.chunkPosition().x();
-    int playerChunkZ = mc.player.chunkPosition().z();
-    int playerSectionY = mc.player.getBlockY() >> 4;
-    int totalBuilt = 0;
-    long timeout = System.nanoTime() + CHUNK_BUILD_WAIT_WINDOW_NS;
-    while (System.nanoTime() < timeout) {
-      if (NativeBridge.nIsFrameReady(metalHandle)) {
-        break;
-      }
-      int built = buildFromPendingSet(playerChunkX, playerSectionY,
-          playerChunkZ, CHUNK_BUILD_WAIT_BUDGET_NS,
-          MIN_CHUNK_BUILDS_DURING_WAIT,
-          WAIT_HIGH_PRIORITY_SUBMISSIONS_PER_PASS);
-      if (built == 0)
-        break;
-      totalBuilt += built;
-    }
-    if (totalBuilt > 0 || MetalRenderConfig.isDeepDebugActive()) {
-      MetalLogger.info(
-          "wait_build: built=%d p=%d cp=%d m=%d ready=%s",
-          totalBuilt, pendingBuildSet.size(), chunkMesher.getPendingCount(),
-          chunkMesher.getMeshCount(), NativeBridge.nIsFrameReady(metalHandle));
-    }
-    return totalBuilt;
   }
 
   private int buildFromPendingSet(int playerChunkX, int playerSectionY,
