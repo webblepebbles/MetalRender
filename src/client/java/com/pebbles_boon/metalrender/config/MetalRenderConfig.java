@@ -93,7 +93,6 @@ public final class MetalRenderConfig {
         if (obj.has("enableIndirectCommandBuffers"))
           cfg.enableIndirectCommandBuffers = obj.get("enableIndirectCommandBuffers").getAsBoolean();
 
-
         if (obj.has("savedResolutionScale"))
           resolutionScale = clamp(obj.get("savedResolutionScale").getAsFloat(), 0.20f, 1.5f);
       }
@@ -125,7 +124,6 @@ public final class MetalRenderConfig {
     System.setProperty("metalrender.feature.argbuf", String.valueOf(enableArgumentBuffers));
     System.setProperty("metalrender.feature.oit", String.valueOf(enableProgrammableBlending));
 
-
     try {
       com.google.gson.JsonObject obj = new com.google.gson.JsonObject();
       obj.addProperty("enableMetalRendering", enableMetalRendering);
@@ -144,7 +142,6 @@ public final class MetalRenderConfig {
       obj.addProperty("enableArgumentBuffers", enableArgumentBuffers);
       obj.addProperty("enableProgrammableBlending", enableProgrammableBlending);
       obj.addProperty("enableIndirectCommandBuffers", enableIndirectCommandBuffers);
-  
 
       obj.addProperty("savedResolutionScale", resolutionScale);
       java.nio.file.Path path = configFile();
