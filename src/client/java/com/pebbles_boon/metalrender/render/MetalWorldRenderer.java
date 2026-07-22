@@ -272,6 +272,7 @@ public class MetalWorldRenderer {
       meshShaderBackend = null;
     }
     gpuDrivenEnabled = false;
+    instance = null;
     subChunkUploadBuffer = null;
     chunkUniformsBuffer = null;
     if (argumentBufferHandle != 0) {

@@ -5,7 +5,7 @@ public final class MetalRenderConfig {
   public boolean enableSimpleLighting = true;
   public boolean enableDebugOverlay = false;
   public boolean debugPinkBlockTint = false;
-  public int leafCullingMode = 0;
+  public int leafCullingMode = 1;
   public int biomeTransitionDetail = 2;
   public int targetFrameRate = 60;
   public boolean prioritizeFpsOverTps = false;

@@ -131,6 +131,24 @@ public class MetalRenderClient implements ClientModInitializer {
         worldRenderer.onWorldUnload();
         worldRenderer = null;
       }
+      if (meshShaderBackend != null) {
+        meshShaderBackend.shutdown();
+        meshShaderBackend = null;
+      }
+      coordinator = null;
+      if (renderer != null) {
+        long handle = renderer.getHandle();
+        if (handle != 0 && NativeBridge.isLibLoaded()) {
+          try {
+            NativeBridge.nFlushDeferredDeletions();
+            NativeBridge.nDestroy(handle);
+          } catch (Throwable t) {
+            MetalLogger.warn("renderer destroy fail: %s", t.getMessage());
+          }
+        }
+        renderer = null;
+      }
+      metalUp = false;
       return;
     }
 
