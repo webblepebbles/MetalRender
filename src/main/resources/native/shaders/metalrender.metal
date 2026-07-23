@@ -178,17 +178,15 @@ fragment half4 fragment_terrain(
     half3 light = lightmap.sample(texSampler, in.lightUV).rgb;
     tinted.rgb *= light * faceShade;
     return half4(tinted.rgb, vertAlpha < half(0.99) ? vertAlpha : half(1.0));
-}
-
-fragment half4 fragment_water_surface(
+}fragment half4 fragment_water_surface(
     SimpleVertexOut in [[stage_in]],
     texture2d<half> blockAtlas  [[texture(0)]],
     texture2d<half> lightmap    [[texture(1)]]
 ) {
-    constexpr sampler atlasSampler(mag_filter::nearest, min_filter::nearest, mip_filter::nearest, address::clamp_to_edge);
+    constexpr sampler atlasSampler(mag_filter::nearest, min_filter::nearest, mip_filter::none, address::clamp_to_edge);
     constexpr sampler lightSampler(mag_filter::nearest, min_filter::nearest, mip_filter::nearest, address::clamp_to_edge);
     half4 texColor = blockAtlas.sample(atlasSampler, in.texCoord);
-    half vertAlpha = in.color.a;
+    half  vertAlpha = in.color.a;
     if (texColor.a < half(0.5)) {
         if (vertAlpha > half(0.994) && vertAlpha < half(0.998)) {
             texColor.a = half(1.0);
