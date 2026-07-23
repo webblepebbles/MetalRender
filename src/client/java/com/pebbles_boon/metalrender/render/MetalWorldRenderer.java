@@ -1202,25 +1202,14 @@ public class MetalWorldRenderer {
     }
     long deadline = budgetNanos > 0 ? System.nanoTime() + budgetNanos : Long.MAX_VALUE;
     int maxSubmit = pendingBuildSet.size() > 20000 ? 200 : 500;
-    BuildBudgetEstimator estimator = PerformanceController.getBudgetEstimator();
-    boolean throttle = estimator != null && estimator.shouldThrottle();
-    int meshCount = chunkMesher.getMeshCount();
-    float meshUtil = maxMeshes > 0 ? (float) meshCount / maxMeshes : 0f;
-    if (throttle || meshUtil > 0.75f) {
-      budgetNanos = Math.min(budgetNanos, 2_000_000L);
-      maxSubmit = Math.min(maxSubmit, 40);
-      if (meshUtil > 0.90f) {
-        maxSubmit = Math.min(maxSubmit, 15);
-      }
-    }
     int thermalState = 0;
     if ((frameCount & 31) == 0) {
       cachedThermalState = NativeBridge.isLibLoaded() ? NativeBridge.nGetThermalState() : 0;
     }
     thermalState = cachedThermalState;
     if (thermalState >= 2) {
-      budgetNanos = Math.min(budgetNanos, 1_500_000L);
-      maxSubmit = Math.min(maxSubmit, 25);
+      budgetNanos = Math.min(budgetNanos, 3_000_000L);
+      maxSubmit = Math.min(maxSubmit, 100);
     }
     int built = 0;
     int importantSubmitted = 0;
