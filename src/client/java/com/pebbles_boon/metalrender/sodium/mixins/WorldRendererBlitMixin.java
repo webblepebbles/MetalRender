@@ -110,6 +110,7 @@ public class WorldRendererBlitMixin {
       com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance().endRender();
       worldRenderer.endFrame();
       //no need no more
+      
       metalrender$endFrameCount++;if (metalrender$endFrameCount <= 3) {
         MetalLogger.info("[blitmix] end hook #%d",
             metalrender$endFrameCount);

@@ -11,9 +11,9 @@ import net.minecraft.resources.Identifier;
 @SuppressWarnings("deprecation")
 public final class MetalRenderProfilerOverlay implements HudElement {
   private static final Identifier PROFILER_ID = Identifier.fromNamespaceAndPath("metalrender", "profiler_overlay");
-  private static final int BG_COLOR = 0x80000000;
-  private static final int TEXT_COLOR = 0xFF00FF00;
-  private static final int HEADER_COLOR = 0xFFFFFF00;
+  private static final int BG_COLOR = 0x80213648;
+  private static final int TEXT_COLOR = 0xFF89CFF0;
+  private static final int HEADER_COLOR = 0xFFA8DFF0;
   private static final int LINE_HEIGHT = 11;
   private static final int PADDING_X = 4;
   private static final int PADDING_Y = 2;
