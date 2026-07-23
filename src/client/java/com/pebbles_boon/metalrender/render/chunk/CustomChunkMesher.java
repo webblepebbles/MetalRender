@@ -53,6 +53,9 @@ public class CustomChunkMesher {
   private static final int MAX_QUADS = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE * 6;
   private static final int VERTEX_BUF_SIZE = MAX_QUADS * 4 * VERTEX_STRIDE;
   private static final byte WATER_ALPHA = (byte) 168;
+  private static final int UPLOAD_PARALLELISM = Math.max(256, Runtime.getRuntime().availableProcessors() * 8);
+  private static final java.util.concurrent.Semaphore UPLOAD_SEMAPHORE = new java.util.concurrent.Semaphore(
+      UPLOAD_PARALLELISM);
 
   private static final float[] FACE_SHADE = { 0.5f, 1.0f, 0.8f, 0.8f, 0.6f, 0.6f };
 
@@ -323,7 +326,7 @@ public class CustomChunkMesher {
       recentBlockUpdate = pendingBlockUpdateNanos.containsKey(key);
     }
     boolean canCoalesce = prevMark != 0L
-        && (currentFrame - (int) prevMark) <= 2
+        && (currentFrame - (int) prevMark) <= 5
         && !recentBlockUpdate;
 
     synchronized (emptyKeys) {
@@ -519,13 +522,11 @@ public class CustomChunkMesher {
   public void setLoadingModeThreadBudget(boolean loadingMode, int totalPending) {
     int pending = Math.max(getPendingCount(), totalPending);
     MetalRenderConfig config = MetalRenderClient.getConfig();
-    boolean fpsPriorityMode = config != null && config.prioritizeFpsOverTps;
-    int approximateLightingThreshold = fpsPriorityMode ? 2048 : 256;
-    aggressiveApproximateLighting = loadingMode || pending >= approximateLightingThreshold;
+    aggressiveApproximateLighting = false;
 
     MetalLogger.info(
-        "thread_budget: load=%s p=%d fps=%s approx=%s",
-        loadingMode, pending, fpsPriorityMode, aggressiveApproximateLighting);
+        "thread_budget: load=%s p=%d approx=%s",
+        loadingMode, pending, aggressiveApproximateLighting);
   }
 
   public void flushMeshRegistrations() {
@@ -763,7 +764,9 @@ public class CustomChunkMesher {
         buildPCZ = mc.player.chunkPosition().z();
         buildPCY = (int) Math.floor(mc.player.getY()) >> 4;
       }
+      waterStill = getFluidSprite(mc, net.minecraft.world.level.material.Fluids.WATER, false);
       waterFlow = getFluidSprite(mc, net.minecraft.world.level.material.Fluids.WATER, true);
+      lavaStill = getFluidSprite(mc, net.minecraft.world.level.material.Fluids.LAVA, false);
       lavaFlow = getFluidSprite(mc, net.minecraft.world.level.material.Fluids.LAVA, true);
     }
     return new MeshBuildContext(blockModels, buildPCX, buildPCY, buildPCZ,
@@ -976,13 +979,16 @@ public class CustomChunkMesher {
         return;
       }
 
+      vertexBuffer.flip();
+      int[] facingQuadCounts = bucketQuadsByFacing(vertexBuffer, opaqueQuadCount, waterQuadCount);
+
       if (waterQuadCount > 0) {
         waterBuffer.flip();
+        vertexBuffer.limit(vertexBuffer.capacity());
+        vertexBuffer.position(opaqueQuadCount * 4 * VERTEX_STRIDE);
         vertexBuffer.put(waterBuffer);
       }
       vertexBuffer.flip();
-
-      int[] facingQuadCounts = bucketQuadsByFacing(vertexBuffer, opaqueQuadCount, waterQuadCount);
       long visibilityMask = computeVisibilityMask(snapshot.paddedBlockStates);
       int dataLen = quadCount * 4 * VERTEX_STRIDE;
 
@@ -999,12 +1005,18 @@ public class CustomChunkMesher {
         }
       }
 
-      long bufferHandle = NativeBridge.nCreateBufferWithHint(
-          deviceHandle, roundedSize, NativeMemory.STORAGE_MODE_SHARED, oldHintHandle);
-      long uploadStart = System.nanoTime();
-      NativeBridge.nUploadBufferDataDirect(bufferHandle, vertexBuffer, 0, dataLen);
-      MetalRenderProfiler.getInstance().recordUploadTime(System.nanoTime() - uploadStart);
-      MetalRenderProfiler.getInstance().incrementUploadsDone(1);
+      long bufferHandle;
+      UPLOAD_SEMAPHORE.acquireUninterruptibly();
+      try {
+        bufferHandle = NativeBridge.nCreateBufferWithHint(
+            deviceHandle, roundedSize, NativeMemory.STORAGE_MODE_SHARED, oldHintHandle);
+        long uploadStart = System.nanoTime();
+        NativeBridge.nUploadBufferDataDirect(bufferHandle, vertexBuffer, 0, dataLen);
+        MetalRenderProfiler.getInstance().recordUploadTime(System.nanoTime() - uploadStart);
+        MetalRenderProfiler.getInstance().incrementUploadsDone(1);
+      } finally {
+        UPLOAD_SEMAPHORE.release();
+      }
 
       ChunkMeshData mesh = new ChunkMeshData(bufferHandle, quadCount, chunkX, chunkY, chunkZ,
           context.buildPlayerCX, context.buildPlayerCY, context.buildPlayerCZ,
