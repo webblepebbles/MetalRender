@@ -73,9 +73,7 @@ public class CustomChunkMesher {
   private static final Direction[] ALL_DIRECTIONS = Direction.values();
 
   private static final int BATCH_REG_CAPACITY = 2048;
-  private static final int UPLOAD_PARALLELISM = Math.max(12, Runtime.getRuntime().availableProcessors());
-  private static final java.util.concurrent.Semaphore UPLOAD_SEMAPHORE = new java.util.concurrent.Semaphore(
-      UPLOAD_PARALLELISM);
+
 
   public static class ChunkMeshData {
     public final long bufferHandle;
@@ -852,6 +850,7 @@ public class CustomChunkMesher {
           int wz = baseZ + pz - 1;
           int pIdx = (py * PADDED_SIZE + pz) * PADDED_SIZE + px;
 
+          mutablePos.set(wx, wy, wz);
           BlockState state;
           boolean inner = px >= 1 && px <= SECTION_SIZE && py >= 1 && py <= SECTION_SIZE && pz >= 1
               && pz <= SECTION_SIZE;
@@ -859,11 +858,9 @@ public class CustomChunkMesher {
             try {
               state = localStates.get(px - 1, py - 1, pz - 1);
             } catch (Exception e) {
-              mutablePos.set(wx, wy, wz);
               state = world.getBlockState(mutablePos);
             }
           } else {
-            mutablePos.set(wx, wy, wz);
             state = world.getBlockState(mutablePos);
           }
 
@@ -1002,18 +999,12 @@ public class CustomChunkMesher {
         }
       }
 
-      long bufferHandle;
-      UPLOAD_SEMAPHORE.acquireUninterruptibly();
-      try {
-        bufferHandle = NativeBridge.nCreateBufferWithHint(
-            deviceHandle, roundedSize, NativeMemory.STORAGE_MODE_SHARED, oldHintHandle);
-        long uploadStart = System.nanoTime();
-        NativeBridge.nUploadBufferDataDirect(bufferHandle, vertexBuffer, 0, dataLen);
-        MetalRenderProfiler.getInstance().recordUploadTime(System.nanoTime() - uploadStart);
-        MetalRenderProfiler.getInstance().incrementUploadsDone(1);
-      } finally {
-        UPLOAD_SEMAPHORE.release();
-      }
+      long bufferHandle = NativeBridge.nCreateBufferWithHint(
+          deviceHandle, roundedSize, NativeMemory.STORAGE_MODE_SHARED, oldHintHandle);
+      long uploadStart = System.nanoTime();
+      NativeBridge.nUploadBufferDataDirect(bufferHandle, vertexBuffer, 0, dataLen);
+      MetalRenderProfiler.getInstance().recordUploadTime(System.nanoTime() - uploadStart);
+      MetalRenderProfiler.getInstance().incrementUploadsDone(1);
 
       ChunkMeshData mesh = new ChunkMeshData(bufferHandle, quadCount, chunkX, chunkY, chunkZ,
           context.buildPlayerCX, context.buildPlayerCY, context.buildPlayerCZ,
@@ -1208,11 +1199,8 @@ public class CustomChunkMesher {
         return true;
       }
       if (state.getBlock() instanceof LeavesBlock) {
-        Minecraft mc = Minecraft.getInstance();
-        if (mc != null && mc.options != null && mc.options.cutoutLeaves() != null) {
-          return !mc.options.cutoutLeaves().get();
-        }
-        return true;
+        MetalRenderConfig cfg = MetalRenderClient.getConfig();
+        return cfg == null || cfg.leafCullingMode == 0;
       }
       return false;
     }
@@ -1497,6 +1485,10 @@ public class CustomChunkMesher {
       byte normalIndex = (byte) (face != null ? face.get3DDataValue() : 6);
       float shade = quad.materialInfo().shade() ? getFaceShade(normalIndex) : 1.0f;
 
+      boolean isLeaves = state.getBlock() instanceof LeavesBlock;
+      MetalRenderConfig cfg = MetalRenderClient.getConfig();
+      boolean fastLeaves = isLeaves && cfg != null && cfg.leafCullingMode == 0;
+
       boolean tinted = quad.materialInfo().isTinted() || quad.materialInfo().tintIndex() >= 0;
       int blockColor = tinted ? getBiomeTint(lx, ly, lz) : 0xFFFFFF;
       byte tintR = (byte) ((blockColor >> 16) & 0xFF);
@@ -1533,7 +1525,7 @@ public class CustomChunkMesher {
         byte r = (byte) Math.min(255, (int) fr);
         byte g = (byte) Math.min(255, (int) fg);
         byte b = (byte) Math.min(255, (int) fb);
-        byte a = (byte) 0xFF;
+        byte a = fastLeaves ? (byte) 0xFE : (byte) 0xFF;
 
         emitVertex(target, px, py, pz, su, sv, r, g, b, a, light, normalIndex);
       }
