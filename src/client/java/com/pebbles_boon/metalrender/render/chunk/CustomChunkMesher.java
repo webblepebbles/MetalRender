@@ -1067,7 +1067,9 @@ public class CustomChunkMesher {
         dirtyKeys.remove(key);
       }
     } catch (Exception e) {
-      MetalLogger.error("`mesh fail [%d,%d,%d]: %s", chunkX, chunkY, chunkZ, e.getMessage());
+      java.io.StringWriter sw = new java.io.StringWriter();
+      e.printStackTrace(new java.io.PrintWriter(sw));
+      MetalLogger.error("mesh fail [%d,%d,%d]: %s\n%s", chunkX, chunkY, chunkZ, e.toString(), sw.toString());
     } finally {
       long buildElapsed = System.nanoTime() - buildStart;
       MetalRenderProfiler.getInstance().recordMeshingTime(buildElapsed);
@@ -1246,7 +1248,8 @@ public class CustomChunkMesher {
 
       if (upVisible) {
         float flowAngle = computeFluidFlowAngle(lx, ly, lz);
-        renderFluidTop(lx, ly, lz, cornerHeights, r, g, b, a, light, flowAngle, isLava);
+        renderFluidTop(lx, ly, lz, cornerHeights, r, g, b, a, light, flowAngle, isLava,
+            fluid.isSource());
       }
 
       for (Direction dir : ALL_DIRECTIONS) {
@@ -1339,7 +1342,7 @@ public class CustomChunkMesher {
     }
 
     private void renderFluidTop(int lx, int ly, int lz, float[] heights, byte r, byte g, byte b, byte a, byte light,
-        float flowAngle, boolean lava) {
+        float flowAngle, boolean lava, boolean isSource) {
       float h0 = heights[0];
       float h1 = heights[1];
       float h2 = heights[2];
@@ -1523,16 +1526,17 @@ public class CustomChunkMesher {
         short sv = (short) (v * 65535f);
 
         byte light = computeVertexLight(lx, ly, lz, face, x, y, z, quad.materialInfo().lightEmission());
+        float ao = (face != null) ? computeVertexAo(lx, ly, lz, face, x, y, z) : 1.0f;
 
         float fr, fg, fb;
         if (tinted) {
-          fr = (tintR & 0xFF) * shade;
-          fg = (tintG & 0xFF) * shade;
-          fb = (tintB & 0xFF) * shade;
+          fr = (tintR & 0xFF) * shade * ao;
+          fg = (tintG & 0xFF) * shade * ao;
+          fb = (tintB & 0xFF) * shade * ao;
         } else {
-          fr = 255f * shade;
-          fg = 255f * shade;
-          fb = 255f * shade;
+          fr = 255f * shade * ao;
+          fg = 255f * shade * ao;
+          fb = 255f * shade * ao;
         }
         byte r = (byte) Math.min(255, (int) fr);
         byte g = (byte) Math.min(255, (int) fg);
@@ -1550,26 +1554,115 @@ public class CustomChunkMesher {
 
     private byte computeVertexLight(int lx, int ly, int lz, Direction face,
         float vx, float vy, float vz, int emission) {
-      int blSum = 0, slSum = 0, count = 0;
-      int minX = (int) Math.floor(vx - 0.5f);
-      int minY = (int) Math.floor(vy - 0.5f);
-      int minZ = (int) Math.floor(vz - 0.5f);
-      for (int dx = 0; dx <= 1; dx++) {
-        for (int dy = 0; dy <= 1; dy++) {
-          for (int dz = 0; dz <= 1; dz++) {
-            byte light = getPaddedLight(minX + dx, minY + dy, minZ + dz);
-            blSum += light & 0xF;
-            slSum += (light >> 4) & 0xF;
-            count++;
-          }
-        }
+      if (face == null) {
+        face = Direction.UP;
       }
-      int bl = count > 0 ? blSum / count : 0;
-      int sl = count > 0 ? slSum / count : 0;
+
+      int baseX = Math.max(-1, Math.min(16, (int) Math.floor(vx + 0.5f * face.getStepX())));
+      int baseY = Math.max(-1, Math.min(16, (int) Math.floor(vy + 0.5f * face.getStepY())));
+      int baseZ = Math.max(-1, Math.min(16, (int) Math.floor(vz + 0.5f * face.getStepZ())));
+
+      int blSum = 0;
+      int slSum = 0;
+      for (int i = 0; i < 4; i++) {
+        int sx, sy, sz;
+        switch (face) {
+          case UP:
+          case DOWN:
+            sx = baseX + ((i & 1) == 0 ? 0 : -1);
+            sy = baseY;
+            sz = baseZ + ((i & 2) == 0 ? 0 : -1);
+            break;
+          case NORTH:
+          case SOUTH:
+            sx = baseX + ((i & 1) == 0 ? 0 : -1);
+            sy = baseY + ((i & 2) == 0 ? 0 : -1);
+            sz = baseZ;
+            break;
+          case WEST:
+          case EAST:
+            sx = baseX;
+            sy = baseY + ((i & 1) == 0 ? 0 : -1);
+            sz = baseZ + ((i & 2) == 0 ? 0 : -1);
+            break;
+          default:
+            sx = baseX;
+            sy = baseY;
+            sz = baseZ;
+        }
+        sx = Math.max(-1, Math.min(16, sx));
+        sy = Math.max(-1, Math.min(16, sy));
+        sz = Math.max(-1, Math.min(16, sz));
+        byte light = getPaddedLight(sx, sy, sz);
+        blSum += light & 0xF;
+        slSum += (light >> 4) & 0xF;
+      }
+      int bl = (blSum + 2) >> 2;
+      int sl = (slSum + 2) >> 2;
+
       if (emission > 0) {
         bl = Math.max(bl, Math.min(15, emission));
       }
       return (byte) ((bl & 0xF) | ((sl & 0xF) << 4));
+    }
+
+    private static final int[][] AO_AXIS_A = {
+        { 1, 0, 0 },
+        { 1, 0, 0 },
+        { 1, 0, 0 },
+        { 1, 0, 0 },
+        { 0, 1, 0 },
+        { 0, 1, 0 }
+    };
+    private static final int[][] AO_AXIS_B = {
+        { 0, 0, 1 },
+        { 0, 0, 1 },
+        { 0, 1, 0 },
+        { 0, 1, 0 },
+        { 0, 0, 1 },
+        { 0, 0, 1 }
+    };
+
+    private float computeVertexAo(int lx, int ly, int lz, Direction face,
+        float vx, float vy, float vz) {
+      int[] axisA = AO_AXIS_A[face.get3DDataValue()];
+      int[] axisB = AO_AXIS_B[face.get3DDataValue()];
+
+      float centerX = lx + 0.5f;
+      float centerY = ly + 0.5f;
+      float centerZ = lz + 0.5f;
+
+      float dotA = (vx - centerX) * axisA[0] + (vy - centerY) * axisA[1] + (vz - centerZ) * axisA[2];
+      float dotB = (vx - centerX) * axisB[0] + (vy - centerY) * axisB[1] + (vz - centerZ) * axisB[2];
+      int signA = dotA > 0 ? 1 : -1;
+      int signB = dotB > 0 ? 1 : -1;
+
+      int bx = Math.max(-1, Math.min(16, (int) Math.floor(vx + 0.5f * face.getStepX())));
+      int by = Math.max(-1, Math.min(16, (int) Math.floor(vy + 0.5f * face.getStepY())));
+      int bz = Math.max(-1, Math.min(16, (int) Math.floor(vz + 0.5f * face.getStepZ())));
+
+      boolean a = isOccluder(bx + signA * axisA[0], by + signA * axisA[1], bz + signA * axisA[2]);
+      boolean b = isOccluder(bx + signB * axisB[0], by + signB * axisB[1], bz + signB * axisB[2]);
+      boolean c = isOccluder(bx + signA * axisA[0] + signB * axisB[0],
+          by + signA * axisA[1] + signB * axisB[1],
+          bz + signA * axisA[2] + signB * axisB[2]);
+
+      if (a && b) {
+        c = true;
+      }
+
+      int ao = (a ? 1 : 0) + (b ? 1 : 0) + (c ? 1 : 0);
+      return AO_CURVE[ao];
+    }
+
+    private static final float[] AO_CURVE = { 1.0f, 0.96f, 0.86f, 0.72f };
+
+    private boolean isOccluder(int x, int y, int z) {
+      x = Math.max(-1, Math.min(16, x));
+      y = Math.max(-1, Math.min(16, y));
+      z = Math.max(-1, Math.min(16, z));
+      BlockState state = getPaddedBlockState(x, y, z);
+      return state != null && state.isSolidRender();
     }
   }
 
