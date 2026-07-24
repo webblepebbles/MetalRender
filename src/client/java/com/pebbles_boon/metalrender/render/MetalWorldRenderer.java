@@ -772,6 +772,12 @@ public class MetalWorldRenderer {
   }
 
   private void buildPendingChunkMeshes(Minecraft mc) {
+    if (mc.player == null || mc.level == null) {
+      return;
+    }
+    if (mc.getOverlay() != null) {
+      return;
+    }
     if (mc.player != null) {
       float yaw = mc.player.getYRot();
       float nextForwardX = (float) -Math.sin(Math.toRadians(yaw));
