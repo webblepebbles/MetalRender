@@ -114,9 +114,6 @@ public class MetalTextureManager {
       return;
     atlasFramesSinceUpload++;
 
-    if (!atlasDirty)
-      return;
-
     if (atlasFramesSinceUpload < ATLAS_MIN_UPLOAD_INTERVAL)
       return;
     atlasFramesSinceUpload = 0;
