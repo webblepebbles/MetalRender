@@ -19,6 +19,10 @@ public final class MetalRenderConfig {
   public boolean enableHiZCull = false;
   public boolean enableGpuTranslucencySort = false;
 
+  public boolean hiddenFluidCulling = true;
+  public boolean improvedFluidShaping = false;
+  public boolean closestPointEntitySort = false;
+
   public boolean enableProgrammableBlending = false;
   public boolean enableIndirectCommandBuffers = false;
   private static volatile boolean mirrorUploads = false;
@@ -93,6 +97,13 @@ public final class MetalRenderConfig {
         if (obj.has("enableIndirectCommandBuffers"))
           cfg.enableIndirectCommandBuffers = obj.get("enableIndirectCommandBuffers").getAsBoolean();
 
+        if (obj.has("hiddenFluidCulling"))
+          cfg.hiddenFluidCulling = obj.get("hiddenFluidCulling").getAsBoolean();
+        if (obj.has("improvedFluidShaping"))
+          cfg.improvedFluidShaping = obj.get("improvedFluidShaping").getAsBoolean();
+        if (obj.has("closestPointEntitySort"))
+          cfg.closestPointEntitySort = obj.get("closestPointEntitySort").getAsBoolean();
+
         if (obj.has("savedResolutionScale"))
           resolutionScale = clamp(obj.get("savedResolutionScale").getAsFloat(), 0.20f, 1.5f);
       }
@@ -142,6 +153,9 @@ public final class MetalRenderConfig {
       obj.addProperty("enableArgumentBuffers", enableArgumentBuffers);
       obj.addProperty("enableProgrammableBlending", enableProgrammableBlending);
       obj.addProperty("enableIndirectCommandBuffers", enableIndirectCommandBuffers);
+      obj.addProperty("hiddenFluidCulling", hiddenFluidCulling);
+      obj.addProperty("improvedFluidShaping", improvedFluidShaping);
+      obj.addProperty("closestPointEntitySort", closestPointEntitySort);
 
       obj.addProperty("savedResolutionScale", resolutionScale);
       java.nio.file.Path path = configFile();

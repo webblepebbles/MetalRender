@@ -6,47 +6,58 @@ import com.pebbles_boon.metalrender.gui.components.MetalOptionSlider;
 import com.pebbles_boon.metalrender.nativebridge.MetalHardwareChecker;
 import java.util.ArrayList;
 import java.util.List;
+import net.minecraft.client.CloudStatus;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
 import net.minecraft.client.Options;
+import net.minecraft.client.TextureFilteringMethod;
 import net.minecraft.client.gui.GuiGraphicsExtractor;
 import net.minecraft.client.gui.components.Button;
 import net.minecraft.client.gui.screens.Screen;
 import net.minecraft.client.input.MouseButtonEvent;
 import net.minecraft.network.chat.Component;
+import net.minecraft.server.level.ParticleStatus;
 
 public class MetalRenderSettingsScreen extends Screen {
 
-  private static final int C_PANEL = 0xFF1E1E20;
-  private static final int C_HEADER = 0xFF161618;
-  private static final int C_TAB_BAR = 0xFF252527;
+  private static final int C_BG_TOP = 0xFF0B0B0D;
+  private static final int C_BG_BOTTOM = 0xFF131318;
+  private static final int C_PANEL = 0xCC1C1C22;
+  private static final int C_PANEL_BORDER = 0xFF2E2E36;
+  private static final int C_HEADER = 0xFF16161B;
+  private static final int C_HEADER_GRADIENT = 0xFF1E1E26;
+  private static final int C_TAB_BAR = 0xFF1F1F26;
   private static final int C_TAB_ACTIVE = 0xFF007AFF;
-  private static final int C_TAB_HOVER = 0xFF38383A;
-  private static final int C_CARD = 0xFF2C2C2E;
-  private static final int C_CARD_HOVER = 0xFF38383A;
-  private static final int C_DIVIDER = 0xFF3A3A3C;
+  private static final int C_TAB_HOVER = 0xFF2A2A32;
+  private static final int C_TAB_TEXT = 0xFF9B9BA3;
+  private static final int C_CARD = 0xFF25252B;
+  private static final int C_CARD_HOVER = 0xFF2E2E36;
+  private static final int C_CARD_ACTIVE = 0xFF2A2A34;
+  private static final int C_DIVIDER = 0xFF3A3A44;
   private static final int C_TEXT_PRI = 0xFFFFFFFF;
-  private static final int C_TEXT_SEC = 0xFF8E8E93;
-  private static final int C_TEXT_ACCENT = 0xFF007AFF;
-  private static final int C_VAL_ON = 0xFF30D158;
+  private static final int C_TEXT_SEC = 0xFF8E8E99;
+  private static final int C_TEXT_ACCENT = 0xFF3FA9FF;
+  private static final int C_VAL_ON = 0xFF34C759;
   private static final int C_VAL_OFF = 0xFFFF453A;
   private static final int C_PILL_ON = 0xFF34C759;
-  private static final int C_PILL_OFF = 0xFF48484A;
-  private static final int C_SCROLLTHUMB = 0xFF636366;
+  private static final int C_PILL_OFF = 0xFF48484F;
+  private static final int C_ACCENT = 0xFF007AFF;
+  private static final int C_SCROLLTHUMB = 0xFF5A5A66;
+  private static final int C_SCROLLTHUMB_HOVER = 0xFF007AFF;
 
-  private static final int PANEL_W = 700;
-  private static final int PANEL_H = 460;
-  private static final int HDR_H = 38;
-  private static final int TAB_H = 32;
-  private static final int FOOT_H = 36;
-  private static final int CARD_H = 38;
-  private static final int CARD_GAP = 1;
-  private static final int SEC_H = 28;
-  private static final int HPAD = 10;
+  private static final int PANEL_W = 720;
+  private static final int PANEL_H = 500;
+  private static final int HDR_H = 44;
+  private static final int TAB_H = 34;
+  private static final int FOOT_H = 38;
+  private static final int CARD_H = 40;
+  private static final int CARD_GAP = 2;
+  private static final int SEC_H = 30;
+  private static final int HPAD = 14;
   private static final int PILL_W = 40;
   private static final int PILL_H = 20;
-  private static final int SLIDER_W = 120;
-  private static final int SLIDER_H = 12;
+  private static final int SLIDER_W = 130;
+  private static final int SLIDER_H = 14;
   private static final int FPS_LIMIT_MAX = 240;
   private static final int FPS_LIMIT_UNLIMITED = 241;
 
@@ -61,6 +72,10 @@ public class MetalRenderSettingsScreen extends Screen {
   private int maxScroll = 0;
   private boolean dragging = false;
   private int dragOriginY, dragOriginOff;
+  private int hoverRowIndex = -1;
+  private float animTabX = -1;
+  private int animTabW = 0;
+  private int totalContentHeight = 0;
 
   private int px, py, pw, ph;
   private int cx, cy, cw, ch;
@@ -98,6 +113,7 @@ public class MetalRenderSettingsScreen extends Screen {
     OptionInstance<?> vanillaOpt;
     MetalOptionSlider slider;
     int renderY = 0;
+    int layoutX, layoutY, layoutW;
 
     Row(RT t, String l) {
       type = t;
@@ -161,20 +177,9 @@ public class MetalRenderSettingsScreen extends Screen {
   public void extractRenderState(GuiGraphicsExtractor ctx, int mx, int my, float delta) {
     var font = getFont();
 
-    ctx.fill(0, 0, width, height, 0xAA000000);
-
-    ctx.fill(px + 4, py + 4, px + pw + 4, py + ph + 4, 0x44000000);
-
-    fr(ctx, px, py, pw, ph, C_PANEL);
-
-    fr(ctx, px, py, pw, HDR_H, C_HEADER);
-    ctx.text(font,
-        Component.literal("MetalRender Settings"),
-        px + 12, py + (HDR_H - 9) / 2, C_TEXT_PRI);
-    int vx = px + 12 + font.width("MetalRender Settings") + 6;
-    ctx.text(font, Component.literal("v0.1.7"),
-        vx, py + (HDR_H - 9) / 2, C_TEXT_SEC, false);
-
+    drawBackground(ctx);
+    drawPanel(ctx);
+    drawHeader(ctx, font);
     renderTabs(ctx, mx, my);
 
     ctx.enableScissor(cx, cy, cx + cw, cy + ch);
@@ -182,76 +187,138 @@ public class MetalRenderSettingsScreen extends Screen {
     renderRows(ctx, mx, my);
     ctx.disableScissor();
 
-    renderScrollbar(ctx);
+    drawScrollFades(ctx);
+    renderScrollbar(ctx, mx, my);
+    drawFooter(ctx, font);
 
+    super.extractRenderState(ctx, mx, my, delta);
+  }
+
+  private void drawBackground(GuiGraphicsExtractor ctx) {
+    ctx.fillGradient(0, 0, width, height, C_BG_TOP, C_BG_BOTTOM);
+    int corner = Math.max(width, height) / 4;
+    ctx.fillGradient(0, 0, corner, corner, 0xFF07070A, 0x00131318);
+    ctx.fillGradient(width - corner, 0, width, corner, 0xFF07070A, 0x00131318);
+    ctx.fillGradient(0, height - corner, corner, height, 0xFF07070A, 0x00131318);
+    ctx.fillGradient(width - corner, height - corner, width, height, 0xFF07070A, 0x00131318);
+  }
+
+  private void drawPanel(GuiGraphicsExtractor ctx) {
+    ctx.fill(px - 2, py - 2, px + pw + 2, py + ph + 2, 0x30000000);
+    ctx.fill(px, py, px + pw, py + ph, C_PANEL);
+    drawRectOutline(ctx, px, py, pw, ph, C_PANEL_BORDER);
+    ctx.fill(px + 1, py + 1, px + pw - 1, py + 2, C_ACCENT);
+    ctx.fillGradient(px, py, px + pw, py + 40, 0x1AFFFFFF, 0x00FFFFFF);
+    ctx.fill(px, py + ph - 1, px + pw, py + ph, 0x22FFFFFF);
+  }
+
+  private void drawHeader(GuiGraphicsExtractor ctx, net.minecraft.client.gui.Font font) {
+    ctx.fillGradient(px + 1, py + 1, px + pw - 1, py + HDR_H, C_HEADER, C_HEADER_GRADIENT);
+    ctx.text(font,
+        Component.literal("MetalRender Settings"),
+        px + 16, py + (HDR_H - 9) / 2 + 1, C_TEXT_PRI, false);
+    int vx = px + 16 + font.width("MetalRender Settings") + 8;
+    ctx.text(font, Component.literal("v0.1.7"),
+        vx, py + (HDR_H - 9) / 2 + 1, C_TEXT_SEC, false);
+  }
+
+  private void drawFooter(GuiGraphicsExtractor ctx, net.minecraft.client.gui.Font font) {
     int fy = py + ph - FOOT_H;
-    fr(ctx, px, fy, pw, 1, C_DIVIDER);
+    ctx.fill(px + 1, fy, px + pw - 1, fy + 1, C_DIVIDER);
     String gpu = MetalHardwareChecker.getDeviceName();
     if (gpu == null || gpu.isEmpty())
       gpu = "Unknown GPU";
     if (font.width(gpu) > pw / 2 - 20)
       gpu = gpu.substring(0, Math.min(gpu.length(), 30)) + "\u2026";
     ctx.text(font, Component.literal(gpu),
-        px + 12, fy + (FOOT_H - 9) / 2, C_TEXT_SEC, false);
-    super.extractRenderState(ctx, mx, my, delta);
+        px + 16, fy + (FOOT_H - 9) / 2, C_TEXT_SEC, false);
   }
 
   private void renderTabs(GuiGraphicsExtractor ctx, int mx, int my) {
     var font = getFont();
     int ty = py + HDR_H;
-    fr(ctx, px, ty, pw, TAB_H, C_TAB_BAR);
+    ctx.fill(px + 1, ty, px + pw - 1, ty + TAB_H, C_TAB_BAR);
     int tw = pw / TABS.length;
     for (int i = 0; i < TABS.length; i++) {
       int tx = px + i * tw;
       boolean sel = i == selectedTab;
       boolean hov = mx >= tx && mx < tx + tw && my >= ty && my < ty + TAB_H && !sel;
-      int bg = sel ? C_TAB_ACTIVE : (hov ? C_TAB_HOVER : C_TAB_BAR);
-      fr(ctx, tx + 2, ty + 2, tw - 4, TAB_H - 4, bg);
-      int tc = (sel || hov) ? C_TEXT_PRI : C_TEXT_SEC;
+
+      if (sel) {
+        ctx.fill(tx + 2, ty + 2, tx + tw - 2, ty + TAB_H - 2, C_CARD_ACTIVE);
+      } else if (hov) {
+        ctx.fill(tx + 2, ty + 2, tx + tw - 2, ty + TAB_H - 2, C_TAB_HOVER);
+      }
+
+      int tc = sel ? C_TEXT_PRI : (hov ? C_TEXT_ACCENT : C_TAB_TEXT);
       ctx.centeredText(font,
-          Component.literal(TABS[i]), tx + tw / 2, ty + (TAB_H - 9) / 2, tc);
+          Component.literal(TABS[i]), tx + tw / 2, ty + (TAB_H - 9) / 2 + 1, tc);
     }
-    fr(ctx, px, ty + TAB_H - 1, pw, 1, C_DIVIDER);
+
+    int targetX = px + selectedTab * tw + 2;
+    int targetW = tw - 4;
+    if (animTabX < 0) {
+      animTabX = targetX;
+      animTabW = targetW;
+    }
+    animTabX += (targetX - animTabX) * 0.25f;
+    animTabW += (targetW - animTabW) * 0.25f;
+    ctx.fill((int) animTabX, ty + TAB_H - 2, (int) (animTabX + animTabW), ty + TAB_H, C_ACCENT);
+
+    ctx.fill(px + 1, ty + TAB_H - 1, px + pw - 1, ty + TAB_H, C_DIVIDER);
   }
 
   private void renderRows(GuiGraphicsExtractor ctx, int mx, int my) {
-    int totalH = totalH();
-    maxScroll = Math.max(0, totalH - ch);
+    maxScroll = Math.max(0, totalH() - ch);
     scrollOffset = cl(scrollOffset, 0, maxScroll);
-    int y = cy - scrollOffset;
+    hoverRowIndex = -1;
+    int idx = 0;
     for (Row r : rows) {
-      r.renderY = y;
-      if (y + r.h() >= cy && y < cy + ch)
-        drawRow(ctx, r, y, mx, my);
-      y += r.h() + r.gap();
+      int screenX = cx + r.layoutX;
+      int screenY = cy - scrollOffset + r.layoutY;
+      r.renderY = screenY;
+      boolean visible = screenY + r.h() >= cy && screenY < cy + ch;
+      if (visible && my >= cy && my < cy + ch
+          && mx >= screenX && mx < screenX + r.layoutW
+          && my >= screenY && my < screenY + r.h()) {
+        hoverRowIndex = idx;
+      }
+      if (visible)
+        drawRow(ctx, r, screenX, screenY, r.layoutW, mx, my, idx == hoverRowIndex);
+      idx++;
     }
   }
 
-  private void drawRow(GuiGraphicsExtractor ctx, Row r, int y, int mx, int my) {
+  private void drawRow(GuiGraphicsExtractor ctx, Row r, int x, int y, int w, int mx, int my, boolean hovered) {
     var font = getFont();
     if (r.type == RT.SECTION) {
       ctx.text(font, Component.literal(r.label.toUpperCase()),
-          cx + 4, y + (SEC_H - 9) / 2 + 4, C_TEXT_SEC, false);
+          x + 4, y + (SEC_H - 9) / 2 + 5, C_TEXT_SEC, false);
+      ctx.fill(x + 4, y + SEC_H - 2, x + w - 4, y + SEC_H - 1, C_DIVIDER);
       return;
     }
-    boolean hov = mx >= cx && mx < cx + cw
-        && my >= y && my < y + r.h()
-        && my >= cy && my < cy + ch;
-    fr(ctx, cx, y, cw, CARD_H, hov ? C_CARD_HOVER : C_CARD);
+
+    fr(ctx, x, y, w, CARD_H, hovered ? C_CARD_HOVER : C_CARD);
 
     if (r.type == RT.TOGGLE && "Enabled".equals(r.value))
-      fr(ctx, cx, y, 3, CARD_H, C_TAB_ACTIVE);
+      fr(ctx, x, y, 3, CARD_H, C_VAL_ON);
+
+    if (hovered) {
+      ctx.fill(x + 3, y, x + w, y + CARD_H, 0x0DFFFFFF);
+    }
+
     ctx.text(font, Component.literal(r.label),
-        cx + 10, y + (CARD_H - 9) / 2, C_TEXT_PRI, false);
-    int rx = cx + cw - 8;
+        x + 14, y + (CARD_H - 9) / 2, C_TEXT_PRI, false);
+
+    int rx = x + w - 10;
     switch (r.type) {
       case TOGGLE -> {
         boolean on = "Enabled".equals(r.value);
         drawPill(ctx, rx - PILL_W, y + (CARD_H - PILL_H) / 2, on);
       }
       case CYCLE -> {
-        int vw = font.width(r.value) + 12;
-        fr(ctx, rx - vw, y + 8, vw, CARD_H - 16, C_TAB_ACTIVE);
+        int vw = font.width(r.value) + 16;
+        fr(ctx, rx - vw, y + 7, vw, CARD_H - 14, C_ACCENT);
         ctx.centeredText(font,
             Component.literal(r.value), rx - vw / 2, y + (CARD_H - 9) / 2, C_TEXT_PRI);
       }
@@ -277,14 +344,14 @@ public class MetalRenderSettingsScreen extends Screen {
         if (r.slider != null) {
           String sv = r.slider.getMessage().getString();
           ctx.text(font, Component.literal(sv),
-              rx - SLIDER_W - 6 - font.width(sv),
+              rx - SLIDER_W - 8 - font.width(sv),
               y + (CARD_H - 9) / 2, C_TEXT_ACCENT, false);
         }
       }
       default -> {
       }
     }
-    fr(ctx, cx + 8, y + CARD_H - 1, cw - 16, 1, C_DIVIDER);
+    ctx.fill(x + 12, y + CARD_H - 1, x + w - 12, y + CARD_H, C_DIVIDER);
   }
 
   private void drawPill(GuiGraphicsExtractor ctx, int x, int y, boolean on) {
@@ -295,24 +362,35 @@ public class MetalRenderSettingsScreen extends Screen {
     ctx.fill(kx + 1, y + 2, kx + PILL_H - 2, y + PILL_H - 2, 0xFFFFFFFF);
   }
 
-  private void renderScrollbar(GuiGraphicsExtractor ctx) {
+  private void drawScrollFades(GuiGraphicsExtractor ctx) {
     if (maxScroll <= 0)
       return;
-    int sbX = px + pw - 4;
+    ctx.fillGradient(cx, cy, cx + cw, cy + 10, C_PANEL, 0x001C1C22);
+    ctx.fillGradient(cx, cy + ch - 10, cx + cw, cy + ch, 0x001C1C22, C_PANEL);
+  }
+
+  private void renderScrollbar(GuiGraphicsExtractor ctx, int mx, int my) {
+    if (maxScroll <= 0)
+      return;
+    int sbX = px + pw - 8;
     int tot = totalH();
-    int thumbH = Math.max(16, (int) ((float) ch / tot * ch));
+    int thumbH = Math.max(18, (int) ((float) ch / tot * ch));
     int thumbY = cy + (int) ((float) scrollOffset / maxScroll * (ch - thumbH));
-    ctx.fill(sbX, cy, sbX + 3, cy + ch, 0xFF3A3A3C);
-    ctx.fill(sbX, thumbY, sbX + 3, thumbY + thumbH, C_SCROLLTHUMB);
+    boolean hov = mx >= sbX - 2 && mx <= sbX + 5 && my >= cy && my <= cy + ch;
+    int trackCol = hov ? 0xFF4A4A54 : 0xFF3A3A44;
+    ctx.fill(sbX, cy, sbX + 3, cy + ch, trackCol);
+    int col = (hov && mx >= sbX - 2 && my >= thumbY && my <= thumbY + thumbH) ? C_SCROLLTHUMB_HOVER : C_SCROLLTHUMB;
+    ctx.fill(sbX, thumbY, sbX + 3, thumbY + thumbH, col);
   }
 
   private void posSliders() {
     for (Row r : rows) {
       if (r.type != RT.SLIDER || r.slider == null)
         continue;
-      int ry = r.renderY;
-      boolean vis = ry >= cy && ry + CARD_H <= cy + ch;
-      r.slider.setPosition(cx + cw - 8 - SLIDER_W, ry + (CARD_H - SLIDER_H) / 2);
+      int screenX = cx + r.layoutX;
+      int screenY = cy - scrollOffset + r.layoutY;
+      boolean vis = screenY >= cy && screenY + CARD_H <= cy + ch;
+      r.slider.setPosition(screenX + r.layoutW - 8 - SLIDER_W, screenY + (CARD_H - SLIDER_H) / 2);
       r.slider.setWidth(SLIDER_W);
       r.slider.visible = vis;
       r.slider.active = vis;
@@ -339,8 +417,8 @@ public class MetalRenderSettingsScreen extends Screen {
       }
     }
 
-    int sbX = px + pw - 6;
-    if (mx >= sbX && mx <= sbX + 6 && my >= cy && my <= cy + ch) {
+    int sbX = px + pw - 8;
+    if (mx >= sbX - 2 && mx <= sbX + 5 && my >= cy && my <= cy + ch) {
       dragging = true;
       dragOriginY = (int) my;
       dragOriginOff = scrollOffset;
@@ -348,10 +426,11 @@ public class MetalRenderSettingsScreen extends Screen {
     }
 
     if (mx >= cx && mx < cx + cw && my >= cy && my < cy + ch) {
-      int y = cy - scrollOffset;
       for (Row r : rows) {
-        double lo = Math.max(y, cy), hi = Math.min(y + r.h(), cy + ch);
-        if (my >= lo && my < hi) {
+        int screenX = cx + r.layoutX;
+        int screenY = cy - scrollOffset + r.layoutY;
+        if (mx >= screenX && mx < screenX + r.layoutW
+            && my >= screenY && my < screenY + r.h()) {
           if ((r.type == RT.TOGGLE || r.type == RT.CYCLE) && r.action != null) {
             r.action.run();
             rebuild();
@@ -363,7 +442,6 @@ public class MetalRenderSettingsScreen extends Screen {
             return true;
           }
         }
-        y += r.h() + r.gap();
       }
     }
     return super.mouseClicked(click, bl);
@@ -450,9 +528,9 @@ public class MetalRenderSettingsScreen extends Screen {
   private void rebuild() {
     clearWidgets();
     rows.clear();
-    int bw = 64, bh = 20;
+    int bw = 70, bh = 20;
     addRenderableWidget(Button.builder(Component.literal("Done"), b -> onClose())
-        .bounds(px + pw - bw - 10, py + (HDR_H - bh) / 2, bw, bh).build());
+        .bounds(px + pw - bw - 12, py + (HDR_H - bh) / 2 + 1, bw, bh).build());
     switch (selectedTab) {
       case 0 -> buildVideo();
       case 1 -> buildMetal();
@@ -460,9 +538,50 @@ public class MetalRenderSettingsScreen extends Screen {
       case 3 -> buildPerformance();
       case 4 -> buildAdvanced();
     }
+    computeLayout();
     for (Row r : rows)
       if (r.type == RT.SLIDER && r.slider != null)
         addRenderableWidget(r.slider);
+  }
+
+  private void computeLayout() {
+    int col = 0;
+    int colWidth = (cw - CARD_GAP) / 2;
+    int y = 0;
+    Row lastRow = null;
+    for (Row r : rows) {
+      if (r.type == RT.SECTION) {
+        if (col == 1 && lastRow != null) {
+          lastRow.layoutX = 0;
+          lastRow.layoutY = y;
+          lastRow.layoutW = cw;
+          y += CARD_H + CARD_GAP;
+          col = 0;
+        }
+        r.layoutX = 0;
+        r.layoutY = y;
+        r.layoutW = cw;
+        y += SEC_H;
+        col = 0;
+      } else {
+        r.layoutX = col == 0 ? 0 : colWidth + CARD_GAP;
+        r.layoutY = y;
+        r.layoutW = colWidth;
+        if (col == 0) {
+          col = 1;
+        } else {
+          col = 0;
+          y += CARD_H + CARD_GAP;
+        }
+      }
+      lastRow = r;
+    }
+    if (col == 1 && lastRow != null) {
+      lastRow.layoutX = 0;
+      lastRow.layoutW = cw;
+      y += CARD_H + CARD_GAP;
+    }
+    totalContentHeight = y;
   }
 
   private void buildVideo() {
@@ -508,13 +627,46 @@ public class MetalRenderSettingsScreen extends Screen {
   }
 
   private void buildQuality() {
-    sec("Rendering Style");
-    cyc("Leaves Mode", config.leafCullingMode == 0 ? "Fast" : "Fancy",
-        () -> config.leafCullingMode = config.leafCullingMode == 0 ? 1 : 0);
-    sec("Biome Blending");
+    Options o = Minecraft.getInstance().options;
 
-    sld("Biome Blend", 0, 10, 1, config.biomeTransitionDetail,
-        v -> config.biomeTransitionDetail = (int) (float) v);
+    sec("World");
+    vanilla("Ambient Occlusion", o.ambientOcclusion());
+    sld("Biome Blend", 0, 7, 1, o.biomeBlendRadius().get(),
+        v -> o.biomeBlendRadius().set((int) (float) v));
+    cyc("Leaves Quality",
+        config.leafCullingMode == 0 ? "Fast" : "Fancy",
+        () -> config.leafCullingMode = (config.leafCullingMode == 0) ? 1 : 0);
+
+    sec("Atmosphere");
+    vanilla("Clouds", o.cloudStatus());
+    sld("Cloud Distance", 2, 128, 2, o.cloudRange().get(),
+        v -> o.cloudRange().set((int) (float) v));
+    sld("Weather Radius", 3, 10, 1, o.weatherRadius().get(),
+        v -> o.weatherRadius().set((int) (float) v));
+
+    sec("Entities & Effects");
+    vanilla("Particles", o.particles());
+    vanilla("Entity Shadows", o.entityShadows());
+    sld("Entity Distance", 50, 500, 25,
+        Math.round(o.entityDistanceScaling().get().floatValue() * 100f),
+        v -> o.entityDistanceScaling().set(v / 100.0));
+    vanilla("Vignette", o.vignette());
+    sld("Chunk Fade", 0, 2000, 50,
+        (int) (o.chunkSectionFadeInTime().get() * 1000.0),
+        v -> o.chunkSectionFadeInTime().set(v / 1000.0));
+
+    sec("Textures");
+    sld("Mipmap Levels", 0, 4, 1, o.mipmapLevels().get(),
+        v -> o.mipmapLevels().set((int) (float) v));
+    vanilla("Improved Transparency", o.improvedTransparency());
+    vanilla("Texture Filtering", o.textureFiltering());
+    sld("Anisotropy", 0, 3, 1, o.maxAnisotropyBit().get(),
+        v -> o.maxAnisotropyBit().set((int) (float) v));
+
+    sec("Sodium Extras");
+    tog("Hidden Fluid Culling", config.hiddenFluidCulling, v -> config.hiddenFluidCulling = v);
+    tog("Improved Fluid Shaping", config.improvedFluidShaping, v -> config.improvedFluidShaping = v);
+    tog("Closest Point Entity Sort", config.closestPointEntitySort, v -> config.closestPointEntitySort = v);
   }
 
   private void buildPerformance() {
@@ -614,15 +766,13 @@ public class MetalRenderSettingsScreen extends Screen {
     return Component.translatable("options.framerate", fpsLimit);
   }
 
+  @SuppressWarnings("unused")
   private static String fmtPx(float value) {
     return String.format(java.util.Locale.ROOT, "%.1f", value);
   }
 
   private int totalH() {
-    int h = 0;
-    for (Row r : rows)
-      h += r.h() + r.gap();
-    return h;
+    return totalContentHeight;
   }
 
   private String fmtV(OptionInstance<?> opt) {
@@ -644,10 +794,25 @@ public class MetalRenderSettingsScreen extends Screen {
     Object v = opt.get();
     if (v instanceof Boolean b)
       opt.set(!b);
+    else if (v instanceof Enum<?> e) {
+      @SuppressWarnings("unchecked")
+      Enum<?>[] vals = e.getDeclaringClass().getEnumConstants();
+      if (vals != null) {
+        int next = (e.ordinal() + 1) % vals.length;
+        opt.set(vals[next]);
+      }
+    }
   }
 
   private static void fr(GuiGraphicsExtractor ctx, int x, int y, int w, int h, int col) {
     ctx.fill(x, y, x + w, y + h, col);
+  }
+
+  private static void drawRectOutline(GuiGraphicsExtractor ctx, int x, int y, int w, int h, int col) {
+    ctx.fill(x, y, x + w, y + 1, col);
+    ctx.fill(x, y + h - 1, x + w, y + h, col);
+    ctx.fill(x, y, x + 1, y + h, col);
+    ctx.fill(x + w - 1, y, x + w, y + h, col);
   }
 
   private static int cl(int v, int lo, int hi) {
