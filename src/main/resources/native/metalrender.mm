@@ -2442,9 +2442,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBatch(
       icbCandidateCount++;
     }
     bool canICB =
-        (g_icbCapable && icbCandidateCount > 0 &&
-         g_pipelineInhouseICB && g_fragArgBuf && g_fragArgEncoder &&
-         g_blockAtlas && g_lightmap);
+        (g_icbCapable && icbCandidateCount > 0 && g_pipelineInhouseICB &&
+         g_fragArgBuf && g_fragArgEncoder && g_blockAtlas && g_lightmap);
     if (canICB) {
       [g_currentEncoder setRenderPipelineState:g_pipelineInhouseICB];
       g_currentPipeline = g_pipelineInhouseICB;
@@ -3511,9 +3510,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           visibleFacingMaskForAabb(s_cmds[i].ox, s_cmds[i].oy, s_cmds[i].oz));
     }
     bool canICB =
-        (g_icbCapable && icbCandidateCount > 0 &&
-         g_pipelineInhouseICB && g_fragArgBuf && g_fragArgEncoder &&
-         g_blockAtlas && g_lightmap);
+        (g_icbCapable && icbCandidateCount > 0 && g_pipelineInhouseICB &&
+         g_fragArgBuf && g_fragArgEncoder && g_blockAtlas && g_lightmap);
     bool useOpaqueICB = canICB && g_pipelineInhouseICBOpaque &&
                         g_fragArgBufOpaque && g_fragArgEncoderOpaque;
     bool useOpaque = g_pipelineInhouseOpaque != nil;
@@ -3886,7 +3884,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetCurrentFrameCon
           [hizEnc setTexture:g_hizPyramid atIndex:1];
           hizUpdateThreadgroupSize(srcDepth);
           [hizEnc dispatchThreadgroups:g_hizGroups
-                   threadsPerThreadgroup:g_hizThreads];
+                 threadsPerThreadgroup:g_hizThreads];
         }
         [hizEnc endEncoding];
       }
@@ -4125,7 +4123,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
           [hizEnc setTexture:g_hizPyramid atIndex:1];
           hizUpdateThreadgroupSize(srcDepth);
           [hizEnc dispatchThreadgroups:g_hizGroups
-                   threadsPerThreadgroup:g_hizThreads];
+                 threadsPerThreadgroup:g_hizThreads];
         }
         [hizEnc endEncoding];
       }
@@ -5266,14 +5264,14 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawDeferredWaterP
                                 length:sizeof(g_entityOverlayParams)
                                atIndex:5];
     [g_currentEncoder setDepthStencilState:g_depthStateNoWrite];
-    [g_currentEncoder setCullMode:MTLCullModeNone];    [g_currentEncoder setDepthBias:0.0f slopeScale:0.0f clamp:0.0f];
+    [g_currentEncoder setCullMode:MTLCullModeNone];
+    [g_currentEncoder setDepthBias:0.0f slopeScale:0.0f clamp:0.0f];
     if (g_deferredWaterCmdCount > 1) {
-      std::stable_sort(g_deferredWaterCmds,
-                       g_deferredWaterCmds + g_deferredWaterCmdCount,
-                       [](const DeferredWaterCmd &a,
-                          const DeferredWaterCmd &b) {
-                         return a.distSq > b.distSq;
-                       });
+      std::stable_sort(
+          g_deferredWaterCmds, g_deferredWaterCmds + g_deferredWaterCmdCount,
+          [](const DeferredWaterCmd &a, const DeferredWaterCmd &b) {
+            return a.distSq > b.distSq;
+          });
     }
     int waterDraws = 0;
     for (int i = 0; i < g_deferredWaterCmdCount; i++) {
@@ -5358,7 +5356,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawOITPass(
           [hizEnc setTexture:g_hizPyramid atIndex:1];
           hizUpdateThreadgroupSize(srcDepth);
           [hizEnc dispatchThreadgroups:g_hizGroups
-                   threadsPerThreadgroup:g_hizThreads];
+                 threadsPerThreadgroup:g_hizThreads];
         }
         [hizEnc endEncoding];
       }
