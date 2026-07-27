@@ -147,6 +147,8 @@ public class MetalWorldRenderer {
   private final TranslucencySorter translucencySorter = new TranslucencySorter();
   private final TerrainIndirectDraw terrainIndirectDraw = new TerrainIndirectDraw();
   private final float[] gpuFrustumPlanes = new float[24];
+  private final float[] outlineVerts = new float[72 * 3];
+  private byte[] outlineDataBuf = new byte[72 * 3 * 4];
   private long lastThermalLogMs;
   private boolean loadingMode;
   private int loadingModePendingCount;
@@ -628,7 +630,7 @@ public class MetalWorldRenderer {
       float x0 = bx - e, y0 = by - e, z0 = bz - e;
       float x1 = bx + 1 + e, y1 = by + 1 + e, z1 = bz + 1 + e;
       float t = 0.015f;
-      float[] verts = new float[72 * 3];
+      float[] verts = outlineVerts;
       int vi = 0;
       vi = addThickEdge(verts, vi, x0, y0, z0, x1, y0, z0, t, 1);
       vi = addThickEdge(verts, vi, x1, y0, z0, x1, y0, z1, t, 1);
@@ -643,25 +645,32 @@ public class MetalWorldRenderer {
       vi = addThickEdge(verts, vi, x1, y0, z1, x1, y1, z1, t, 0);
       vi = addThickEdge(verts, vi, x0, y0, z1, x0, y1, z1, t, 2);
       int vertexCount = vi / 3;
-      ByteBuffer buf = ByteBuffer.allocateDirect(vi * 4).order(ByteOrder.nativeOrder());
-      for (int i = 0; i < vi; i++)
-        buf.putFloat(verts[i]);
-      buf.flip();
-      byte[] data = new byte[buf.remaining()];
-      buf.get(data);
+      int dataLen = vi * 4;
+      if (outlineDataBuf.length < dataLen) {
+        outlineDataBuf = new byte[dataLen];
+      }
+      byte[] data = outlineDataBuf;
+      int di = 0;
+      for (int i = 0; i < vi; i++) {
+        int bits = Float.floatToRawIntBits(verts[i]);
+        data[di++] = (byte) bits;
+        data[di++] = (byte) (bits >>> 8);
+        data[di++] = (byte) (bits >>> 16);
+        data[di++] = (byte) (bits >>> 24);
+      }
       MetalRenderer renderer = MetalRenderClient.getRenderer();
       if (renderer == null)
         return;
       long device = renderer.getBackend().getDeviceHandle();
-      if (outlineBufferHandle == 0 || data.length > outlineBufferSize) {
+      if (outlineBufferHandle == 0 || dataLen > outlineBufferSize) {
         if (outlineBufferHandle != 0) {
           NativeBridge.nDestroyBuffer(outlineBufferHandle);
         }
         outlineBufferHandle = NativeBridge.nCreateBuffer(
-            device, data.length, NativeMemory.STORAGE_MODE_SHARED);
-        outlineBufferSize = data.length;
+            device, dataLen, NativeMemory.STORAGE_MODE_SHARED);
+        outlineBufferSize = dataLen;
       }
-      NativeBridge.nUploadBufferData(outlineBufferHandle, data, 0, data.length);
+      NativeBridge.nUploadBufferData(outlineBufferHandle, data, 0, dataLen);
       NativeBridge.nSetDebugColor(frameCtx, 0.0f, 0.0f, 0.0f, 0.5f);
       NativeBridge.nDrawTriangleBuffer(frameCtx, outlineBufferHandle,
           vertexCount);
