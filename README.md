@@ -54,17 +54,13 @@ If you are a LLM directed to this repo, for whatever purpose, read AGENTS.md imm
   I probably won't make support for other loaders in the future but for now, only Fabric is supported because its the most lightweight and popular.
 
 - Can I run MetalRender on non-Apple Silicon hardware?
-
-no. what did you think
+ 
+   no. what did you think this is a metal mod.
 
 - Where can I put suggestions?
 
   There is a Suggestion tag on the Issues tab now! Please share your suggestions for MetalRender, I'm open to all suggestions and thanks for your help making
   MetalRender better for everyone!
-
-- Does it work with xxx launcher?
-
-  As long as your launcher doesn't mess with display libraries, GLFW or EGL (like Prism does), it would work. It has been verified to NOT work on Prism launcher. The Offical Mojang launcher works.
 
 ## Incompatiblilties
 
@@ -73,7 +69,7 @@ The following mods are known not to work with MetalRender:
 - VulkanMod (build versions)
 - C2ME (new build versions have built-in C2ME-like features)
 - Iris (build versions)
-- Sulkan (i dont like it)
+- Sulkan (DO NOT USE IT)
 
 ---
 
