@@ -28,6 +28,7 @@
 static FILE *g_debugFile = nullptr;
 static void dbg(const char *fmt, ...) __attribute__((format(printf, 1, 2)));
 static void dbg(const char *fmt, ...) {
+#ifdef METALRENDER_DEBUG
   if (!g_debugFile) {
     g_debugFile = fopen("/tmp/metalrender_debug.log", "w");
     if (!g_debugFile)
@@ -42,6 +43,9 @@ static void dbg(const char *fmt, ...) {
     fflush(g_debugFile);
     s_dbgFlushCounter = 0;
   }
+#else
+  (void)fmt;
+#endif
 }
 static mach_timebase_info_data_t g_cachedTimebase = {0, 0};
 static void ensureTimebase() {
@@ -121,7 +125,8 @@ struct DeferredDeletion {
 };
 static std::vector<DeferredDeletion> g_deferredDeletions;
 static std::mutex g_deferredMutex;
-static const int DEFERRED_FRAME_DELAY = 10;
+static constexpr int kTripleBufferCount = 3;
+static const int DEFERRED_FRAME_DELAY = kTripleBufferCount + 1;
 static std::atomic<bool> g_gpuNeedsRecovery{false};
 static inline bool isMegaHandle(uint64_t h) {
   return (h & 0x8000000000000000ULL) != 0;
@@ -311,7 +316,22 @@ static id<MTLComputePipelineState> g_cullEncodePipeline = nil;
 static id<MTLComputePipelineState> g_resetCullPipeline = nil;
 static id<MTLTexture> g_hizPyramid = nil;
 static id<MTLTexture> g_hizFallbackTexture = nil;
+static MTLSize g_hizThreads = {16, 16, 1};
+static MTLSize g_hizGroups = {0, 0, 0};
+static int g_hizCachedW = 0;
+static int g_hizCachedH = 0;
+static NSUInteger g_cullMaxTG = 0;
 static uint32_t g_hizMipCount = 0;
+
+static inline void hizUpdateThreadgroupSize(id<MTLTexture> srcDepth) {
+  int w = (int)srcDepth.width;
+  int h = (int)srcDepth.height;
+  if (w != g_hizCachedW || h != g_hizCachedH) {
+    g_hizCachedW = w;
+    g_hizCachedH = h;
+    g_hizGroups = MTLSizeMake((w + 15) / 16, (h + 15) / 16, 1);
+  }
+}
 static int g_hizWidth = 0;
 static int g_hizHeight = 0;
 static id<MTLBuffer> g_hizReadbackBuf = nil;
@@ -332,10 +352,10 @@ static id<MTLBuffer> g_visibleIndicesBuffer = nil;
 static uint32_t g_maxGPUDrawCalls = 65536;
 uint32_t g_gpuSubChunkCount = 0;
 static bool g_gpuDrivenEnabled = false;
+static bool g_icbCapable = false;
 static id<MTLSharedEvent> g_frameEvent = nil;
 static MTLSharedEventListener *g_eventListener = nil;
 static uint64_t g_eventCounter = 0;
-static constexpr int kTripleBufferCount = 3;
 id<MTLBuffer> g_tripleBuffers[kTripleBufferCount] = {};
 
 static id<MTLBuffer> g_meshletBuffers[kTripleBufferCount] = {};
@@ -1221,6 +1241,7 @@ fragment float4 fragment_particle(
           NSUInteger argBufLen = [g_fragArgEncoder encodedLength];
           g_fragArgBuf = [g_device newBufferWithLength:argBufLen
                                                options:MTLStorageModeShared];
+          g_icbCapable = true;
           dbg("Fragment arg buffer: %zu bytes\n", (size_t)argBufLen);
         }
       }
@@ -2421,7 +2442,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBatch(
       icbCandidateCount++;
     }
     bool canICB =
-        (g_gpuDrivenEnabled && g_useArgumentBuffers && icbCandidateCount > 0 &&
+        (g_icbCapable && icbCandidateCount > 0 &&
          g_pipelineInhouseICB && g_fragArgBuf && g_fragArgEncoder &&
          g_blockAtlas && g_lightmap);
     if (canICB) {
@@ -3490,7 +3511,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           visibleFacingMaskForAabb(s_cmds[i].ox, s_cmds[i].oy, s_cmds[i].oz));
     }
     bool canICB =
-        (g_gpuDrivenEnabled && g_useArgumentBuffers && icbCandidateCount > 0 &&
+        (g_icbCapable && icbCandidateCount > 0 &&
          g_pipelineInhouseICB && g_fragArgBuf && g_fragArgEncoder &&
          g_blockAtlas && g_lightmap);
     bool useOpaqueICB = canICB && g_pipelineInhouseICBOpaque &&
@@ -3613,6 +3634,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           [g_currentEncoder setFragmentTexture:g_blockAtlas atIndex:0];
         }
       }
+      if (g_megaVB) {
+        [g_currentEncoder setVertexBuffer:g_megaVB offset:0 atIndex:0];
+      }
+      bool lastVB0Mega = (g_megaVB != nil);
       for (int i = 0; i < validCount; i++) {
         int opaqueIdx = s_cmds[i].opaqueIdxCount;
         if (__builtin_expect(opaqueIdx <= 0, 0))
@@ -3621,6 +3646,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
             visibleFacingMaskForAabb(s_cmds[i].ox, s_cmds[i].oy, s_cmds[i].oz);
         int baseQuad = 0;
         if (__builtin_expect(s_cmds[i].isMega, 1)) {
+          if (__builtin_expect(!lastVB0Mega, 0)) {
+            [g_currentEncoder setVertexBuffer:g_megaVB offset:0 atIndex:0];
+            lastVB0Mega = true;
+          }
           for (int face = 0; face < 7; face++) {
             int quadCount = s_cmds[i].opaqueFaceCounts[face];
             if (quadCount <= 0) {
@@ -3645,11 +3674,11 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
             g_drawCallCount++;
           }
         } else {
-
           if (__builtin_expect(s_cmds[i].resolvedBuf != nil, 1)) {
             [g_currentEncoder setVertexBuffer:s_cmds[i].resolvedBuf
                                        offset:0
                                       atIndex:0];
+            lastVB0Mega = false;
             for (int face = 0; face < 7; face++) {
               int quadCount = s_cmds[i].opaqueFaceCounts[face];
               if (quadCount <= 0) {
@@ -3670,9 +3699,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
                            baseInstance:(NSUInteger)i];
               baseQuad += quadCount;
               g_drawCallCount++;
-            }
-            if (g_megaVB) {
-              [g_currentEncoder setVertexBuffer:g_megaVB offset:0 atIndex:0];
             }
           }
         }
@@ -3858,10 +3884,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetCurrentFrameCon
         if (srcDepth) {
           [hizEnc setTexture:srcDepth atIndex:0];
           [hizEnc setTexture:g_hizPyramid atIndex:1];
-          MTLSize threads = MTLSizeMake(16, 16, 1);
-          MTLSize groups = MTLSizeMake((srcDepth.width + 15) / 16,
-                                       (srcDepth.height + 15) / 16, 1);
-          [hizEnc dispatchThreadgroups:groups threadsPerThreadgroup:threads];
+          hizUpdateThreadgroupSize(srcDepth);
+          [hizEnc dispatchThreadgroups:g_hizGroups
+                   threadsPerThreadgroup:g_hizThreads];
         }
         [hizEnc endEncoding];
       }
@@ -4098,10 +4123,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
         if (srcDepth) {
           [hizEnc setTexture:srcDepth atIndex:0];
           [hizEnc setTexture:g_hizPyramid atIndex:1];
-          MTLSize threads = MTLSizeMake(16, 16, 1);
-          MTLSize groups = MTLSizeMake((srcDepth.width + 15) / 16,
-                                       (srcDepth.height + 15) / 16, 1);
-          [hizEnc dispatchThreadgroups:groups threadsPerThreadgroup:threads];
+          hizUpdateThreadgroupSize(srcDepth);
+          [hizEnc dispatchThreadgroups:g_hizGroups
+                   threadsPerThreadgroup:g_hizThreads];
         }
         [hizEnc endEncoding];
       }
@@ -4971,9 +4995,11 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetGPUDrivenEnable
     JNIEnv *, jclass, jlong handle, jboolean enabled) {
   (void)handle;
   MetalFeatureCaps caps = current_feature_caps();
-  g_gpuDrivenEnabled = (enabled == JNI_TRUE) && caps.indirectCommandBuffers;
-  dbg("GPU-driven rendering: %s\n",
-      g_gpuDrivenEnabled ? "enabled" : "disabled");
+  if (caps.indirectCommandBuffers && caps.argumentBuffers)
+    g_icbCapable = true;
+  g_gpuDrivenEnabled = g_icbCapable && (enabled != JNI_FALSE);
+  dbg("GPU-driven rendering: %s (icbCapable=%d)\n",
+      g_gpuDrivenEnabled ? "enabled" : "disabled", g_icbCapable ? 1 : 0);
 }
 static int g_cullMode = 0;
 extern "C" JNIEXPORT jint JNICALL
@@ -5039,10 +5065,11 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRunGPUCulling(
       [encoder setBuffer:cameraBuf offset:0 atIndex:4];
       [encoder setTexture:hizTex atIndex:0];
       NSUInteger threadCount = (NSUInteger)count;
-      NSUInteger maxTG =
-          (NSUInteger)g_cullEncodePipeline.maxTotalThreadsPerThreadgroup;
+      if (g_cullMaxTG == 0)
+        g_cullMaxTG =
+            (NSUInteger)g_cullEncodePipeline.maxTotalThreadsPerThreadgroup;
       NSUInteger tgSize =
-          std::min(threadCount, std::min(maxTG, (NSUInteger)256));
+          std::min(threadCount, std::min(g_cullMaxTG, (NSUInteger)256));
       [encoder dispatchThreads:MTLSizeMake(threadCount, 1, 1)
           threadsPerThreadgroup:MTLSizeMake(tgSize, 1, 1)];
       [encoder endEncoding];
@@ -5239,9 +5266,15 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawDeferredWaterP
                                 length:sizeof(g_entityOverlayParams)
                                atIndex:5];
     [g_currentEncoder setDepthStencilState:g_depthStateNoWrite];
-    [g_currentEncoder setCullMode:MTLCullModeNone];
-    [g_currentEncoder setDepthBias:0.0f slopeScale:0.0f clamp:0.0f];
-
+    [g_currentEncoder setCullMode:MTLCullModeNone];    [g_currentEncoder setDepthBias:0.0f slopeScale:0.0f clamp:0.0f];
+    if (g_deferredWaterCmdCount > 1) {
+      std::stable_sort(g_deferredWaterCmds,
+                       g_deferredWaterCmds + g_deferredWaterCmdCount,
+                       [](const DeferredWaterCmd &a,
+                          const DeferredWaterCmd &b) {
+                         return a.distSq > b.distSq;
+                       });
+    }
     int waterDraws = 0;
     for (int i = 0; i < g_deferredWaterCmdCount; i++) {
       const DeferredWaterCmd &cmd = g_deferredWaterCmds[i];
@@ -5323,10 +5356,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawOITPass(
         if (srcDepth) {
           [hizEnc setTexture:srcDepth atIndex:0];
           [hizEnc setTexture:g_hizPyramid atIndex:1];
-          MTLSize threads = MTLSizeMake(16, 16, 1);
-          MTLSize groups = MTLSizeMake((srcDepth.width + 15) / 16,
-                                       (srcDepth.height + 15) / 16, 1);
-          [hizEnc dispatchThreadgroups:groups threadsPerThreadgroup:threads];
+          hizUpdateThreadgroupSize(srcDepth);
+          [hizEnc dispatchThreadgroups:g_hizGroups
+                   threadsPerThreadgroup:g_hizThreads];
         }
         [hizEnc endEncoding];
       }
