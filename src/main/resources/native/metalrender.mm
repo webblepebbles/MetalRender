@@ -207,8 +207,7 @@ static void megaFree(uint64_t handle) {
   for (const MegaSubAlloc &freeBlock : g_megaFreeList) {
     freeBytes += freeBlock.size;
   }
-  if (g_megaFreeList.size() > 64 ||
-      freeBytes > (MEGA_VB_CAPACITY / 5)) {
+  if (g_megaFreeList.size() > 64 || freeBytes > (MEGA_VB_CAPACITY / 5)) {
     megaTrimFreeTail();
   }
 }
@@ -463,8 +462,7 @@ static inline int opaqueBucketStartQuad(const int counts[7], int bucket) {
   return start;
 }
 
-static inline int visibleOpaqueBucketCount(const int counts[7],
-                                           uint32_t mask) {
+static inline int visibleOpaqueBucketCount(const int counts[7], uint32_t mask) {
   int total = 0;
   for (int i = 0; i < 7; i++) {
     if ((mask & (1u << i)) != 0 && counts[i] > 0)
@@ -1221,9 +1219,8 @@ fragment float4 fragment_particle(
         g_fragArgEncoder = [fragIcbFn newArgumentEncoderWithBufferIndex:0];
         if (g_fragArgEncoder) {
           NSUInteger argBufLen = [g_fragArgEncoder encodedLength];
-          g_fragArgBuf =
-              [g_device newBufferWithLength:argBufLen
-                                    options:MTLStorageModeShared];
+          g_fragArgBuf = [g_device newBufferWithLength:argBufLen
+                                               options:MTLStorageModeShared];
           dbg("Fragment arg buffer: %zu bytes\n", (size_t)argBufLen);
         }
       }
@@ -1501,26 +1498,22 @@ fragment float4 fragment_particle(
   }
   for (int i = 0; i < kTripleBufferCount; i++) {
     if (!g_tripleBuffers[i]) {
-      g_tripleBuffers[i] =
-          [g_device newBufferWithLength:512
-                                options:MTLStorageModeShared];
+      g_tripleBuffers[i] = [g_device newBufferWithLength:512
+                                                 options:MTLStorageModeShared];
     }
   }
   if (!g_cullDrawCountBuffer) {
-    g_cullDrawCountBuffer =
-        [g_device newBufferWithLength:sizeof(uint32_t)
-                              options:MTLStorageModeShared];
+    g_cullDrawCountBuffer = [g_device newBufferWithLength:sizeof(uint32_t)
+                                                  options:MTLStorageModeShared];
   }
   if (!g_cullStatsBuffer) {
-    g_cullStatsBuffer =
-        [g_device newBufferWithLength:sizeof(uint32_t) * 8
-                              options:MTLStorageModeShared];
+    g_cullStatsBuffer = [g_device newBufferWithLength:sizeof(uint32_t) * 8
+                                              options:MTLStorageModeShared];
   }
   if (!g_cullDrawArgsBuffer) {
     size_t argsSize = g_maxGPUDrawCalls * sizeof(uint32_t);
-    g_cullDrawArgsBuffer =
-        [g_device newBufferWithLength:argsSize
-                              options:MTLStorageModeShared];
+    g_cullDrawArgsBuffer = [g_device newBufferWithLength:argsSize
+                                                 options:MTLStorageModeShared];
   }
   if (!g_visibleIndicesBuffer) {
     g_visibleIndicesBuffer =
@@ -1771,9 +1764,8 @@ static void ensure_offscreen() {
   if (!g_depthReadBuffer || g_depthReadBuffer.length < depthBufSize) {
     if (g_depthReadBuffer)
       [g_depthReadBuffer release];
-    g_depthReadBuffer =
-        [g_device newBufferWithLength:depthBufSize
-                              options:MTLStorageModeShared];
+    g_depthReadBuffer = [g_device newBufferWithLength:depthBufSize
+                                              options:MTLStorageModeShared];
   }
 }
 extern "C" JNIEXPORT jboolean JNICALL
@@ -1975,9 +1967,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MetalBackend_createVertexBuffer(
   jlong cap = env->GetDirectBufferCapacity(data);
   if (!ptr || cap < size)
     return 0;
-  id<MTLBuffer> buf =
-      [g_device newBufferWithLength:(size_t)size
-                            options:MTLStorageModeShared];
+  id<MTLBuffer> buf = [g_device newBufferWithLength:(size_t)size
+                                            options:MTLStorageModeShared];
   memcpy([buf contents], ptr, (size_t)size);
   uint64_t h = store_buffer(buf);
   return (jlong)h;
@@ -1993,9 +1984,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MetalBackend_createIndexBuffer(
   jlong cap = env->GetDirectBufferCapacity(data);
   if (!ptr || cap < size)
     return 0;
-  id<MTLBuffer> buf =
-      [g_device newBufferWithLength:(size_t)size
-                            options:MTLStorageModeShared];
+  id<MTLBuffer> buf = [g_device newBufferWithLength:(size_t)size
+                                            options:MTLStorageModeShared];
   memcpy([buf contents], ptr, (size_t)size);
   uint64_t h = store_buffer(buf);
   return (jlong)h;
@@ -2031,9 +2021,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateBufferWithHi
       return (jlong)megaH;
     }
   }
-  id<MTLBuffer> buf =
-      [g_device newBufferWithLength:(size_t)sizeBytes
-                            options:MTLStorageModeShared];
+  id<MTLBuffer> buf = [g_device newBufferWithLength:(size_t)sizeBytes
+                                            options:MTLStorageModeShared];
   return (jlong)store_buffer(buf);
 }
 
@@ -2051,9 +2040,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateBuffer(
       return (jlong)megaH;
     }
   }
-  id<MTLBuffer> buf =
-      [g_device newBufferWithLength:(size_t)sizeBytes
-                            options:MTLStorageModeShared];
+  id<MTLBuffer> buf = [g_device newBufferWithLength:(size_t)sizeBytes
+                                            options:MTLStorageModeShared];
   return (jlong)store_buffer(buf);
 }
 extern "C" JNIEXPORT void JNICALL
@@ -2070,8 +2058,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUploadBufferData(
     if (bytes) {
       memcpy((uint8_t *)dst + offset, bytes, (size_t)length);
       if (megaGetAlloc(h, alloc)) {
-        [g_megaVB didModifyRange:NSMakeRange((NSUInteger)(alloc.offset + offset),
-                                             (NSUInteger)length)];
+        [g_megaVB
+            didModifyRange:NSMakeRange((NSUInteger)(alloc.offset + offset),
+                                       (NSUInteger)length)];
       }
       env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
     }
@@ -2157,7 +2146,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetChunkOffset(
   (void)frameContext;
   g_chunkOffsetX = x;
   g_chunkOffsetY = y;
-  g_chunkOffsetZ = z;    if (g_currentEncoder) {
+  g_chunkOffsetZ = z;
+  if (g_currentEncoder) {
     float offset[4] = {x, y, z, 0.0f};
     [g_currentEncoder setVertexBytes:offset length:sizeof(offset) atIndex:4];
   }
@@ -2255,9 +2245,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBatch(
       g_batchOffsetCap = offsetBufSize * 2;
       if (g_batchOffsetBuf)
         [g_batchOffsetBuf release];
-      g_batchOffsetBuf =
-          [g_device newBufferWithLength:g_batchOffsetCap
-                                options:MTLStorageModeShared];
+      g_batchOffsetBuf = [g_device newBufferWithLength:g_batchOffsetCap
+                                               options:MTLStorageModeShared];
     }
     float *offBuf = (float *)[g_batchOffsetBuf contents];
     struct DrawCmd {
@@ -2464,8 +2453,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBatch(
         g_icb[g_renderSlot] = [g_device
             newIndirectCommandBufferWithDescriptor:desc
                                    maxCommandCount:newSize
-                                           options:
-                                               MTLStorageModeShared];
+                                           options:MTLStorageModeShared];
         [desc release];
         g_icbMaxCommands[g_renderSlot] = newSize;
         dbg("ICB created: slot=%d maxCommands=%lu\n", g_renderSlot,
@@ -3548,8 +3536,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         g_icb[g_renderSlot] = [g_device
             newIndirectCommandBufferWithDescriptor:desc
                                    maxCommandCount:newSize
-                                           options:
-                                               MTLStorageModeShared];
+                                           options:MTLStorageModeShared];
         [desc release];
         g_icbMaxCommands[g_renderSlot] = newSize;
       }
@@ -3567,8 +3554,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           if (__builtin_expect(s_cmds[i].resolvedBuf == nil, 0))
             continue;
         }
-        uint32_t faceMask = visibleFacingMaskForAabb(
-            s_cmds[i].ox, s_cmds[i].oy, s_cmds[i].oz);
+        uint32_t faceMask =
+            visibleFacingMaskForAabb(s_cmds[i].ox, s_cmds[i].oy, s_cmds[i].oz);
         int baseQuad = 0;
         for (int face = 0; face < 7; face++) {
           int quadCount = s_cmds[i].opaqueFaceCounts[face];
@@ -3585,7 +3572,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
             [icmd setVertexBuffer:s_cmds[i].resolvedBuf offset:0 atIndex:0];
           }
           NSInteger baseVertex =
-              (NSInteger)(s_cmds[i].isMega ? (s_cmds[i].megaOffset / VERTEX_STRIDE) : 0) +
+              (NSInteger)(s_cmds[i].isMega
+                              ? (s_cmds[i].megaOffset / VERTEX_STRIDE)
+                              : 0) +
               baseQuad * 4;
           [icmd drawIndexedPrimitives:MTLPrimitiveTypeTriangle
                            indexCount:(NSUInteger)(quadCount * 6)
@@ -3628,8 +3617,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         int opaqueIdx = s_cmds[i].opaqueIdxCount;
         if (__builtin_expect(opaqueIdx <= 0, 0))
           continue;
-        uint32_t faceMask = visibleFacingMaskForAabb(
-            s_cmds[i].ox, s_cmds[i].oy, s_cmds[i].oz);
+        uint32_t faceMask =
+            visibleFacingMaskForAabb(s_cmds[i].ox, s_cmds[i].oy, s_cmds[i].oz);
         int baseQuad = 0;
         if (__builtin_expect(s_cmds[i].isMega, 1)) {
           for (int face = 0; face < 7; face++) {
@@ -3670,14 +3659,15 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
                 baseQuad += quadCount;
                 continue;
               }
-              [g_currentEncoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
-                                           indexCount:(NSUInteger)(quadCount * 6)
-                                            indexType:MTLIndexTypeUInt32
-                                          indexBuffer:ib
-                                    indexBufferOffset:ibOffset
-                                        instanceCount:1
-                                           baseVertex:baseQuad * 4
-                                         baseInstance:(NSUInteger)i];
+              [g_currentEncoder
+                  drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                             indexCount:(NSUInteger)(quadCount * 6)
+                              indexType:MTLIndexTypeUInt32
+                            indexBuffer:ib
+                      indexBufferOffset:ibOffset
+                          instanceCount:1
+                             baseVertex:baseQuad * 4
+                           baseInstance:(NSUInteger)i];
               baseQuad += quadCount;
               g_drawCallCount++;
             }
@@ -3858,8 +3848,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetCurrentFrameCon
       [g_currentEncoder release];
       g_currentEncoder = nil;
     }
-    if (g_currentCmdBuffer && g_hizDownsamplePipeline && g_hizPyramid && !g_useMemorylessTargets) {
-      id<MTLComputeCommandEncoder> hizEnc = [g_currentCmdBuffer computeCommandEncoder];
+    if (g_currentCmdBuffer && g_hizDownsamplePipeline && g_hizPyramid &&
+        !g_useMemorylessTargets) {
+      id<MTLComputeCommandEncoder> hizEnc =
+          [g_currentCmdBuffer computeCommandEncoder];
       if (hizEnc) {
         [hizEnc setComputePipelineState:g_hizDownsamplePipeline];
         id<MTLTexture> srcDepth = g_depth;
@@ -3867,9 +3859,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetCurrentFrameCon
           [hizEnc setTexture:srcDepth atIndex:0];
           [hizEnc setTexture:g_hizPyramid atIndex:1];
           MTLSize threads = MTLSizeMake(16, 16, 1);
-          MTLSize groups = MTLSizeMake(
-              (srcDepth.width  + 15) / 16,
-              (srcDepth.height + 15) / 16, 1);
+          MTLSize groups = MTLSizeMake((srcDepth.width + 15) / 16,
+                                       (srcDepth.height + 15) / 16, 1);
           [hizEnc dispatchThreadgroups:groups threadsPerThreadgroup:threads];
         }
         [hizEnc endEncoding];
@@ -4097,8 +4088,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
       [g_currentEncoder release];
       g_currentEncoder = nil;
     }
-    if (g_currentCmdBuffer && g_hizDownsamplePipeline && g_hizPyramid && !g_useMemorylessTargets) {
-      id<MTLComputeCommandEncoder> hizEnc = [g_currentCmdBuffer computeCommandEncoder];
+    if (g_currentCmdBuffer && g_hizDownsamplePipeline && g_hizPyramid &&
+        !g_useMemorylessTargets) {
+      id<MTLComputeCommandEncoder> hizEnc =
+          [g_currentCmdBuffer computeCommandEncoder];
       if (hizEnc) {
         [hizEnc setComputePipelineState:g_hizDownsamplePipeline];
         id<MTLTexture> srcDepth = g_depth;
@@ -4106,9 +4099,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
           [hizEnc setTexture:srcDepth atIndex:0];
           [hizEnc setTexture:g_hizPyramid atIndex:1];
           MTLSize threads = MTLSizeMake(16, 16, 1);
-          MTLSize groups = MTLSizeMake(
-              (srcDepth.width  + 15) / 16,
-              (srcDepth.height + 15) / 16, 1);
+          MTLSize groups = MTLSizeMake((srcDepth.width + 15) / 16,
+                                       (srcDepth.height + 15) / 16, 1);
           [hizEnc dispatchThreadgroups:groups threadsPerThreadgroup:threads];
         }
         [hizEnc endEncoding];
@@ -4152,9 +4144,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
         if (capSema)
           dispatch_retain(capSema);
         [g_currentCmdBuffer addCompletedHandler:^(id<MTLCommandBuffer> cb) {
-        if (cb.GPUEndTime > cb.GPUStartTime) {
-          g_lastGpuFrameMs = (float)((cb.GPUEndTime - cb.GPUStartTime) * 1e3);
-        }
+          if (cb.GPUEndTime > cb.GPUStartTime) {
+            g_lastGpuFrameMs = (float)((cb.GPUEndTime - cb.GPUStartTime) * 1e3);
+          }
           if (cb.status == MTLCommandBufferStatusError) {
             NSError *err = cb.error;
             dbg("GPU_ERROR: slot=%d err=%s code=%ld\n", completedSlot,
@@ -4961,9 +4953,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUploadSubChunkData
   if (!g_subChunkBuffer || g_subChunkBuffer.length < totalSize) {
     if (g_subChunkBuffer)
       [g_subChunkBuffer release];
-    g_subChunkBuffer =
-        [g_device newBufferWithLength:totalSize
-                              options:MTLStorageModeShared];
+    g_subChunkBuffer = [g_device newBufferWithLength:totalSize
+                                             options:MTLStorageModeShared];
   }
   memcpy([g_subChunkBuffer contents], ptr, totalSize);
   g_gpuSubChunkCount = (uint32_t)count;
@@ -4971,9 +4962,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUploadSubChunkData
   if (!g_cullDrawArgsBuffer || g_cullDrawArgsBuffer.length < argsSize) {
     if (g_cullDrawArgsBuffer)
       [g_cullDrawArgsBuffer release];
-    g_cullDrawArgsBuffer =
-        [g_device newBufferWithLength:argsSize
-                              options:MTLStorageModeShared];
+    g_cullDrawArgsBuffer = [g_device newBufferWithLength:argsSize
+                                                 options:MTLStorageModeShared];
   }
 }
 extern "C" JNIEXPORT void JNICALL
@@ -5002,8 +4992,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRunGPUCulling(
     if (g_visibleIndicesBuffer)
       [g_visibleIndicesBuffer release];
     g_visibleIndicesBuffer =
-        [g_device newBufferWithLength:neededSize
-                              options:MTLStorageModeShared];
+        [g_device newBufferWithLength:neededSize options:MTLStorageModeShared];
   }
   if (g_cullMode == 1 && g_queue && g_cullEncodePipeline &&
       g_resetCullPipeline && g_subChunkBuffer && g_cullStatsBuffer) {
@@ -5324,8 +5313,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawOITPass(
       [g_currentEncoder release];
       g_currentEncoder = nil;
     }
-    if (g_currentCmdBuffer && g_hizDownsamplePipeline && g_hizPyramid && !g_useMemorylessTargets) {
-      id<MTLComputeCommandEncoder> hizEnc = [g_currentCmdBuffer computeCommandEncoder];
+    if (g_currentCmdBuffer && g_hizDownsamplePipeline && g_hizPyramid &&
+        !g_useMemorylessTargets) {
+      id<MTLComputeCommandEncoder> hizEnc =
+          [g_currentCmdBuffer computeCommandEncoder];
       if (hizEnc) {
         [hizEnc setComputePipelineState:g_hizDownsamplePipeline];
         id<MTLTexture> srcDepth = g_depth;
@@ -5333,9 +5324,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawOITPass(
           [hizEnc setTexture:srcDepth atIndex:0];
           [hizEnc setTexture:g_hizPyramid atIndex:1];
           MTLSize threads = MTLSizeMake(16, 16, 1);
-          MTLSize groups = MTLSizeMake(
-              (srcDepth.width  + 15) / 16,
-              (srcDepth.height + 15) / 16, 1);
+          MTLSize groups = MTLSizeMake((srcDepth.width + 15) / 16,
+                                       (srcDepth.height + 15) / 16, 1);
           [hizEnc dispatchThreadgroups:groups threadsPerThreadgroup:threads];
         }
         [hizEnc endEncoding];
@@ -5542,9 +5532,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUploadChunkUniform
   if (!g_chunkUniformsBuffer || g_chunkUniformsBuffer.length < totalSize) {
     if (g_chunkUniformsBuffer)
       [g_chunkUniformsBuffer release];
-    g_chunkUniformsBuffer =
-        [g_device newBufferWithLength:totalSize
-                              options:MTLStorageModeShared];
+    g_chunkUniformsBuffer = [g_device newBufferWithLength:totalSize
+                                                  options:MTLStorageModeShared];
   }
   memcpy([g_chunkUniformsBuffer contents], ptr, totalSize);
 }
@@ -5676,7 +5665,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nWatchdogReset(
   }
 }
 
-
 extern "C" JNIEXPORT jfloat JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetGpuFrameTimeMs(
     JNIEnv *, jclass) {
@@ -5688,7 +5676,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nAreResidencySetsSu
     JNIEnv *, jclass) {
 #if defined(__aarch64__) && (__MAC_OS_X_VERSION_MAX_ALLOWED >= 140000)
   if (@available(macOS 14.0, *)) {
-    return g_device != nil && [g_device supportsFamily:MTLGPUFamilyApple6] ? JNI_TRUE : JNI_FALSE;
+    return g_device != nil && [g_device supportsFamily:MTLGPUFamilyApple6]
+               ? JNI_TRUE
+               : JNI_FALSE;
   }
 #endif
   return JNI_FALSE;
@@ -5700,8 +5690,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateResidencySet
 #if defined(__aarch64__) && (__MAC_OS_X_VERSION_MAX_ALLOWED >= 140000)
   if (@available(macOS 14.0, *)) {
     id<MTLDevice> dev = (__bridge id<MTLDevice>)(void *)device;
-    if (dev != nil && [dev respondsToSelector:@selector(newResidencySet:error:)]) {
-      MTLResidencySetDescriptor *desc = [[MTLResidencySetDescriptor alloc] init];
+    if (dev != nil && [dev respondsToSelector:@selector(newResidencySet:
+                                                                  error:)]) {
+      MTLResidencySetDescriptor *desc =
+          [[MTLResidencySetDescriptor alloc] init];
       desc.label = @"entity_atlas_residency";
       NSError *error = nil;
       id<MTLResidencySet> set = [dev newResidencySet:desc error:&error];
@@ -5720,13 +5712,16 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUpdateResidencySet
 #if defined(__aarch64__) && (__MAC_OS_X_VERSION_MAX_ALLOWED >= 140000)
   if (@available(macOS 14.0, *)) {
     id<MTLResidencySet> set = (__bridge id<MTLResidencySet>)(void *)setHandle;
-    if (set == nil) return;
+    if (set == nil)
+      return;
     jsize count = env->GetArrayLength(textureHandles);
     jlong *handles = env->GetLongArrayElements(textureHandles, nullptr);
-    NSMutableArray<id<MTLTexture>> *textures = [NSMutableArray arrayWithCapacity:count];
+    NSMutableArray<id<MTLTexture>> *textures =
+        [NSMutableArray arrayWithCapacity:count];
     for (jsize i = 0; i < count; i++) {
       id<MTLTexture> tex = (__bridge id<MTLTexture>)(void *)handles[i];
-      if (tex != nil) [textures addObject:tex];
+      if (tex != nil)
+        [textures addObject:tex];
     }
     env->ReleaseLongArrayElements(textureHandles, handles, JNI_ABORT);
     if (textures.count > 0) {
@@ -5802,9 +5797,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEncodeChunkDrawICB
     return;
   [icmd setVertexBuffer:vbRes.buf offset:(NSUInteger)vbRes.offset atIndex:0];
   int inst = std::max((int)instanceCount, 1);
-  g_javaICBEncodedCount[(uint64_t)icbHandle] =
-      std::max(g_javaICBEncodedCount[(uint64_t)icbHandle],
-               (NSUInteger)(cmdIndex + 1));
+  g_javaICBEncodedCount[(uint64_t)icbHandle] = std::max(
+      g_javaICBEncodedCount[(uint64_t)icbHandle], (NSUInteger)(cmdIndex + 1));
   [icmd drawIndexedPrimitives:MTLPrimitiveTypeTriangle
                    indexCount:(NSUInteger)indexCount
                     indexType:MTLIndexTypeUInt32
