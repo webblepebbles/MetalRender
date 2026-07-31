@@ -65,6 +65,12 @@ static inline int dispatch_get_active_cpu_count() {
 }
 #endif
 static bool g_available = true;
+static float g_camDirX = 0.0f;
+static float g_camDirY = 0.0f;
+static float g_camDirZ = 1.0f;
+static std::atomic<bool> g_cameraFacingCullingEnabled{true};
+static std::atomic<uint32_t> g_lastFaceCullInput{0};
+static std::atomic<uint32_t> g_lastFaceCullRemoved{0};
 id<MTLDevice> g_device = nil;
 id<MTLCommandQueue> g_queue = nil;
 static std::unordered_map<uint64_t, id<MTLBuffer>> g_buffers;
@@ -452,7 +458,19 @@ struct NativeMesh {
   bool active;
 };
 
+static inline int visibleOpaqueQuadCount(const int counts[7], uint32_t mask) {
+  int total = 0;
+  for (int i = 0; i < 7; i++) {
+    if ((mask & (1u << i)) != 0)
+      total += counts[i];
+  }
+  return total;
+}
+
 static inline uint32_t visibleFacingMaskForAabb(float ox, float oy, float oz) {
+  if (!g_cameraFacingCullingEnabled.load(std::memory_order_relaxed))
+    return 0x7Fu;
+
   uint32_t mask = 1u << 6;
   if (0.0f < oy)
     mask |= 1u << 0;
@@ -472,6 +490,20 @@ static inline uint32_t visibleFacingMaskForAabb(float ox, float oy, float oz) {
     mask |= 1u << 5;
   else
     mask |= (1u << 4) | (1u << 5);
+
+  const float directionThreshold = 0.90f;
+  if ((mask & (1u << 0)) != 0 && -g_camDirY > directionThreshold)
+    mask &= ~(1u << 0);
+  if ((mask & (1u << 1)) != 0 && g_camDirY > directionThreshold)
+    mask &= ~(1u << 1);
+  if ((mask & (1u << 2)) != 0 && -g_camDirZ > directionThreshold)
+    mask &= ~(1u << 2);
+  if ((mask & (1u << 3)) != 0 && g_camDirZ > directionThreshold)
+    mask &= ~(1u << 3);
+  if ((mask & (1u << 4)) != 0 && -g_camDirX > directionThreshold)
+    mask &= ~(1u << 4);
+  if ((mask & (1u << 5)) != 0 && g_camDirX > directionThreshold)
+    mask &= ~(1u << 5);
   return mask;
 }
 
@@ -2867,6 +2899,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       int idxCount;
       int opaqueIdxCount;
       int opaqueFaceCounts[7];
+      uint32_t facingMask;
       float distSq;
       float ox, oy, oz;
       bool isMega;
@@ -2940,6 +2973,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       s_cmds = new DrawCmd[s_cmdsCapacity];
     }
 
+    g_lastFaceCullInput.store(0, std::memory_order_relaxed);
+    g_lastFaceCullRemoved.store(0, std::memory_order_relaxed);
     int distCulled = 0;
     {
       std::shared_lock<std::shared_mutex> megaLock(g_megaMutex);
@@ -2969,6 +3004,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           cmd.opaqueIdxCount = opaqueIdxCount;
           memcpy(cmd.opaqueFaceCounts, ms.opaqueFaceCounts,
                  sizeof(cmd.opaqueFaceCounts));
+          cmd.facingMask = visibleFacingMaskForAabb(ms.ox, ms.oy, ms.oz);
           cmd.distSq = distSq;
           cmd.ox = ms.ox;
           cmd.oy = ms.oy;
@@ -2988,6 +3024,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           cmd.opaqueIdxCount = opaqueIdxCount;
           memcpy(cmd.opaqueFaceCounts, ms.opaqueFaceCounts,
                  sizeof(cmd.opaqueFaceCounts));
+          cmd.facingMask = visibleFacingMaskForAabb(ms.ox, ms.oy, ms.oz);
           cmd.distSq = distSq;
           cmd.ox = ms.ox;
           cmd.oy = ms.oy;
@@ -3039,6 +3076,19 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
     }
 
     if (validCount > 0) {
+      uint32_t faceCullInput = 0;
+      uint32_t faceCullVisible = 0;
+      for (int i = 0; i < validCount; i++) {
+        faceCullInput += (uint32_t)std::max(0, s_cmds[i].opaqueIdxCount / 6);
+        faceCullVisible += (uint32_t)std::max(0,
+            visibleOpaqueQuadCount(s_cmds[i].opaqueFaceCounts,
+                                   s_cmds[i].facingMask));
+      }
+      g_lastFaceCullInput.store(faceCullInput, std::memory_order_relaxed);
+      g_lastFaceCullRemoved.store(faceCullInput > faceCullVisible
+                                      ? faceCullInput - faceCullVisible
+                                      : 0,
+                                  std::memory_order_relaxed);
 
       if (g_staleCapacity < validCount) {
         free(g_staleDrawCmds);
@@ -3092,6 +3142,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         cmd.opaqueIdxCount = sc.opaqueIdxCount;
         memcpy(cmd.opaqueFaceCounts, sc.opaqueFaceCounts,
                sizeof(cmd.opaqueFaceCounts));
+        cmd.facingMask = visibleFacingMaskForAabb(sc.ox - dcx, sc.oy - dcy,
+                                                  sc.oz - dcz);
         cmd.distSq = 0.0f;
         cmd.ox = sc.ox - dcx;
         cmd.oy = sc.oy - dcy;
@@ -3218,8 +3270,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           meshlets[meshletCount].worldX = s_cmds[i].ox;
           meshlets[meshletCount].worldY = s_cmds[i].oy;
           meshlets[meshletCount].worldZ = s_cmds[i].oz;
-          meshlets[meshletCount]._pad0 = 0;
+          meshlets[meshletCount]._pad0 = visibleFacingMaskForAabb(
+              s_cmds[i].ox, s_cmds[i].oy, s_cmds[i].oz);
           meshlets[meshletCount]._pad1 = 0;
+          meshlets[meshletCount]._pad2 = 0;
           meshletCount++;
         }
         cu->totalChunks = (uint32_t)meshletCount;
@@ -3426,7 +3480,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       offBuf[i * 4 + 0] = s_cmds[i].ox;
       offBuf[i * 4 + 1] = s_cmds[i].oy;
       offBuf[i * 4 + 2] = s_cmds[i].oz;
-      uint32_t faceMask = 0u;
+      uint32_t faceMask = s_cmds[i].facingMask;
       float maskAsFloat;
       memcpy(&maskAsFloat, &faceMask, sizeof(float));
       offBuf[i * 4 + 3] = maskAsFloat;
@@ -3505,9 +3559,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       } else if (!s_cmds[i].resolvedBuf) {
         continue;
       }
-      icbCandidateCount += visibleOpaqueBucketCount(
-          s_cmds[i].opaqueFaceCounts,
-          visibleFacingMaskForAabb(s_cmds[i].ox, s_cmds[i].oy, s_cmds[i].oz));
+      icbCandidateCount +=         visibleOpaqueBucketCount(
+           s_cmds[i].opaqueFaceCounts,
+           s_cmds[i].facingMask);
     }
     bool canICB =
         (g_icbCapable && icbCandidateCount > 0 && g_pipelineInhouseICB &&
@@ -3573,8 +3627,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           if (__builtin_expect(s_cmds[i].resolvedBuf == nil, 0))
             continue;
         }
-        uint32_t faceMask =
-            visibleFacingMaskForAabb(s_cmds[i].ox, s_cmds[i].oy, s_cmds[i].oz);
+        uint32_t faceMask = s_cmds[i].facingMask;
         int baseQuad = 0;
         for (int face = 0; face < 7; face++) {
           int quadCount = s_cmds[i].opaqueFaceCounts[face];
@@ -3640,8 +3693,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         int opaqueIdx = s_cmds[i].opaqueIdxCount;
         if (__builtin_expect(opaqueIdx <= 0, 0))
           continue;
-        uint32_t faceMask =
-            visibleFacingMaskForAabb(s_cmds[i].ox, s_cmds[i].oy, s_cmds[i].oz);
+        uint32_t faceMask = s_cmds[i].facingMask;
         int baseQuad = 0;
         if (__builtin_expect(s_cmds[i].isMega, 1)) {
           if (__builtin_expect(!lastVB0Mega, 0)) {
@@ -4344,7 +4396,35 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetCameraPosition(
     [g_currentEncoder setVertexBytes:camPos length:16 atIndex:3];
   }
 }
-
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetCameraFacingCulling(
+    JNIEnv *, jclass, jboolean enabled) {
+  g_cameraFacingCullingEnabled.store(enabled == JNI_TRUE,
+                                     std::memory_order_relaxed);
+}
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetCameraFacingCullStats(
+    JNIEnv *env, jclass, jintArray outStats) {
+  if (!outStats || env->GetArrayLength(outStats) < 3)
+    return;
+  jint stats[3] = {
+      g_cameraFacingCullingEnabled.load(std::memory_order_relaxed) ? 1 : 0,
+      (jint)g_lastFaceCullInput.load(std::memory_order_relaxed),
+      (jint)g_lastFaceCullRemoved.load(std::memory_order_relaxed)};
+  env->SetIntArrayRegion(outStats, 0, 3, stats);
+}
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetCameraDirection(
+    JNIEnv *, jclass, jlong handle, jfloat x, jfloat y, jfloat z) {
+  (void)handle;
+  float length = sqrtf(x * x + y * y + z * z);
+  if (length > 0.0001f) {
+    float invLength = 1.0f / length;
+    g_camDirX = x * invLength;
+    g_camDirY = y * invLength;
+    g_camDirZ = z * invLength;
+  }
+}
 extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetFrameMatrices(
     JNIEnv *env, jclass, jlong handle, jfloatArray projMatrix,

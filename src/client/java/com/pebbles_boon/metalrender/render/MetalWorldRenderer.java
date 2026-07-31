@@ -140,6 +140,7 @@ public class MetalWorldRenderer {
   private final float[] cameraPosFloat = new float[4];
   private final float[] frustumPlanesFlat = new float[24];
   private final int[] gpuCullStats = new int[5];
+  private final int[] cameraFacingCullStats = new int[3];
   private int lastGPUVisibleCount;
   private final TranslucencyTrigger translucencyTrigger = new TranslucencyTrigger();
   private final CullingOrcreator cullingOrcreator = new CullingOrcreator();
@@ -444,6 +445,14 @@ public class MetalWorldRenderer {
     renderer.setModelViewMatrix(modelViewMatrix);
     renderer.setCameraPosition(camera.position().x, camera.position().y,
         camera.position().z);
+    Vector3f cameraDirection = camera.rotation().transform(new Vector3f(0.0f, 0.0f, 1.0f)).normalize();
+    if (NativeBridge.isLibLoaded()) {
+      NativeBridge.nSetCameraDirection(renderer.getHandle(), cameraDirection.x,
+          cameraDirection.y, cameraDirection.z);
+      MetalRenderConfig config = MetalRenderClient.getConfig();
+      NativeBridge.nSetCameraFacingCulling(
+          config != null && config.enableCameraFacingCulling);
+    }
     if (NativeBridge.isLibLoaded()) {
       NativeBridge.nSetRenderDistance(
           Minecraft.getInstance().options.getEffectiveRenderDistance() * 16);
@@ -480,36 +489,17 @@ public class MetalWorldRenderer {
           }
         }
         if (!skipTerrainDraw) {
-          boolean useMeshShaderOpaque = meshShaderBackend != null &&
-              meshShaderBackend.areMeshShadersAvailable() &&
-              meshShaderBackend.isActive();
-          if (useMeshShaderOpaque && meshShaderBackend.isGPUDrivenEnabled()) {
-            long ibHandle = chunkMesher.getGlobalIndexBuffer();
-            if (ibHandle != 0) {
-              meshShaderBackend.dispatchTerrainMultiPass(frameCtx, renderer.getHandle(), argumentBufferHandle);
-              int visible = meshShaderBackend.getLastVisibleCount();
-              if (visible > 0) {
-                lastDrawnChunkCount = visible;
-                MetalRenderProfiler.getInstance().incrementChunksDrawn(visible);
-              } else {
-                int drawn = NativeBridge.nDrawAllVisibleChunks(frameCtx, ibHandle);
-                lastDrawnChunkCount = drawn;
-                MetalRenderProfiler.getInstance().incrementChunksDrawn(drawn);
-              }
+          long ibHandle = chunkMesher.getGlobalIndexBuffer();
+          if (ibHandle != 0) {
+            int drawn = NativeBridge.nDrawAllVisibleChunks(frameCtx, ibHandle);
+            lastDrawnChunkCount = drawn;
+            MetalRenderProfiler.getInstance().incrementChunksDrawn(drawn);
+            if (frameCount < 10 || frameCount % 1000 == 0) {
+              MetalLogger.info("frame %d: drew %d chunks",
+                  frameCount, drawn);
             }
           } else {
-            long ibHandle = chunkMesher.getGlobalIndexBuffer();
-            if (ibHandle != 0) {
-              int drawn = NativeBridge.nDrawAllVisibleChunks(frameCtx, ibHandle);
-              lastDrawnChunkCount = drawn;
-              MetalRenderProfiler.getInstance().incrementChunksDrawn(drawn);
-              if (frameCount < 10 || frameCount % 1000 == 0) {
-                MetalLogger.info("frame %d: drew %d chunks",
-                    frameCount, drawn);
-              }
-            } else {
-              lastDrawnChunkCount = 0;
-            }
+            lastDrawnChunkCount = 0;
           }
         }
       }
@@ -1551,6 +1541,7 @@ public class MetalWorldRenderer {
       NativeBridge.nSetFeatureFlags(
           config.enableIndirectCommandBuffers, config.enableMeshShaders,
           requestArgumentBuffers, config.enableProgrammableBlending);
+      NativeBridge.nSetCameraFacingCulling(config.enableCameraFacingCulling);
       gpuDrivenEnabled = NativeBridge.nIsGPUDrivenActive();
       MetalLogger.info(
           "runtime_features: mesh=%s gpu=%s arg=%s",
@@ -1861,6 +1852,13 @@ public class MetalWorldRenderer {
   public int[] getGPUCullStats() {
     NativeBridge.nGetGPUCullStats(gpuCullStats);
     return gpuCullStats;
+  }
+
+  public int[] getCameraFacingCullStats() {
+    if (NativeBridge.isLibLoaded()) {
+      NativeBridge.nGetCameraFacingCullStats(cameraFacingCullStats);
+    }
+    return cameraFacingCullStats;
   }
 
   public int getThermalState() {

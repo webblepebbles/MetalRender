@@ -98,6 +98,7 @@ public class MetalRenderSettingsScreen extends Screen {
   private boolean initialMetalOn;
   private boolean initialSmoothLighting;
   private boolean initialDebugPinkBlockTint;
+  private boolean initialCameraFacingCulling;
 
   private final List<Row> rows = new ArrayList<>();
 
@@ -158,6 +159,7 @@ public class MetalRenderSettingsScreen extends Screen {
     initialMetalOn = config.enableMetalRendering;
     initialSmoothLighting = config.enableSimpleLighting;
     initialDebugPinkBlockTint = config.debugPinkBlockTint;
+    initialCameraFacingCulling = config.enableCameraFacingCulling;
     layout();
     rebuild();
   }
@@ -488,6 +490,8 @@ public class MetalRenderSettingsScreen extends Screen {
         || (config.debugPinkBlockTint != initialDebugPinkBlockTint);
 
     boolean biomeChanged = config.biomeTransitionDetail != initialBiomeDetail;
+    boolean cameraFacingCullingChanged =
+        config.enableCameraFacingCulling != initialCameraFacingCulling;
     com.pebbles_boon.metalrender.util.MetalLogger.info(
         "settings close: rebuild=%b rd=%b bm=%b lf=%b lt=%b",
         needsRebuild,
@@ -496,7 +500,7 @@ public class MetalRenderSettingsScreen extends Screen {
         config.leafCullingMode != initialLeafCulling,
         config.enableSimpleLighting != initialSmoothLighting);
     MetalRenderClient.requestDeferredApply(
-        metalFlip,
+        metalFlip || cameraFacingCullingChanged,
         metalFlip,
         !metalFlip && (needsRebuild || biomeChanged));
 
@@ -688,6 +692,8 @@ public class MetalRenderSettingsScreen extends Screen {
 
   private void buildAdvanced() {
     sec("Metal Features");
+    tog("Camera-Facing Face Culling", config.enableCameraFacingCulling,
+        v -> config.enableCameraFacingCulling = v);
     tog("Argument Buffers", config.enableArgumentBuffers, v -> config.enableArgumentBuffers = v);
     tog("Indirect CMD Buffers", config.enableIndirectCommandBuffers, v -> config.enableIndirectCommandBuffers = v);
     tog("Mesh Shaders", config.enableMeshShaders, v -> config.enableMeshShaders = v);

@@ -25,7 +25,7 @@ struct ChunkMeshlet {
     float worldX;
     float worldY;
     float worldZ;
-    uint  _pad0;
+    uint  visibleFaceMask;
     uint  _pad1;
     uint  _pad2;
 };
@@ -155,14 +155,42 @@ void mesh_terrain(
     uint vertEnd    = min(vertStart + kMaxMeshVerts, m.vertexCount);
     uint localVerts = vertEnd - vertStart;
     uint localQuads = localVerts / 4u;
-    uint tris       = localQuads * 2u;
-    output.set_primitive_count(tris);
+    threadgroup uint visibleQuadCount;
+    if (tid == 0u) {
+        visibleQuadCount = 0u;
+        for (uint q = 0u; q < localQuads; q++) {
+            InhouseTerrainVertex first = vertices[m.baseVertexOffset + vertStart + q * 4u];
+            uint normalIndex = uint(first.normalIndex & 0x7u);
+            if (normalIndex >= 6u || (m.visibleFaceMask & (1u << normalIndex)) != 0u) {
+                visibleQuadCount++;
+            }
+        }
+    }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
+    if (tid == 0u) {
+        output.set_primitive_count(visibleQuadCount * 2u);
+    }
 
     float3 chunkOrig = float3(m.worldX, m.worldY, m.worldZ);
     float  skyBr     = camera.cameraPosition.w;
 
 
     for (uint lv = tid; lv < localVerts; lv += kMaxMeshVerts) {
+        uint sourceQuad = lv / 4u;
+        uint vertexInQuad = lv & 3u;
+        InhouseTerrainVertex first = vertices[m.baseVertexOffset + vertStart + sourceQuad * 4u];
+        uint normalIndex = uint(first.normalIndex & 0x7u);
+        if (normalIndex < 6u && (m.visibleFaceMask & (1u << normalIndex)) == 0u) {
+            continue;
+        }
+        uint compactQuad = 0u;
+        for (uint priorQuad = 0u; priorQuad < sourceQuad; priorQuad++) {
+            InhouseTerrainVertex prior = vertices[m.baseVertexOffset + vertStart + priorQuad * 4u];
+            uint priorNormalIndex = uint(prior.normalIndex & 0x7u);
+            if (priorNormalIndex >= 6u || (m.visibleFaceMask & (1u << priorNormalIndex)) != 0u) {
+                compactQuad++;
+            }
+        }
         uint gv = m.baseVertexOffset + vertStart + lv;
         InhouseTerrainVertex v = vertices[gv];
 
@@ -179,23 +207,36 @@ void mesh_terrain(
         half blockL  = half(kGamma[pl & 0xFu]);
         half skyL    = half(kGamma[(pl >> 4u) & 0xFu]);
         out.light    = half(max(float(blockL), float(skyL) * skyBr));
-        out.normalIndex = uint(v.normalIndex & 0x7u);
+        out.normalIndex = normalIndex;
         out.worldPos    = worldPos;
 
-        output.set_vertex(lv, out);
+        output.set_vertex(compactQuad * 4u + vertexInQuad, out);
     }
 
 
 
 
     for (uint lq = tid; lq < localQuads; lq += kMaxMeshVerts) {
-        uint b = lq * 4u;
-        output.set_index(lq * 6u + 0u, b + 0u);
-        output.set_index(lq * 6u + 1u, b + 1u);
-        output.set_index(lq * 6u + 2u, b + 2u);
-        output.set_index(lq * 6u + 3u, b + 0u);
-        output.set_index(lq * 6u + 4u, b + 2u);
-        output.set_index(lq * 6u + 5u, b + 3u);
+        InhouseTerrainVertex first = vertices[m.baseVertexOffset + vertStart + lq * 4u];
+        uint normalIndex = uint(first.normalIndex & 0x7u);
+        if (normalIndex < 6u && (m.visibleFaceMask & (1u << normalIndex)) == 0u) {
+            continue;
+        }
+        uint compactQuad = 0u;
+        for (uint priorQuad = 0u; priorQuad < lq; priorQuad++) {
+            InhouseTerrainVertex prior = vertices[m.baseVertexOffset + vertStart + priorQuad * 4u];
+            uint priorNormalIndex = uint(prior.normalIndex & 0x7u);
+            if (priorNormalIndex >= 6u || (m.visibleFaceMask & (1u << priorNormalIndex)) != 0u) {
+                compactQuad++;
+            }
+        }
+        uint b = compactQuad * 4u;
+        output.set_index(compactQuad * 6u + 0u, b + 0u);
+        output.set_index(compactQuad * 6u + 1u, b + 1u);
+        output.set_index(compactQuad * 6u + 2u, b + 2u);
+        output.set_index(compactQuad * 6u + 3u, b + 0u);
+        output.set_index(compactQuad * 6u + 4u, b + 2u);
+        output.set_index(compactQuad * 6u + 5u, b + 3u);
     }
 }
 

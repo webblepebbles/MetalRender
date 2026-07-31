@@ -99,6 +99,13 @@ public final class NativeBridge {
   public static native void nSetCameraPosition(long handle, double x, double y,
       double z);
 
+  public static native void nSetCameraDirection(long handle, float x, float y,
+      float z);
+
+  public static native void nSetCameraFacingCulling(boolean enabled);
+
+  public static native void nGetCameraFacingCullStats(int[] outStats);
+
   public static native void nSetFrameMatrices(long handle, float[] projMatrix,
       float[] mvMatrix, double camX,
       double camY, double camZ);

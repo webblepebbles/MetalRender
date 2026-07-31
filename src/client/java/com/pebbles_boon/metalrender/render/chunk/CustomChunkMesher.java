@@ -72,6 +72,9 @@ public class CustomChunkMesher {
   private static final ThreadLocal<ByteBuffer> WATER_BUF_POOL = ThreadLocal
       .withInitial(() -> ByteBuffer.allocateDirect(VERTEX_BUF_SIZE)
           .order(ByteOrder.nativeOrder()));
+  private static final ThreadLocal<ByteBuffer> FACE_BUCKET_BUF_POOL = ThreadLocal
+      .withInitial(() -> ByteBuffer.allocateDirect(VERTEX_BUF_SIZE)
+          .order(ByteOrder.nativeOrder()));
 
   private static final Direction[] ALL_DIRECTIONS = Direction.values();
 
@@ -1680,13 +1683,42 @@ public class CustomChunkMesher {
   private static int[] bucketQuadsByFacing(ByteBuffer vertexBuffer, int opaqueQuadCount,
       int waterQuadCount) {
     int[] facingQuadCounts = new int[14];
-    int totalQuads = (vertexBuffer.limit() / (4 * VERTEX_STRIDE));
-    int startQuad = Math.max(0, totalQuads - waterQuadCount);
-    for (int i = 0; i < totalQuads; i++) {
+    int totalQuads = Math.min(vertexBuffer.limit() / (4 * VERTEX_STRIDE),
+        opaqueQuadCount + waterQuadCount);
+    int boundedOpaqueQuadCount = Math.min(Math.max(opaqueQuadCount, 0), totalQuads);
+    for (int i = 0; i < boundedOpaqueQuadCount; i++) {
       int nIdx = readNormalIndex(vertexBuffer, i);
-      if (nIdx >= 0 && nIdx < 7) {
-        facingQuadCounts[nIdx]++;
+      if (nIdx < 0 || nIdx >= 7) {
+        nIdx = 6;
       }
+      facingQuadCounts[nIdx]++;
+    }
+
+    ByteBuffer bucketBuffer = FACE_BUCKET_BUF_POOL.get();
+    bucketBuffer.clear();
+    int[] bucketStarts = new int[7];
+    int running = 0;
+    for (int i = 0; i < 7; i++) {
+      bucketStarts[i] = running;
+      running += facingQuadCounts[i];
+    }
+    int[] bucketOffsets = Arrays.copyOf(bucketStarts, bucketStarts.length);
+    for (int i = 0; i < boundedOpaqueQuadCount; i++) {
+      int nIdx = readNormalIndex(vertexBuffer, i);
+      if (nIdx < 0 || nIdx >= 7) {
+        nIdx = 6;
+      }
+      int sourceOffset = i * 4 * VERTEX_STRIDE;
+      int destinationOffset = bucketOffsets[nIdx] * 4 * VERTEX_STRIDE;
+      for (int byteIndex = 0; byteIndex < 4 * VERTEX_STRIDE; byteIndex++) {
+        bucketBuffer.put(destinationOffset + byteIndex,
+            vertexBuffer.get(sourceOffset + byteIndex));
+      }
+      bucketOffsets[nIdx]++;
+    }
+    int opaqueBytes = boundedOpaqueQuadCount * 4 * VERTEX_STRIDE;
+    for (int byteIndex = 0; byteIndex < opaqueBytes; byteIndex++) {
+      vertexBuffer.put(byteIndex, bucketBuffer.get(byteIndex));
     }
     return facingQuadCounts;
   }

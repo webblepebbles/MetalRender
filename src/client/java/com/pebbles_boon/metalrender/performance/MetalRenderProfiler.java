@@ -369,6 +369,10 @@ public final class MetalRenderProfiler {
       s.vertexCount = wr.getChunkMesher().getTotalVertexCount();
       s.pendingCount = wr.getChunkMesher().getPendingCount();
       s.drawnChunkCount = wr.getLastDrawnChunkCount();
+      int[] faceCull = wr.getCameraFacingCullStats();
+      s.cameraFacingCullingEnabled = faceCull.length > 0 && faceCull[0] != 0;
+      s.cameraFacingCullInput = faceCull.length > 1 ? faceCull[1] : 0;
+      s.cameraFacingCullRemoved = faceCull.length > 2 ? faceCull[2] : 0;
     }
 
     Runtime runtime = Runtime.getRuntime();
@@ -486,6 +490,9 @@ public final class MetalRenderProfiler {
     public int vertexCount;
     public int pendingCount;
     public int drawnChunkCount;
+    public boolean cameraFacingCullingEnabled;
+    public int cameraFacingCullInput;
+    public int cameraFacingCullRemoved;
     public long usedMemoryMb;
     public long maxMemoryMb;
 
@@ -509,6 +516,9 @@ public final class MetalRenderProfiler {
       lines.add(String.format(Locale.ROOT, "Meshes %d | Verts %d | Pending %d", meshCount, vertexCount, pendingCount));
       lines.add(String.format(Locale.ROOT, "Drawn %d | Built %d | Uploads %d | Hangs %d", drawnChunkCount, meshesBuilt,
           uploadsDone, hangCount));
+      lines.add(String.format(Locale.ROOT, "Face Cull %s | Opaque %d -> %d removed",
+          cameraFacingCullingEnabled ? "ON" : "OFF", cameraFacingCullInput,
+          cameraFacingCullRemoved));
       lines.add(String.format(Locale.ROOT, "Scanned %d | Mem %d/%dMB", chunksScanned, usedMemoryMb, maxMemoryMb));
       return lines.toArray(new String[0]);
     }
