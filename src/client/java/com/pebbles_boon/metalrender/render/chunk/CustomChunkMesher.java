@@ -53,7 +53,9 @@ public class CustomChunkMesher {
   private static final int MAX_QUADS = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE * 6;
   private static final int VERTEX_BUF_SIZE = MAX_QUADS * 4 * VERTEX_STRIDE;
   private static final byte WATER_ALPHA = (byte) 168;
-  private static final int UPLOAD_PARALLELISM = Math.max(256, Runtime.getRuntime().availableProcessors() * 8);
+  // Shared Apple Silicon memory saturates quickly; more concurrent copies add contention.
+  private static final int UPLOAD_PARALLELISM = Math.min(4,
+      Math.max(2, Runtime.getRuntime().availableProcessors() / 2));
   private static final java.util.concurrent.Semaphore UPLOAD_SEMAPHORE = new java.util.concurrent.Semaphore(
       UPLOAD_PARALLELISM);
 
@@ -144,7 +146,6 @@ public class CustomChunkMesher {
   private final int immediateThreadCount;
   private final int backgroundThreadCount;
 
-  private volatile boolean aggressiveApproximateLighting;
   private final java.util.concurrent.atomic.AtomicLong visibleSectionLatencyAccNs = new java.util.concurrent.atomic.AtomicLong(
       0L);
   private final java.util.concurrent.atomic.AtomicInteger visibleSectionLatencySamples = new java.util.concurrent.atomic.AtomicInteger(
@@ -228,18 +229,18 @@ public class CustomChunkMesher {
         MAX_QUADS, ibData.length);
   }
 
-  public void buildMeshFromWorld(int chunkX, int chunkY, int chunkZ, boolean highPriority) {
-    buildMeshFromWorld(chunkX, chunkY, chunkZ, highPriority, false);
+  public boolean buildMeshFromWorld(int chunkX, int chunkY, int chunkZ, boolean highPriority) {
+    return buildMeshFromWorld(chunkX, chunkY, chunkZ, highPriority, false);
   }
 
-  public void buildMeshFromWorld(int chunkX, int chunkY, int chunkZ,
+  public boolean buildMeshFromWorld(int chunkX, int chunkY, int chunkZ,
       boolean highPriority, boolean interactive) {
     if (!initialized)
-      return;
+      return false;
     Minecraft mc = Minecraft.getInstance();
     ClientLevel world = mc != null ? mc.level : null;
     if (world == null)
-      return;
+      return false;
 
     long key = packChunkKey(chunkX, chunkY, chunkZ);
     final long genAtSubmit;
@@ -252,14 +253,14 @@ public class CustomChunkMesher {
     }
 
     int priority = interactive ? 0 : (highPriority ? 1 : 2);
-    submitMeshTask(priority, () -> {
+    boolean submitted = submitMeshTask(priority, () -> {
       try {
         if (isTaskCancelled(key, genAtSubmit)) {
           return;
         }
         MeshBuildContext context = captureBuildContext(world, chunkX, chunkY, chunkZ);
         SectionSnapshot snapshot = captureSectionSnapshot(world, chunkX, chunkY, chunkZ,
-            aggressiveApproximateLighting);
+            false);
         if (!snapshot.valid) {
           return;
         }
@@ -277,10 +278,16 @@ public class CustomChunkMesher {
         }
       }
     }, chunkX, chunkZ);
+    if (!submitted) {
+      synchronized (pendingKeys) {
+        pendingKeys.remove(key);
+      }
+    }
+    return submitted;
   }
 
-  public void buildMeshFromWorldInteractive(int chunkX, int chunkY, int chunkZ) {
-    buildMeshFromWorld(chunkX, chunkY, chunkZ, true, true);
+  public boolean buildMeshFromWorldInteractive(int chunkX, int chunkY, int chunkZ) {
+    return buildMeshFromWorld(chunkX, chunkY, chunkZ, true, true);
   }
 
   public void clear() {
@@ -522,16 +529,6 @@ public class CustomChunkMesher {
     }
   }
 
-  public void setLoadingModeThreadBudget(boolean loadingMode, int totalPending) {
-    int pending = Math.max(getPendingCount(), totalPending);
-    MetalRenderConfig config = MetalRenderClient.getConfig();
-    aggressiveApproximateLighting = false;
-
-    MetalLogger.info(
-        "thread_budget: load=%s p=%d approx=%s",
-        loadingMode, pending, aggressiveApproximateLighting);
-  }
-
   public void flushMeshRegistrations() {
     int toFlush;
     synchronized (batchRegData) {
@@ -610,7 +607,7 @@ public class CustomChunkMesher {
 
   private static final int IMMEDIATE_QUEUE_CHUNK_RANGE = 8;
 
-  private void submitMeshTask(int priority, Runnable task, int chunkX, int chunkZ) {
+  private boolean submitMeshTask(int priority, Runnable task, int chunkX, int chunkZ) {
     boolean isImmediate;
     if (priority == 0) {
       isImmediate = true;
@@ -634,7 +631,7 @@ public class CustomChunkMesher {
     }
     int backgroundCap = estimator != null ? estimator.recommendedInFlightFor(1) : 256;
     if (!isImmediate && getBackgroundInFlight() >= backgroundCap) {
-      return;
+      return false;
     }
     PrioritizedMeshTask ptask = new PrioritizedMeshTask(priority, task);
     if (isImmediate) {
@@ -642,6 +639,7 @@ public class CustomChunkMesher {
     } else {
       backgroundPool.execute(ptask);
     }
+    return true;
   }
 
   private int getImmediateInFlight() {
