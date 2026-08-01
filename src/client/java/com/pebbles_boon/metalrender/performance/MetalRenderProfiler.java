@@ -7,8 +7,9 @@ import com.pebbles_boon.metalrender.util.MetalLogger;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
-import java.nio.file.Paths;
+import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
+import net.fabricmc.loader.api.FabricLoader;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
@@ -35,7 +36,12 @@ public final class MetalRenderProfiler {
   private volatile ProfileSnapshot snapshot = new ProfileSnapshot();
 
   private final java.util.concurrent.LinkedBlockingQueue<String> csvQueue = new java.util.concurrent.LinkedBlockingQueue<>();
+  private final Object csvWriteLock = new Object();
   private volatile boolean csvWorkerStarted;
+  private volatile boolean csvEnabled;
+  private volatile Thread csvWorker;
+  private volatile Path csvFile;
+  private volatile boolean csvShutdownHookRegistered;
   private final AtomicLong meshTimeAccNs = new AtomicLong(0);
   private final AtomicLong uploadTimeAccNs = new AtomicLong(0);
   private final AtomicLong cullTimeAccNs = new AtomicLong(0);
@@ -57,9 +63,8 @@ public final class MetalRenderProfiler {
   private long lastLogTimeMs;
   private long lastCsvEmitMs;
   private long lastSnapshotUpdateMs;
-  private boolean csvHeaderWritten;
   private static final String CSV_HEADER =
-      "epoch_ms,loading,frame_ms,mesh_ms,upload_ms,cull_ms," +
+      "epoch_ms,frame_ms,mesh_ms,upload_ms,cull_ms," +
           "meshes_built,chunks_drawn,meshes,pending,vertex_count,builder_pool,queued";
 
   private MetalRenderProfiler() {
@@ -67,6 +72,32 @@ public final class MetalRenderProfiler {
 
   public static MetalRenderProfiler getInstance() {
     return INSTANCE;
+  }
+
+  public synchronized void startDevelopmentRunCsv() {
+    if (csvEnabled || !FabricLoader.getInstance().isDevelopmentEnvironment()) {
+      return;
+    }
+    Path file = FabricLoader.getInstance().getGameDir()
+        .resolve("logs")
+        .resolve("metalrender_load.csv");
+    try {
+      Files.createDirectories(file.getParent());
+      Files.writeString(file, CSV_HEADER + "\n", StandardCharsets.UTF_8,
+          StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING,
+          StandardOpenOption.WRITE);
+      csvFile = file;
+      csvEnabled = true;
+      ensureCsvWorker();
+      if (!csvShutdownHookRegistered) {
+        csvShutdownHookRegistered = true;
+        Runtime.getRuntime().addShutdownHook(new Thread(
+            INSTANCE::shutdownCsvWorker, "MetalRender-CsvShutdown"));
+      }
+      MetalLogger.info("CSV profiling enabled for development run: %s", file);
+    } catch (IOException e) {
+      MetalLogger.warn("CSV profiling unavailable at %s: %s", file, e.getMessage());
+    }
   }
 
   public void toggleVisible() {
@@ -195,7 +226,7 @@ public final class MetalRenderProfiler {
     }
 
     MetalWorldRenderer wrForCsv = MetalRenderClient.getWorldRenderer();
-    if (wrForCsv != null && wrForCsv.isLoadingMode() &&
+    if (csvEnabled && wrForCsv != null &&
         nowMs - lastCsvEmitMs >= 1000L) {
       lastCsvEmitMs = nowMs;
       emitCsvSample(nowMs, frameMs, meshMs, uploadMs, cullMs,
@@ -209,11 +240,7 @@ public final class MetalRenderProfiler {
     ensureCsvWorker();
     CustomChunkMesherAccess access = CustomChunkMesherAccess.of(wr);
     StringBuilder sb = new StringBuilder(256);
-    if (!csvHeaderWritten) {
-      csvHeaderWritten = true;
-      sb.append(CSV_HEADER).append('\n');
-    }
-    sb.append(tsMs).append(',').append(true).append(',')
+    sb.append(tsMs).append(',')
         .append(fmt(frameMs)).append(',')
         .append(fmt(meshMs)).append(',')
         .append(fmt(uploadMs)).append(',')
@@ -233,38 +260,84 @@ public final class MetalRenderProfiler {
   }
 
   private void ensureCsvWorker() {
-    if (csvWorkerStarted) return;
+    if (!csvEnabled || csvWorkerStarted) return;
     synchronized (this) {
-      if (csvWorkerStarted) return;
+      if (!csvEnabled || csvWorkerStarted) return;
       csvWorkerStarted = true;
       Thread t = new Thread(() -> {
         StringBuilder batch = new StringBuilder(4096);
-        while (!Thread.currentThread().isInterrupted()) {
-          try {
-            String line = csvQueue.poll(250L, java.util.concurrent.TimeUnit.MILLISECONDS);
-            if (line != null) {
-              batch.append(line);
-              String drain;
-              while ((drain = csvQueue.poll()) != null) {
-                batch.append(drain);
-              }
-              try {
-                java.nio.file.Path dir = Paths.get("run", "logs");
-                Files.createDirectories(dir);
-                java.nio.file.Path file = dir.resolve("metalrender_load.csv");
-                Files.writeString(file, batch.toString(), StandardCharsets.UTF_8,
-                    StandardOpenOption.CREATE, StandardOpenOption.APPEND);
-              } catch (IOException ignored) {
-              }
-              batch.setLength(0);
+        try {
+          while (!Thread.currentThread().isInterrupted()) {
+            String line = csvQueue.poll(250L,
+                java.util.concurrent.TimeUnit.MILLISECONDS);
+            if (line == null) {
+              continue;
             }
-          } catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+            batch.append(line);
+            String drain;
+            while ((drain = csvQueue.poll()) != null) {
+              batch.append(drain);
+            }
+            appendCsvBatch(batch);
+            batch.setLength(0);
+          }
+        } catch (InterruptedException e) {
+          Thread.currentThread().interrupt();
+        } finally {
+          if (batch.length() > 0) {
+            appendCsvBatch(batch);
+            batch.setLength(0);
+          }
+          StringBuilder remaining = drainCsvQueue();
+          if (remaining.length() > 0) {
+            appendCsvBatch(remaining);
           }
         }
       }, "MetalRender-CsvWorker");
       t.setDaemon(true);
+      csvWorker = t;
       t.start();
+    }
+  }
+
+  private void appendCsvBatch(StringBuilder batch) {
+    Path file = csvFile;
+    if (file == null || batch.length() == 0) {
+      return;
+    }
+    synchronized (csvWriteLock) {
+      try {
+        Files.writeString(file, batch.toString(), StandardCharsets.UTF_8,
+            StandardOpenOption.CREATE, StandardOpenOption.APPEND,
+            StandardOpenOption.WRITE);
+      } catch (IOException e) {
+        MetalLogger.warn("CSV write failed at %s: %s", file, e.getMessage());
+      }
+    }
+  }
+
+  private StringBuilder drainCsvQueue() {
+    StringBuilder remaining = new StringBuilder(4096);
+    String line;
+    while ((line = csvQueue.poll()) != null) {
+      remaining.append(line);
+    }
+    return remaining;
+  }
+
+  private void shutdownCsvWorker() {
+    Thread worker = csvWorker;
+    if (worker != null) {
+      worker.interrupt();
+      try {
+        worker.join(1000L);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+      }
+    }
+    StringBuilder remaining = drainCsvQueue();
+    if (remaining.length() > 0) {
+      appendCsvBatch(remaining);
     }
   }
 
