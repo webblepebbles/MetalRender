@@ -74,10 +74,6 @@ public class EntityRenderMixin {
     if (entityRenderer == null || !entityRenderer.isActive()) {
       return;
     }
-    int loadingBacklog = worldRenderer.getLoadingModePendingCount();
-    if (loadingBacklog > 3000 && (worldRenderer.getFrameCount() & 1) != 0) {
-      return;
-    }
     Minecraft mc = Minecraft.getInstance();
     if (mc == null || mc.level == null) {
       return;

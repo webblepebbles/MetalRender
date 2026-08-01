@@ -33,11 +33,6 @@ public class ParticleCaptureMixin {
     MetalWorldRenderer worldRenderer = MetalRenderClient.getWorldRenderer();
     if (worldRenderer == null || !worldRenderer.metalActive())
       return;
-    int loadingBacklog = worldRenderer.getLoadingModePendingCount();
-    if (loadingBacklog > 3000 && (worldRenderer.getFrameCount() % 3) != 0) {
-      ci.cancel();
-      return;
-    }
     MetalParticleRenderer particleRenderer = worldRenderer.getParticleRenderer();
     if (particleRenderer == null || !particleRenderer.isActive())
       return;

@@ -151,14 +151,10 @@ public class MetalWorldRenderer {
   private final float[] outlineVerts = new float[72 * 3];
   private byte[] outlineDataBuf = new byte[72 * 3 * 4];
   private long lastThermalLogMs;
-  private boolean loadingMode;
-  private int loadingModePendingCount;
-  private int loadingModeMeshCount;
   private int screenshotBlitCooldownFrames;
   private boolean loggedChunkLoadDropNotReady;
   private boolean loggedBlockUpdateDropNotReady;
   private boolean loggedWorldLoadWithoutRenderer;
-  private long lastLoadingModeLogMs;
   private long lastQueuePressureLogMs;
 
   public MetalWorldRenderer() {
@@ -287,7 +283,6 @@ public class MetalWorldRenderer {
     hiZController.shutdown();
     translucencySorter.shutdown();
     terrainIndirectDraw.shutdown();
-    updateLoadingModeState();
   }
 
   public boolean metalActive() {
@@ -392,7 +387,6 @@ public class MetalWorldRenderer {
         jProfCount = 0;
       }
     }
-    updateLoadingModeState();
   }
 
   public void beginFrame(Camera camera, float tickDelta, Matrix4f projection,
@@ -1340,12 +1334,18 @@ public class MetalWorldRenderer {
           break;
         }
       }
+      boolean submitted;
       if (interactivePriority) {
-        chunkMesher.buildMeshFromWorldInteractive(
+        submitted = chunkMesher.buildMeshFromWorldInteractive(
             candidate.chunkX, candidate.chunkY, candidate.chunkZ);
       } else {
-        chunkMesher.buildMeshFromWorld(candidate.chunkX, candidate.chunkY,
+        submitted = chunkMesher.buildMeshFromWorld(candidate.chunkX, candidate.chunkY,
             candidate.chunkZ, highPriority);
+      }
+      if (!submitted) {
+        pendingBuildSet.add(candidate.key);
+        sortedListDirty = true;
+        break;
       }
       if (built < 5 || MetalRenderConfig.isDeepDebugActive()) {
         MetalLogger.debug(
@@ -1548,7 +1548,6 @@ public class MetalWorldRenderer {
           NativeBridge.nAreMeshShadersActive(), gpuDrivenEnabled,
           NativeBridge.nAreArgumentBuffersActive());
     }
-    updateLoadingModeState();
   }
 
   public void onConfigScreenClosed() {
@@ -1572,22 +1571,6 @@ public class MetalWorldRenderer {
       int renderDist = mc.options.renderDistance().get();
       scanRingsInRange(mc.level, playerChunkX, playerChunkZ, playerSectionY, 0,
           renderDist);
-    }
-    updateLoadingModeState();
-  }
-
-  private void updateLoadingModeState() {
-    loadingModeMeshCount = chunkMesher.getMeshCount();
-    loadingModePendingCount = pendingBuildSet.size() + chunkMesher.getPendingCount();
-    loadingMode = false;
-    chunkMesher.setLoadingModeThreadBudget(loadingMode,
-        loadingModePendingCount);
-    if (System.currentTimeMillis() - lastLoadingModeLogMs >= 1000) {
-      lastLoadingModeLogMs = System.currentTimeMillis();
-      MetalLogger.info(
-          "load_state: ok=%s act=%s p=%d cp=%d m=%d",
-          worldLoaded, renderingActive, loadingModePendingCount,
-          chunkMesher.getPendingCount(), loadingModeMeshCount);
     }
   }
 
@@ -1633,7 +1616,9 @@ public class MetalWorldRenderer {
           mc.level != null &&
           isSectionBuildReady(mc.level, chunkX, worldY, chunkZ) &&
           !chunkMesher.hasMesh(chunkX, worldY, chunkZ)) {
-        chunkMesher.buildMeshFromWorld(chunkX, worldY, chunkZ, false, true);
+        if (!chunkMesher.buildMeshFromWorld(chunkX, worldY, chunkZ, false, true)) {
+          enqueueSectionBuild(chunkX, worldY, chunkZ);
+        }
       } else {
         enqueueSectionBuild(chunkX, worldY, chunkZ);
       }
@@ -1653,7 +1638,6 @@ public class MetalWorldRenderer {
     requeueNeighboursNowReady(mc, chunkX + 1, chunkZ);
     requeueNeighboursNowReady(mc, chunkX, chunkZ - 1);
     requeueNeighboursNowReady(mc, chunkX, chunkZ + 1);
-    updateLoadingModeState();
   }
 
   private void requeueNeighboursNowReady(Minecraft mc, int chunkX, int chunkZ) {
@@ -1816,7 +1800,10 @@ public class MetalWorldRenderer {
     int cz = blockZ >> 4;
     chunkMesher.noteBlockUpdate(cx, cy, cz);
     chunkMesher.markDirty(cx, cy, cz);
-    chunkMesher.buildMeshFromWorldInteractive(cx, cy, cz);
+    if (!chunkMesher.buildMeshFromWorldInteractive(cx, cy, cz)) {
+      pendingBuildSet.add(packChunkKey(cx, cy, cz));
+      sortedListDirty = true;
+    }
     markDirtyAndQueue(cx - 1, cy, cz);
     markDirtyAndQueue(cx + 1, cy, cz);
     markDirtyAndQueue(cx, cy - 1, cz);
@@ -1827,7 +1814,6 @@ public class MetalWorldRenderer {
         "block_rebuild: b=[%d,%d,%d] s=[%d,%d,%d] p=%d cp=%d m=%d",
         blockX, blockY, blockZ, cx, cy, cz, pendingBuildSet.size(),
         chunkMesher.getPendingCount(), chunkMesher.getMeshCount());
-    updateLoadingModeState();
   }
 
   private void markDirtyAndQueue(int chunkX, int sectionY, int chunkZ) {
@@ -1865,15 +1851,4 @@ public class MetalWorldRenderer {
     return NativeBridge.nGetThermalState();
   }
 
-  public boolean isLoadingMode() {
-    return loadingMode;
-  }
-
-  public int getLoadingModePendingCount() {
-    return loadingModePendingCount;
-  }
-
-  public int getLoadingModeMeshCount() {
-    return loadingModeMeshCount;
-  }
 }
