@@ -53,7 +53,6 @@ public class CustomChunkMesher {
   private static final int MAX_QUADS = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE * 6;
   private static final int VERTEX_BUF_SIZE = MAX_QUADS * 4 * VERTEX_STRIDE;
   private static final byte WATER_ALPHA = (byte) 168;
-  // Shared Apple Silicon memory saturates quickly; more concurrent copies add contention.
   private static final int UPLOAD_PARALLELISM = Math.min(4,
       Math.max(2, Runtime.getRuntime().availableProcessors() / 2));
   private static final java.util.concurrent.Semaphore UPLOAD_SEMAPHORE = new java.util.concurrent.Semaphore(
@@ -81,7 +80,6 @@ public class CustomChunkMesher {
   private static final Direction[] ALL_DIRECTIONS = Direction.values();
 
   private static final int BATCH_REG_CAPACITY = 2048;
-
 
   public static class ChunkMeshData {
     public final long bufferHandle;
