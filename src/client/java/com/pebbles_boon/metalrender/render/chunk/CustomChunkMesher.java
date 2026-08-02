@@ -80,6 +80,7 @@ public class CustomChunkMesher {
   private static final Direction[] ALL_DIRECTIONS = Direction.values();
 
   private static final int BATCH_REG_CAPACITY = 2048;
+  private static final int BATCH_REG_STRIDE = 9;
 
   public static class ChunkMeshData {
     public final long bufferHandle;
@@ -146,7 +147,7 @@ public class CustomChunkMesher {
   private final LongOpenHashSet emptyKeys = new LongOpenHashSet();
   private final Long2ObjectOpenHashMap<SectionSnapshot> snapshotCache = new Long2ObjectOpenHashMap<>();
   private final Long2LongOpenHashMap snapshotCacheGen = new Long2LongOpenHashMap();
-  private final long[] batchRegData = new long[BATCH_REG_CAPACITY * 8];
+  private final long[] batchRegData = new long[BATCH_REG_CAPACITY * BATCH_REG_STRIDE];
   private int batchRegCount = 0;
 
   private final java.util.concurrent.ThreadPoolExecutor immediatePool;
@@ -287,7 +288,7 @@ public class CustomChunkMesher {
             Math.abs(chunkX - context.buildPlayerCX),
             Math.abs(chunkZ - context.buildPlayerCZ)));
         SectionSnapshot snapshot = captureSectionSnapshot(world, chunkX, chunkY, chunkZ,
-            false);
+            lodTier >= 1);
         if (!snapshot.valid) {
           return;
         }
@@ -873,13 +874,20 @@ public class CustomChunkMesher {
 
     net.minecraft.world.level.chunk.PalettedContainer<BlockState> localStates = section.getStates();
 
-    net.minecraft.world.level.lighting.LayerLightEventListener blockLightListener = world.getChunkSource()
-        .getLightEngine().getLayerListener(LightLayer.BLOCK);
-    net.minecraft.world.level.lighting.LayerLightEventListener skyLightListener = world.getChunkSource()
-        .getLightEngine().getLayerListener(LightLayer.SKY);
-    net.minecraft.world.level.chunk.DataLayer[] blockLightLayers = new net.minecraft.world.level.chunk.DataLayer[27];
-    net.minecraft.world.level.chunk.DataLayer[] skyLightLayers = new net.minecraft.world.level.chunk.DataLayer[27];
-    boolean[] lightLayerResolved = new boolean[27];
+    net.minecraft.world.level.lighting.LayerLightEventListener blockLightListener = null;
+    net.minecraft.world.level.lighting.LayerLightEventListener skyLightListener = null;
+    net.minecraft.world.level.chunk.DataLayer[] blockLightLayers = null;
+    net.minecraft.world.level.chunk.DataLayer[] skyLightLayers = null;
+    boolean[] lightLayerResolved = null;
+    if (!useApproximateLight) {
+      blockLightListener = world.getChunkSource().getLightEngine()
+          .getLayerListener(LightLayer.BLOCK);
+      skyLightListener = world.getChunkSource().getLightEngine()
+          .getLayerListener(LightLayer.SKY);
+      blockLightLayers = new net.minecraft.world.level.chunk.DataLayer[27];
+      skyLightLayers = new net.minecraft.world.level.chunk.DataLayer[27];
+      lightLayerResolved = new boolean[27];
+    }
 
     for (int py = 0; py < PADDED_SIZE; py++) {
       for (int pz = 0; pz < PADDED_SIZE; pz++) {
@@ -1085,7 +1093,7 @@ public class CustomChunkMesher {
 
       int flushCount = -1;
       synchronized (batchRegData) {
-        int idx = batchRegCount * 8;
+        int idx = batchRegCount * BATCH_REG_STRIDE;
         batchRegData[idx] = (chunkX & 0xFFFFFFFFL) | ((long) chunkY << 32);
         batchRegData[idx + 1] = (chunkZ & 0xFFFFFFFFL) | ((long) quadCount << 32);
         batchRegData[idx + 2] = bufferHandle;
@@ -1098,6 +1106,7 @@ public class CustomChunkMesher {
             | ((long) (facingQuadCounts.length > 4 ? facingQuadCounts[4] : 0) << 32);
         batchRegData[idx + 7] = ((long) (facingQuadCounts.length > 5 ? facingQuadCounts[5] : 0) & 0xFFFFFFFFL)
             | ((long) (facingQuadCounts.length > 6 ? facingQuadCounts[6] : 0) << 32);
+        batchRegData[idx + 8] = lodTier;
         batchRegCount++;
         if (batchRegCount >= BATCH_REG_CAPACITY) {
           flushCount = batchRegCount;

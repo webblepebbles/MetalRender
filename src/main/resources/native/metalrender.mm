@@ -385,6 +385,7 @@ struct StaleDrawCmd {
   int idxCount;
   int opaqueIdxCount;
   int opaqueFaceCounts[7];
+  int lodTier;
   float ox, oy, oz;
   bool isMega;
 };
@@ -397,7 +398,6 @@ static int g_staleOffsetCapacity = 0;
 static bool g_hasStaleDrawList = false;
 static float g_staleCamX = 0, g_staleCamY = 0, g_staleCamZ = 0;
 
-static float g_dynamicLODScale = 1.0f;
 static float g_targetFrameTimeMs = 16.67f;
 static float g_avgFrameTimeMs = 0.0f;
 static int g_configuredRenderDistBlocks = 512;
@@ -455,6 +455,7 @@ struct NativeMesh {
   int32_t opaqueQuadCount;
   uint64_t visibilityMask;
   int32_t facingQuadCounts[14];
+  int32_t lodTier;
   bool active;
 };
 
@@ -530,8 +531,8 @@ struct ChunkMeshletNative {
   float worldX;
   float worldY;
   float worldZ;
-  uint32_t _pad0;
-  uint32_t _pad1;
+  uint32_t visibleFaceMask;
+  uint32_t lodTier;
   uint32_t _pad2;
 };
 static_assert(sizeof(ChunkMeshletNative) == 32,
@@ -2606,7 +2607,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMeshB
   if (count <= 0 || !batchData)
     return;
   jsize longLen = env->GetArrayLength(batchData);
-  jsize maxCount = (jsize)(longLen / 8);
+  static constexpr int kBatchStride = 9;
+  jsize maxCount = (jsize)(longLen / kBatchStride);
   if (count > maxCount)
     count = (jint)maxCount;
   jlong *data = env->GetLongArrayElements(batchData, nullptr);
@@ -2614,7 +2616,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMeshB
     return;
   std::unique_lock<std::shared_mutex> lock(g_meshRegMutex);
   for (int i = 0; i < count; i++) {
-    int idx = i * 8;
+    int idx = i * kBatchStride;
     int32_t cx = (int32_t)(data[idx] & 0xFFFFFFFFLL);
     int32_t cy = (int32_t)(data[idx] >> 32);
     int32_t cz = (int32_t)(data[idx + 1] & 0xFFFFFFFFLL);
@@ -2629,6 +2631,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMeshB
     int32_t f4 = (int32_t)(data[idx + 6] >> 32);
     int32_t f5 = (int32_t)(data[idx + 7] & 0xFFFFFFFFLL);
     int32_t f6 = (int32_t)(data[idx + 7] >> 32);
+    int32_t lodTier = (int32_t)data[idx + 8];
+    if (lodTier < 0 || lodTier > 2)
+      lodTier = 0;
     int64_t key = packMeshKey(cx, cy, cz);
     int32_t faceCounts[14] = {f0, f1, f2, f3, f4, f5, f6, 0, 0, 0, 0, 0, 0, 0};
     int opaqueFaceTotal = f0 + f1 + f2 + f3 + f4 + f5 + f6;
@@ -2644,6 +2649,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMeshB
       m.opaqueQuadCount = opaqueQ;
       m.visibilityMask = visMask;
       memcpy(m.facingQuadCounts, faceCounts, sizeof(faceCounts));
+      m.lodTier = lodTier;
       m.active = true;
       continue;
     }
@@ -2664,6 +2670,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMeshB
     mesh.opaqueQuadCount = opaqueQ;
     mesh.visibilityMask = visMask;
     memcpy(mesh.facingQuadCounts, faceCounts, sizeof(faceCounts));
+    mesh.lodTier = lodTier;
     mesh.active = true;
     g_nativeMeshes[mIdx] = mesh;
     g_meshKeyToIdx[key] = mIdx;
@@ -2677,8 +2684,9 @@ extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMesh(
     JNIEnv *env, jclass, jint cx, jint cy, jint cz, jlong bufferHandle,
     jint quadCount, jint opaqueQuadCount, jlong visibilityMask,
-    jintArray facingQuadCounts) {
+    jintArray facingQuadCounts, jint lodTier) {
   int64_t key = packMeshKey(cx, cy, cz);
+  lodTier = std::max(0, std::min(2, (int)lodTier));
   int32_t faceCounts[14] = {};
   if (facingQuadCounts) {
     jsize len = env->GetArrayLength(facingQuadCounts);
@@ -2695,13 +2703,13 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMesh(
   std::unique_lock<std::shared_mutex> lock(g_meshRegMutex);
   auto it = g_meshKeyToIdx.find(key);
   if (it != g_meshKeyToIdx.end()) {
-    NativeMesh &m = g_nativeMeshes[it->second];
-    m.bufferHandle = (uint64_t)bufferHandle;
-    m.quadCount = quadCount;
-    m.opaqueQuadCount = opaqueQuadCount;
-    m.visibilityMask = (uint64_t)visibilityMask;
-    memcpy(m.facingQuadCounts, faceCounts, sizeof(faceCounts));
-    m.active = true;
+    NativeMesh &m = g_nativeMeshes[it->second];      m.bufferHandle = (uint64_t)bufferHandle;
+      m.quadCount = quadCount;
+      m.opaqueQuadCount = opaqueQuadCount;
+      m.visibilityMask = (uint64_t)visibilityMask;
+      memcpy(m.facingQuadCounts, faceCounts, sizeof(faceCounts));
+      m.lodTier = (int32_t)lodTier;
+      m.active = true;
 
     return;
   }
@@ -2717,12 +2725,12 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMesh(
   mesh.chunkX = (int32_t)cx;
   mesh.chunkY = (int32_t)cy;
   mesh.chunkZ = (int32_t)cz;
-  mesh.bufferHandle = (uint64_t)bufferHandle;
-  mesh.quadCount = (int32_t)quadCount;
-  mesh.opaqueQuadCount = (int32_t)opaqueQuadCount;
-  mesh.visibilityMask = (uint64_t)visibilityMask;
-  memcpy(mesh.facingQuadCounts, faceCounts, sizeof(faceCounts));
-  mesh.active = true;
+  mesh.bufferHandle = (uint64_t)bufferHandle;    mesh.quadCount = (int32_t)quadCount;
+    mesh.opaqueQuadCount = (int32_t)opaqueQuadCount;
+    mesh.visibilityMask = (uint64_t)visibilityMask;
+    memcpy(mesh.facingQuadCounts, faceCounts, sizeof(faceCounts));
+    mesh.lodTier = (int32_t)lodTier;
+    mesh.active = true;
   g_nativeMeshes[idx] = mesh;
   g_meshKeyToIdx[key] = idx;
 
@@ -2885,6 +2893,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       int idxCount;
       int opaqueIdxCount;
       int opaqueFaceCounts[7];
+      int lodTier;
       uint32_t facingMask;
       float distSq;
       float ox, oy, oz;
@@ -2904,8 +2913,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
     int validCount = 0;
     int megaCount = 0;
 
-    float baseDist = fmaxf(384.0f / g_dynamicLODScale,
-                           fmaxf(256.0f, (float)g_configuredRenderDistBlocks));
+    const float baseDist = fmaxf(256.0f, (float)g_configuredRenderDistBlocks);
     const float maxDrawDistSq = baseDist * baseDist;
 
     int totalActive = 0;
@@ -2917,6 +2925,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       int quadCount;
       int opaqueQuadCount;
       int opaqueFaceCounts[7];
+      int lodTier;
     };
     static MeshSnapshot *s_snapshots = nullptr;
     static int s_snapshotsCap = 0;
@@ -2946,7 +2955,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         snap.quadCount = nm.quadCount;
         snap.opaqueQuadCount = nm.opaqueQuadCount;
         memcpy(snap.opaqueFaceCounts, nm.facingQuadCounts,
-               sizeof(snap.opaqueFaceCounts));
+            sizeof(snap.opaqueFaceCounts));
+        snap.lodTier = nm.lodTier;
       }
     }
 
@@ -2989,7 +2999,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           cmd.idxCount = idxCount;
           cmd.opaqueIdxCount = opaqueIdxCount;
           memcpy(cmd.opaqueFaceCounts, ms.opaqueFaceCounts,
-                 sizeof(cmd.opaqueFaceCounts));
+              sizeof(cmd.opaqueFaceCounts));
+          cmd.lodTier = ms.lodTier;
           cmd.facingMask = visibleFacingMaskForAabb(ms.ox, ms.oy, ms.oz);
           cmd.distSq = distSq;
           cmd.ox = ms.ox;
@@ -3009,7 +3020,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           cmd.idxCount = idxCount;
           cmd.opaqueIdxCount = opaqueIdxCount;
           memcpy(cmd.opaqueFaceCounts, ms.opaqueFaceCounts,
-                 sizeof(cmd.opaqueFaceCounts));
+              sizeof(cmd.opaqueFaceCounts));
+          cmd.lodTier = ms.lodTier;
           cmd.facingMask = visibleFacingMaskForAabb(ms.ox, ms.oy, ms.oz);
           cmd.distSq = distSq;
           cmd.ox = ms.ox;
@@ -3088,7 +3100,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         stale.idxCount = s_cmds[i].idxCount;
         stale.opaqueIdxCount = s_cmds[i].opaqueIdxCount;
         memcpy(stale.opaqueFaceCounts, s_cmds[i].opaqueFaceCounts,
-               sizeof(stale.opaqueFaceCounts));
+            sizeof(stale.opaqueFaceCounts));
+        stale.lodTier = s_cmds[i].lodTier;
         stale.ox = s_cmds[i].ox;
         stale.oy = s_cmds[i].oy;
         stale.oz = s_cmds[i].oz;
@@ -3127,7 +3140,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         cmd.idxCount = sc.idxCount;
         cmd.opaqueIdxCount = sc.opaqueIdxCount;
         memcpy(cmd.opaqueFaceCounts, sc.opaqueFaceCounts,
-               sizeof(cmd.opaqueFaceCounts));
+            sizeof(cmd.opaqueFaceCounts));
+        cmd.lodTier = sc.lodTier;
         cmd.facingMask = visibleFacingMaskForAabb(sc.ox - dcx, sc.oy - dcy,
                                                   sc.oz - dcz);
         cmd.distSq = 0.0f;
@@ -3256,9 +3270,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           meshlets[meshletCount].worldX = s_cmds[i].ox;
           meshlets[meshletCount].worldY = s_cmds[i].oy;
           meshlets[meshletCount].worldZ = s_cmds[i].oz;
-          meshlets[meshletCount]._pad0 = visibleFacingMaskForAabb(
+          meshlets[meshletCount].visibleFaceMask = visibleFacingMaskForAabb(
               s_cmds[i].ox, s_cmds[i].oy, s_cmds[i].oz);
-          meshlets[meshletCount]._pad1 = 0;
+          meshlets[meshletCount].lodTier = (uint32_t)s_cmds[i].lodTier;
           meshlets[meshletCount]._pad2 = 0;
           meshletCount++;
         }
@@ -4260,32 +4274,16 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
 
       if (state >= NSProcessInfoThermalStateCritical) {
         g_thermalQualityLevel = 2;
-        g_dynamicLODScale = fmaxf(g_dynamicLODScale, 1.8f);
         if (g_frameCount % 60 == 0)
-          dbg("THERMAL: Critical! quality=2, LOD scale=%.2f\n",
-              g_dynamicLODScale);
+          dbg("THERMAL: Critical! quality=2; Java LOD owns mesh quality\n");
       } else if (state >= NSProcessInfoThermalStateSerious) {
         g_thermalQualityLevel = 1;
-        g_dynamicLODScale = fmaxf(g_dynamicLODScale, 1.4f);
         if (g_frameCount % 300 == 0)
-          dbg("THERMAL: Serious. quality=1, LOD scale=%.2f\n",
-              g_dynamicLODScale);
+          dbg("THERMAL: Serious. quality=1; Java LOD owns mesh quality\n");
       } else {
         g_thermalQualityLevel = 0;
       }
 
-      if (g_thermalQualityLevel == 0 && g_avgFrameTimeMs > 0.0f) {
-        if (g_avgFrameTimeMs > 18.0f) {
-
-          g_dynamicLODScale = fminf(g_dynamicLODScale * 1.02f, 1.6f);
-          if (g_frameCount % 300 == 0)
-            dbg("ADAPTIVE_LOD: frame_time=%.1fms > 18ms, scale UP to %.2f\n",
-                g_avgFrameTimeMs, g_dynamicLODScale);
-        } else if (g_avgFrameTimeMs < 14.0f && g_dynamicLODScale > 1.0f) {
-
-          g_dynamicLODScale = fmaxf(g_dynamicLODScale * 0.98f, 1.0f);
-        }
-      }
     }
     {
       std::lock_guard<std::mutex> lock(g_deferredMutex);

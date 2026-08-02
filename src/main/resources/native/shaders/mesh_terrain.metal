@@ -26,7 +26,7 @@ struct ChunkMeshlet {
     float worldY;
     float worldZ;
     uint  visibleFaceMask;
-    uint  _pad1;
+    uint  lodTier;
     uint  _pad2;
 };
 
