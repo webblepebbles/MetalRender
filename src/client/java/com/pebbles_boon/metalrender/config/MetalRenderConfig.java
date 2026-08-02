@@ -23,6 +23,11 @@ public final class MetalRenderConfig {
   public boolean improvedFluidShaping = false;
   public boolean closestPointEntitySort = false;
 
+  public boolean enableDistanceLod = true;
+  public int lodNearChunks = 8;
+  public int lodMidChunks = 16;
+  public boolean lodThermalAdaptive = true;
+
   public boolean enableProgrammableBlending = false;
   public boolean enableIndirectCommandBuffers = false;
   public boolean enableCameraFacingCulling = true;
@@ -107,6 +112,15 @@ public final class MetalRenderConfig {
         if (obj.has("closestPointEntitySort"))
           cfg.closestPointEntitySort = obj.get("closestPointEntitySort").getAsBoolean();
 
+        if (obj.has("enableDistanceLod"))
+          cfg.enableDistanceLod = obj.get("enableDistanceLod").getAsBoolean();
+        if (obj.has("lodNearChunks"))
+          cfg.lodNearChunks = clamp(obj.get("lodNearChunks").getAsInt(), 2, 32);
+        if (obj.has("lodMidChunks"))
+          cfg.lodMidChunks = clamp(obj.get("lodMidChunks").getAsInt(), 4, 48);
+        if (obj.has("lodThermalAdaptive"))
+          cfg.lodThermalAdaptive = obj.get("lodThermalAdaptive").getAsBoolean();
+
         if (obj.has("savedResolutionScale"))
           resolutionScale = clamp(obj.get("savedResolutionScale").getAsFloat(), 0.20f, 1.5f);
       }
@@ -160,6 +174,10 @@ public final class MetalRenderConfig {
       obj.addProperty("hiddenFluidCulling", hiddenFluidCulling);
       obj.addProperty("improvedFluidShaping", improvedFluidShaping);
       obj.addProperty("closestPointEntitySort", closestPointEntitySort);
+      obj.addProperty("enableDistanceLod", enableDistanceLod);
+      obj.addProperty("lodNearChunks", lodNearChunks);
+      obj.addProperty("lodMidChunks", lodMidChunks);
+      obj.addProperty("lodThermalAdaptive", lodThermalAdaptive);
 
       obj.addProperty("savedResolutionScale", resolutionScale);
       java.nio.file.Path path = configFile();

@@ -90,15 +90,17 @@ public class CustomChunkMesher {
     public final long visibilityMask;
     public final int[] facingQuadCounts;
     public final int buildPlayerCX, buildPlayerCY, buildPlayerCZ;
+    public final int lodTier;
 
     public ChunkMeshData(long bufferHandle, int quadCount, int chunkX, int chunkY, int chunkZ,
         int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ) {
       this(bufferHandle, quadCount, chunkX, chunkY, chunkZ, buildPlayerCX, buildPlayerCY, buildPlayerCZ, 0L,
-          new int[7]);
+          new int[7], 0);
     }
 
     public ChunkMeshData(long bufferHandle, int quadCount, int chunkX, int chunkY, int chunkZ,
-        int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ, long visibilityMask, int[] facingQuadCounts) {
+        int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ, long visibilityMask, int[] facingQuadCounts,
+        int lodTier) {
       this.bufferHandle = bufferHandle;
       this.quadCount = quadCount;
       this.chunkX = chunkX;
@@ -109,7 +111,31 @@ public class CustomChunkMesher {
       this.buildPlayerCZ = buildPlayerCZ;
       this.visibilityMask = visibilityMask;
       this.facingQuadCounts = facingQuadCounts != null ? Arrays.copyOf(facingQuadCounts, 14) : new int[14];
+      this.lodTier = lodTier;
     }
+  }
+
+  private static volatile int lodThermalBias = 0;
+
+  public static void setLodThermalBias(int bias) {
+    lodThermalBias = Math.max(0, Math.min(2, bias));
+  }
+
+  public static int lodTierForDistance(int chunkDist) {
+    MetalRenderConfig cfg = MetalRenderClient.getConfig();
+    if (cfg == null || !cfg.enableDistanceLod) {
+      return 0;
+    }
+    int bias = lodThermalBias;
+    int near = Math.max(2, cfg.lodNearChunks - bias * 2);
+    int mid = Math.max(near + 2, cfg.lodMidChunks - bias * 4);
+    if (chunkDist <= near) {
+      return 0;
+    }
+    if (chunkDist <= mid) {
+      return 1;
+    }
+    return 2;
   }
 
   private final Long2ObjectOpenHashMap<ChunkMeshData> meshCache;
@@ -257,6 +283,9 @@ public class CustomChunkMesher {
           return;
         }
         MeshBuildContext context = captureBuildContext(world, chunkX, chunkY, chunkZ);
+        int lodTier = lodTierForDistance(Math.max(
+            Math.abs(chunkX - context.buildPlayerCX),
+            Math.abs(chunkZ - context.buildPlayerCZ)));
         SectionSnapshot snapshot = captureSectionSnapshot(world, chunkX, chunkY, chunkZ,
             false);
         if (!snapshot.valid) {
@@ -266,7 +295,7 @@ public class CustomChunkMesher {
           removeEmptyMesh(key, chunkX, chunkY, chunkZ);
           return;
         }
-        doMeshBuild(chunkX, chunkY, chunkZ, snapshot, key, genAtSubmit, context);
+        doMeshBuild(chunkX, chunkY, chunkZ, snapshot, key, genAtSubmit, context, lodTier);
       } catch (Exception e) {
         MetalLogger.error("mesher fail [%d,%d,%d]: %s", chunkX,
             chunkY, chunkZ, e.getMessage());
@@ -844,6 +873,14 @@ public class CustomChunkMesher {
 
     net.minecraft.world.level.chunk.PalettedContainer<BlockState> localStates = section.getStates();
 
+    net.minecraft.world.level.lighting.LayerLightEventListener blockLightListener = world.getChunkSource()
+        .getLightEngine().getLayerListener(LightLayer.BLOCK);
+    net.minecraft.world.level.lighting.LayerLightEventListener skyLightListener = world.getChunkSource()
+        .getLightEngine().getLayerListener(LightLayer.SKY);
+    net.minecraft.world.level.chunk.DataLayer[] blockLightLayers = new net.minecraft.world.level.chunk.DataLayer[27];
+    net.minecraft.world.level.chunk.DataLayer[] skyLightLayers = new net.minecraft.world.level.chunk.DataLayer[27];
+    boolean[] lightLayerResolved = new boolean[27];
+
     for (int py = 0; py < PADDED_SIZE; py++) {
       for (int pz = 0; pz < PADDED_SIZE; pz++) {
         for (int px = 0; px < PADDED_SIZE; px++) {
@@ -884,8 +921,23 @@ public class CustomChunkMesher {
           if (useApproximateLight) {
             paddedLight[pIdx] = (byte) 0xFF;
           } else {
-            int bl = world.getBrightness(LightLayer.BLOCK, mutablePos);
-            int sl = world.getBrightness(LightLayer.SKY, mutablePos);
+            int sectionX = wx >> 4;
+            int sectionY = wy >> 4;
+            int sectionZ = wz >> 4;
+            int layerIdx = ((sectionY - chunkY + 1) * 3 + (sectionZ - chunkZ + 1)) * 3 +
+                (sectionX - chunkX + 1);
+            if (!lightLayerResolved[layerIdx]) {
+              net.minecraft.core.SectionPos sectionPos = net.minecraft.core.SectionPos.of(sectionX, sectionY,
+                  sectionZ);
+              blockLightLayers[layerIdx] = blockLightListener.getDataLayerData(sectionPos);
+              skyLightLayers[layerIdx] = skyLightListener.getDataLayerData(sectionPos);
+              lightLayerResolved[layerIdx] = true;
+            }
+            net.minecraft.world.level.chunk.DataLayer blockLayer = blockLightLayers[layerIdx];
+            net.minecraft.world.level.chunk.DataLayer skyLayer = skyLightLayers[layerIdx];
+            int bl = blockLayer != null ? blockLayer.get(wx & 15, wy & 15, wz & 15) : 0;
+            int sl = skyLayer != null ? skyLayer.get(wx & 15, wy & 15, wz & 15)
+                : skyLightListener.getLightValue(mutablePos);
             paddedLight[pIdx] = (byte) ((bl & 0xF) | ((sl & 0xF) << 4));
           }
 
@@ -946,7 +998,7 @@ public class CustomChunkMesher {
 
   private void doMeshBuild(int chunkX, int chunkY, int chunkZ,
       SectionSnapshot snapshot, long key, long generation,
-      MeshBuildContext context) {
+      MeshBuildContext context, int lodTier) {
     long buildStart = System.nanoTime();
     try {
       if (isTaskCancelled(key, generation)) {
@@ -965,7 +1017,7 @@ public class CustomChunkMesher {
       waterBuffer.clear();
 
       MeshBuilder builder = new MeshBuilder(vertexBuffer, waterBuffer, context.blockModels,
-          snapshot, context, chunkX, chunkY, chunkZ);
+          snapshot, context, chunkX, chunkY, chunkZ, lodTier);
 
       builder.build();
 
@@ -1019,7 +1071,7 @@ public class CustomChunkMesher {
 
       ChunkMeshData mesh = new ChunkMeshData(bufferHandle, quadCount, chunkX, chunkY, chunkZ,
           context.buildPlayerCX, context.buildPlayerCY, context.buildPlayerCZ,
-          visibilityMask, facingQuadCounts);
+          visibilityMask, facingQuadCounts, lodTier);
       ChunkMeshData old;
       synchronized (meshCache) {
         old = meshCache.put(key, mesh);
@@ -1085,12 +1137,14 @@ public class CustomChunkMesher {
     private final SectionSnapshot snapshot;
     private final MeshBuildContext context;
     private final int chunkX, chunkY, chunkZ;
+    private final int lodTier;
 
     int opaqueQuadCount = 0;
     int waterQuadCount = 0;
 
     MeshBuilder(ByteBuffer solidBuffer, ByteBuffer waterBuffer, BlockStateModelSet blockModels,
-        SectionSnapshot snapshot, MeshBuildContext context, int chunkX, int chunkY, int chunkZ) {
+        SectionSnapshot snapshot, MeshBuildContext context, int chunkX, int chunkY, int chunkZ,
+        int lodTier) {
       this.solidBuffer = solidBuffer;
       this.waterBuffer = waterBuffer;
       this.blockModels = blockModels;
@@ -1099,6 +1153,7 @@ public class CustomChunkMesher {
       this.chunkX = chunkX;
       this.chunkY = chunkY;
       this.chunkZ = chunkZ;
+      this.lodTier = lodTier;
     }
 
     void build() {
@@ -1212,6 +1267,9 @@ public class CustomChunkMesher {
         return true;
       }
       if (state.getBlock() instanceof LeavesBlock) {
+        if (lodTier >= 2) {
+          return true;
+        }
         MetalRenderConfig cfg = MetalRenderClient.getConfig();
         return cfg == null || cfg.leafCullingMode == 0;
       }
@@ -1233,10 +1291,21 @@ public class CustomChunkMesher {
       boolean downVisible = below == null || below.getFluidState().isEmpty();
 
       float[] cornerHeights = new float[4];
-      cornerHeights[0] = sampleFluidCornerHeight(lx, ly, lz, 0, 0);
-      cornerHeights[1] = sampleFluidCornerHeight(lx, ly, lz, 1, 0);
-      cornerHeights[2] = sampleFluidCornerHeight(lx, ly, lz, 1, 1);
-      cornerHeights[3] = sampleFluidCornerHeight(lx, ly, lz, 0, 1);
+      if (lodTier >= 2) {
+        float flatHeight = sampleFluidHeight(lx, ly, lz);
+        if (flatHeight <= 0.0f) {
+          flatHeight = fluid.getOwnHeight();
+        }
+        cornerHeights[0] = flatHeight;
+        cornerHeights[1] = flatHeight;
+        cornerHeights[2] = flatHeight;
+        cornerHeights[3] = flatHeight;
+      } else {
+        cornerHeights[0] = sampleFluidCornerHeight(lx, ly, lz, 0, 0);
+        cornerHeights[1] = sampleFluidCornerHeight(lx, ly, lz, 1, 0);
+        cornerHeights[2] = sampleFluidCornerHeight(lx, ly, lz, 1, 1);
+        cornerHeights[3] = sampleFluidCornerHeight(lx, ly, lz, 0, 1);
+      }
 
       byte light = getPaddedLight(lx, ly, lz);
       int fluidColor = getBiomeTint(lx, ly, lz);
@@ -1246,7 +1315,7 @@ public class CustomChunkMesher {
       byte a = isLava ? (byte) 0xFF : WATER_ALPHA;
 
       if (upVisible) {
-        float flowAngle = computeFluidFlowAngle(lx, ly, lz);
+        float flowAngle = lodTier >= 2 ? Float.NaN : computeFluidFlowAngle(lx, ly, lz);
         renderFluidTop(lx, ly, lz, cornerHeights, r, g, b, a, light, flowAngle, isLava,
             fluid.isSource());
       }
@@ -1501,7 +1570,7 @@ public class CustomChunkMesher {
 
       boolean isLeaves = state.getBlock() instanceof LeavesBlock;
       MetalRenderConfig cfg = MetalRenderClient.getConfig();
-      boolean fastLeaves = isLeaves && cfg != null && cfg.leafCullingMode == 0;
+      boolean fastLeaves = isLeaves && (lodTier >= 2 || (cfg != null && cfg.leafCullingMode == 0));
 
       boolean tinted = quad.materialInfo().isTinted() || quad.materialInfo().tintIndex() >= 0;
       int blockColor = tinted ? getBiomeTint(lx, ly, lz) : 0xFFFFFF;
@@ -1524,8 +1593,15 @@ public class CustomChunkMesher {
         short su = (short) (u * 65535f);
         short sv = (short) (v * 65535f);
 
-        byte light = computeVertexLight(lx, ly, lz, face, x, y, z, quad.materialInfo().lightEmission());
-        float ao = (face != null) ? computeVertexAo(lx, ly, lz, face, x, y, z) : 1.0f;
+        byte light;
+        float ao;
+        if (lodTier >= 2) {
+          light = computeFaceLightFast(lx, ly, lz, face, quad.materialInfo().lightEmission());
+          ao = 1.0f;
+        } else {
+          light = computeVertexLight(lx, ly, lz, face, x, y, z, quad.materialInfo().lightEmission());
+          ao = (lodTier >= 1 || face == null) ? 1.0f : computeVertexAo(lx, ly, lz, face, x, y, z);
+        }
 
         float fr, fg, fb;
         if (tinted) {
@@ -1549,6 +1625,24 @@ public class CustomChunkMesher {
       } else {
         opaqueQuadCount++;
       }
+    }
+
+    private byte computeFaceLightFast(int lx, int ly, int lz, Direction face, int emission) {
+      int sx = lx;
+      int sy = ly;
+      int sz = lz;
+      if (face != null) {
+        sx = Math.max(-1, Math.min(16, lx + face.getStepX()));
+        sy = Math.max(-1, Math.min(16, ly + face.getStepY()));
+        sz = Math.max(-1, Math.min(16, lz + face.getStepZ()));
+      }
+      byte light = getPaddedLight(sx, sy, sz);
+      int bl = light & 0xF;
+      int sl = (light >> 4) & 0xF;
+      if (emission > 0) {
+        bl = Math.max(bl, Math.min(15, emission));
+      }
+      return (byte) ((bl & 0xF) | ((sl & 0xF) << 4));
     }
 
     private byte computeVertexLight(int lx, int ly, int lz, Direction face,
@@ -1699,23 +1793,18 @@ public class CustomChunkMesher {
       running += facingQuadCounts[i];
     }
     int[] bucketOffsets = Arrays.copyOf(bucketStarts, bucketStarts.length);
+    final int quadBytes = 4 * VERTEX_STRIDE;
     for (int i = 0; i < boundedOpaqueQuadCount; i++) {
       int nIdx = readNormalIndex(vertexBuffer, i);
       if (nIdx < 0 || nIdx >= 7) {
         nIdx = 6;
       }
-      int sourceOffset = i * 4 * VERTEX_STRIDE;
-      int destinationOffset = bucketOffsets[nIdx] * 4 * VERTEX_STRIDE;
-      for (int byteIndex = 0; byteIndex < 4 * VERTEX_STRIDE; byteIndex++) {
-        bucketBuffer.put(destinationOffset + byteIndex,
-            vertexBuffer.get(sourceOffset + byteIndex));
-      }
+      bucketBuffer.put(bucketOffsets[nIdx] * quadBytes, vertexBuffer,
+          i * quadBytes, quadBytes);
       bucketOffsets[nIdx]++;
     }
-    int opaqueBytes = boundedOpaqueQuadCount * 4 * VERTEX_STRIDE;
-    for (int byteIndex = 0; byteIndex < opaqueBytes; byteIndex++) {
-      vertexBuffer.put(byteIndex, bucketBuffer.get(byteIndex));
-    }
+    int opaqueBytes = boundedOpaqueQuadCount * quadBytes;
+    vertexBuffer.put(0, bucketBuffer, 0, opaqueBytes);
     return facingQuadCounts;
   }
 

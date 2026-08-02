@@ -99,6 +99,9 @@ public class MetalRenderSettingsScreen extends Screen {
   private boolean initialSmoothLighting;
   private boolean initialDebugPinkBlockTint;
   private boolean initialCameraFacingCulling;
+  private boolean initialDistanceLod;
+  private int initialLodNearChunks;
+  private int initialLodMidChunks;
 
   private final List<Row> rows = new ArrayList<>();
 
@@ -160,6 +163,9 @@ public class MetalRenderSettingsScreen extends Screen {
     initialSmoothLighting = config.enableSimpleLighting;
     initialDebugPinkBlockTint = config.debugPinkBlockTint;
     initialCameraFacingCulling = config.enableCameraFacingCulling;
+    initialDistanceLod = config.enableDistanceLod;
+    initialLodNearChunks = config.lodNearChunks;
+    initialLodMidChunks = config.lodMidChunks;
     layout();
     rebuild();
   }
@@ -487,7 +493,10 @@ public class MetalRenderSettingsScreen extends Screen {
         || (config.biomeTransitionDetail != initialBiomeDetail)
         || (config.leafCullingMode != initialLeafCulling)
         || (config.enableSimpleLighting != initialSmoothLighting)
-        || (config.debugPinkBlockTint != initialDebugPinkBlockTint);
+        || (config.debugPinkBlockTint != initialDebugPinkBlockTint)
+        || (config.enableDistanceLod != initialDistanceLod)
+        || (config.lodNearChunks != initialLodNearChunks)
+        || (config.lodMidChunks != initialLodMidChunks);
 
     boolean biomeChanged = config.biomeTransitionDetail != initialBiomeDetail;
     boolean cameraFacingCullingChanged =
@@ -666,6 +675,14 @@ public class MetalRenderSettingsScreen extends Screen {
     vanilla("Texture Filtering", o.textureFiltering());
     sld("Anisotropy", 0, 3, 1, o.maxAnisotropyBit().get(),
         v -> o.maxAnisotropyBit().set((int) (float) v));
+
+    sec("Level of Detail");
+    tog("Distance LOD", config.enableDistanceLod, v -> config.enableDistanceLod = v);
+    sld("Full Detail Radius (chunks)", 2, 32, 1, config.lodNearChunks,
+        v -> config.lodNearChunks = (int) (float) v);
+    sld("Medium Detail Radius (chunks)", 4, 48, 1, config.lodMidChunks,
+        v -> config.lodMidChunks = (int) (float) v);
+    tog("Thermal-Adaptive LOD", config.lodThermalAdaptive, v -> config.lodThermalAdaptive = v);
 
     sec("Sodium Extras");
     tog("Hidden Fluid Culling", config.hiddenFluidCulling, v -> config.hiddenFluidCulling = v);

@@ -78,6 +78,9 @@ public class MetalWorldRenderer {
   private static final float TURN_PRIORITY_SCAN_COS_THRESHOLD = 0.45f;
   private static final int IMMEDIATE_LOADED_CHUNK_BUILD_RANGE = 8;
   private static final int IMPORTANT_REBUILD_CHUNK_RANGE = 2;
+  private static final int LOD_REFRESH_FRAME_INTERVAL = 45;
+  private static final int LOD_UPGRADE_HYSTERESIS_CHUNKS = 1;
+  private static final int MAX_LOD_REFRESH_SUBMITS_PER_PASS = 48;
   private static final int INTERACTIVE_PRIORITY_CHUNK_RANGE = 6;
   private static final int INTERACTIVE_PRIORITY_SUBMISSIONS_PER_PASS = 8;
   private static final int MAX_INTERACTIVE_PRIORITY_QUEUE_DEPTH = 16;
@@ -356,7 +359,10 @@ public class MetalWorldRenderer {
       long t1 = System.nanoTime();
       buildPendingChunkMeshes(mc);
       long t2 = System.nanoTime();
-      long t3 = t2;
+      if (frameCount % LOD_REFRESH_FRAME_INTERVAL == 0) {
+        refreshLodTiers(mc);
+      }
+      long t3 = System.nanoTime();
       jPruneAcc += (t1 - t0);
       jBuildAcc += (t2 - t1);
       jLodAcc += (t3 - t2);
@@ -1421,6 +1427,46 @@ public class MetalWorldRenderer {
 
   public int getFrameCount() {
     return frameCount;
+  }
+
+  private void refreshLodTiers(Minecraft mc) {
+    MetalRenderConfig config = MetalRenderClient.getConfig();
+    if (config == null || !config.enableDistanceLod || mc.player == null) {
+      return;
+    }
+    if (config.lodThermalAdaptive) {
+      CustomChunkMesher.setLodThermalBias(cachedThermalState >= 3 ? 2
+          : (cachedThermalState >= 2 ? 1 : 0));
+    } else {
+      CustomChunkMesher.setLodThermalBias(0);
+    }
+    if (!pendingBuildSet.isEmpty() || chunkMesher.getPendingCount() > 16) {
+      return;
+    }
+    int playerChunkX = mc.player.chunkPosition().x();
+    int playerChunkZ = mc.player.chunkPosition().z();
+    int queued = 0;
+    for (CustomChunkMesher.ChunkMeshData mesh : chunkMesher.getAllMeshes()) {
+      int dx = Math.abs(mesh.chunkX - playerChunkX);
+      int dz = Math.abs(mesh.chunkZ - playerChunkZ);
+      int chunkDist = Math.max(dx, dz);
+      int desiredTier = CustomChunkMesher.lodTierForDistance(chunkDist);
+      boolean upgrade = desiredTier < mesh.lodTier &&
+          CustomChunkMesher.lodTierForDistance(chunkDist + LOD_UPGRADE_HYSTERESIS_CHUNKS) < mesh.lodTier;
+      boolean downgrade = desiredTier > mesh.lodTier &&
+          CustomChunkMesher.lodTierForDistance(chunkDist - LOD_UPGRADE_HYSTERESIS_CHUNKS) > mesh.lodTier;
+      if (!upgrade && !downgrade) {
+        continue;
+      }
+      chunkMesher.markDirty(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
+      if (pendingBuildSet.add(packChunkKey(mesh.chunkX, mesh.chunkY, mesh.chunkZ))) {
+        sortedListDirty = true;
+      }
+      queued++;
+      if (queued >= MAX_LOD_REFRESH_SUBMITS_PER_PASS) {
+        break;
+      }
+    }
   }
 
   private void pruneFarMeshes(Minecraft mc, org.joml.Vector3f camPos) {
