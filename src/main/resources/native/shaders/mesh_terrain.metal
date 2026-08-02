@@ -155,81 +155,60 @@ void mesh_terrain(
     uint vertEnd    = min(vertStart + kMaxMeshVerts, m.vertexCount);
     uint localVerts = vertEnd - vertStart;
     uint localQuads = localVerts / 4u;
-    threadgroup uint visibleQuadCount;
-    if (tid == 0u) {
-        visibleQuadCount = 0u;
-        for (uint q = 0u; q < localQuads; q++) {
-            InhouseTerrainVertex first = vertices[m.baseVertexOffset + vertStart + q * 4u];
-            uint normalIndex = uint(first.normalIndex & 0x7u);
-            if (normalIndex >= 6u || (m.visibleFaceMask & (1u << normalIndex)) != 0u) {
-                visibleQuadCount++;
-            }
-        }
+
+    threadgroup uint quadVisible[kMaxMeshTris / 2u];
+    threadgroup uint quadCompact[kMaxMeshTris / 2u];
+
+    if (tid < localQuads) {
+        InhouseTerrainVertex first = vertices[m.baseVertexOffset + vertStart + tid * 4u];
+        uint normalIndex = uint(first.normalIndex & 0x7u);
+        quadVisible[tid] =
+            (normalIndex >= 6u || (m.visibleFaceMask & (1u << normalIndex)) != 0u) ? 1u : 0u;
     }
     threadgroup_barrier(mem_flags::mem_threadgroup);
     if (tid == 0u) {
-        output.set_primitive_count(visibleQuadCount * 2u);
+        uint running = 0u;
+        for (uint q = 0u; q < localQuads; q++) {
+            quadCompact[q] = running;
+            running += quadVisible[q];
+        }
+        output.set_primitive_count(running * 2u);
     }
+    threadgroup_barrier(mem_flags::mem_threadgroup);
 
     float3 chunkOrig = float3(m.worldX, m.worldY, m.worldZ);
     float  skyBr     = camera.cameraPosition.w;
 
+    if (tid < localVerts) {
+        uint sourceQuad = tid >> 2u;
+        if (quadVisible[sourceQuad] != 0u) {
+            uint vertexInQuad = tid & 3u;
+            uint gv = m.baseVertexOffset + vertStart + tid;
+            InhouseTerrainVertex v = vertices[gv];
+            uint normalIndex = uint(v.normalIndex & 0x7u);
 
-    for (uint lv = tid; lv < localVerts; lv += kMaxMeshVerts) {
-        uint sourceQuad = lv / 4u;
-        uint vertexInQuad = lv & 3u;
-        InhouseTerrainVertex first = vertices[m.baseVertexOffset + vertStart + sourceQuad * 4u];
-        uint normalIndex = uint(first.normalIndex & 0x7u);
-        if (normalIndex < 6u && (m.visibleFaceMask & (1u << normalIndex)) == 0u) {
-            continue;
+            float3 localPos = float3(short3(v.position)) / 256.0;
+            float3 worldPos = localPos + chunkOrig;
+            float4 viewPos  = camera.modelView * float4(worldPos, 1.0);
+
+            MeshVertexOut out;
+            out.position    = camera.projection * viewPos;
+            out.texCoord    = float2(v.texCoord) / 65535.0f;
+            out.color       = half4(float4(v.color) / 255.0f);
+
+            uint pl      = uint(v.packedLight);
+            half blockL  = half(kGamma[pl & 0xFu]);
+            half skyL    = half(kGamma[(pl >> 4u) & 0xFu]);
+            out.light    = half(max(float(blockL), float(skyL) * skyBr));
+            out.normalIndex = normalIndex;
+            out.worldPos    = worldPos;
+
+            output.set_vertex(quadCompact[sourceQuad] * 4u + vertexInQuad, out);
         }
-        uint compactQuad = 0u;
-        for (uint priorQuad = 0u; priorQuad < sourceQuad; priorQuad++) {
-            InhouseTerrainVertex prior = vertices[m.baseVertexOffset + vertStart + priorQuad * 4u];
-            uint priorNormalIndex = uint(prior.normalIndex & 0x7u);
-            if (priorNormalIndex >= 6u || (m.visibleFaceMask & (1u << priorNormalIndex)) != 0u) {
-                compactQuad++;
-            }
-        }
-        uint gv = m.baseVertexOffset + vertStart + lv;
-        InhouseTerrainVertex v = vertices[gv];
-
-        float3 localPos = float3(short3(v.position)) / 256.0;
-        float3 worldPos = localPos + chunkOrig;
-        float4 viewPos  = camera.modelView * float4(worldPos, 1.0);
-
-        MeshVertexOut out;
-        out.position    = camera.projection * viewPos;
-        out.texCoord    = float2(v.texCoord) / 65535.0f;
-        out.color       = half4(float4(v.color) / 255.0f);
-
-        uint pl      = uint(v.packedLight);
-        half blockL  = half(kGamma[pl & 0xFu]);
-        half skyL    = half(kGamma[(pl >> 4u) & 0xFu]);
-        out.light    = half(max(float(blockL), float(skyL) * skyBr));
-        out.normalIndex = normalIndex;
-        out.worldPos    = worldPos;
-
-        output.set_vertex(compactQuad * 4u + vertexInQuad, out);
     }
 
-
-
-
-    for (uint lq = tid; lq < localQuads; lq += kMaxMeshVerts) {
-        InhouseTerrainVertex first = vertices[m.baseVertexOffset + vertStart + lq * 4u];
-        uint normalIndex = uint(first.normalIndex & 0x7u);
-        if (normalIndex < 6u && (m.visibleFaceMask & (1u << normalIndex)) == 0u) {
-            continue;
-        }
-        uint compactQuad = 0u;
-        for (uint priorQuad = 0u; priorQuad < lq; priorQuad++) {
-            InhouseTerrainVertex prior = vertices[m.baseVertexOffset + vertStart + priorQuad * 4u];
-            uint priorNormalIndex = uint(prior.normalIndex & 0x7u);
-            if (priorNormalIndex >= 6u || (m.visibleFaceMask & (1u << priorNormalIndex)) != 0u) {
-                compactQuad++;
-            }
-        }
+    if (tid < localQuads && quadVisible[tid] != 0u) {
+        uint compactQuad = quadCompact[tid];
         uint b = compactQuad * 4u;
         output.set_index(compactQuad * 6u + 0u, b + 0u);
         output.set_index(compactQuad * 6u + 1u, b + 1u);
