@@ -490,20 +490,6 @@ static inline uint32_t visibleFacingMaskForAabb(float ox, float oy, float oz) {
     mask |= 1u << 5;
   else
     mask |= (1u << 4) | (1u << 5);
-
-  const float directionThreshold = 0.90f;
-  if ((mask & (1u << 0)) != 0 && -g_camDirY > directionThreshold)
-    mask &= ~(1u << 0);
-  if ((mask & (1u << 1)) != 0 && g_camDirY > directionThreshold)
-    mask &= ~(1u << 1);
-  if ((mask & (1u << 2)) != 0 && -g_camDirZ > directionThreshold)
-    mask &= ~(1u << 2);
-  if ((mask & (1u << 3)) != 0 && g_camDirZ > directionThreshold)
-    mask &= ~(1u << 3);
-  if ((mask & (1u << 4)) != 0 && -g_camDirX > directionThreshold)
-    mask &= ~(1u << 4);
-  if ((mask & (1u << 5)) != 0 && g_camDirX > directionThreshold)
-    mask &= ~(1u << 5);
   return mask;
 }
 
