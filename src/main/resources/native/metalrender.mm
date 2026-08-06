@@ -3159,7 +3159,15 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
     if (validCount == 0)
       return 0;
 
-    if (validCount > 1) {
+    bool hasTranslucentGeometry = false;
+    for (int i = 0; i < validCount; i++) {
+      if (s_cmds[i].idxCount > s_cmds[i].opaqueIdxCount) {
+        hasTranslucentGeometry = true;
+        break;
+      }
+    }
+
+    if (validCount > 1 && hasTranslucentGeometry) {
       static DrawCmd *s_radixScratch = nullptr;
       static int s_radixScratchCap = 0;
       if (s_radixScratchCap < validCount) {
