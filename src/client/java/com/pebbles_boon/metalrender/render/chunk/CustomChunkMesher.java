@@ -81,6 +81,7 @@ public class CustomChunkMesher {
 
   private static final int BATCH_REG_CAPACITY = 2048;
   private static final int BATCH_REG_STRIDE = 9;
+  private static final int SNAPSHOT_CACHE_CAPACITY = 512;
 
   public static class ChunkMeshData {
     public final long bufferHandle;
@@ -154,6 +155,7 @@ public class CustomChunkMesher {
   private final java.util.concurrent.ThreadPoolExecutor backgroundPool;
 
   private final Long2LongOpenHashMap dirtyGeneration = new Long2LongOpenHashMap();
+  private final java.util.concurrent.atomic.AtomicLong globalBuildGeneration = new java.util.concurrent.atomic.AtomicLong();
   private final Long2LongOpenHashMap pendingVisibleSectionNanos = new Long2LongOpenHashMap();
   private final Long2LongOpenHashMap pendingBlockUpdateNanos = new Long2LongOpenHashMap();
 
@@ -179,9 +181,6 @@ public class CustomChunkMesher {
       0L);
   private final java.util.concurrent.atomic.AtomicInteger blockUpdateLatencySamples = new java.util.concurrent.atomic.AtomicInteger(
       0);
-
-  private final Long2LongOpenHashMap rebuildBatchTick = new Long2LongOpenHashMap();
-  private volatile int coalesceFrameCounter = 0;
 
   public CustomChunkMesher() {
     this.meshCache = new Long2ObjectOpenHashMap<>();
@@ -269,6 +268,7 @@ public class CustomChunkMesher {
 
     long key = packChunkKey(chunkX, chunkY, chunkZ);
     final long genAtSubmit;
+    final long globalGenAtSubmit = globalBuildGeneration.get();
     synchronized (dirtyGeneration) {
       genAtSubmit = dirtyGeneration.get(key);
     }
@@ -280,15 +280,22 @@ public class CustomChunkMesher {
     int priority = interactive ? 0 : (highPriority ? 1 : 2);
     boolean submitted = submitMeshTask(priority, () -> {
       try {
-        if (isTaskCancelled(key, genAtSubmit)) {
+        if (isTaskCancelled(key, genAtSubmit, globalGenAtSubmit)) {
           return;
         }
         MeshBuildContext context = captureBuildContext(world, chunkX, chunkY, chunkZ);
         int lodTier = lodTierForDistance(Math.max(
             Math.abs(chunkX - context.buildPlayerCX),
             Math.abs(chunkZ - context.buildPlayerCZ)));
-        SectionSnapshot snapshot = captureSectionSnapshot(world, chunkX, chunkY, chunkZ,
-            lodTier >= 1);
+        boolean useApproximateLight = lodTier >= 1;
+        long snapshotToken = snapshotCacheToken(genAtSubmit, useApproximateLight);
+        SectionSnapshot snapshot = getCachedSnapshot(key, snapshotToken);
+        if (snapshot == null) {
+          snapshot = captureSectionSnapshot(world, chunkX, chunkY, chunkZ, useApproximateLight);
+          if (snapshot.valid && !snapshot.empty && !isTaskCancelled(key, genAtSubmit, globalGenAtSubmit)) {
+            cacheSnapshot(key, snapshotToken, snapshot);
+          }
+        }
         if (!snapshot.valid) {
           return;
         }
@@ -296,7 +303,7 @@ public class CustomChunkMesher {
           removeEmptyMesh(key, chunkX, chunkY, chunkZ);
           return;
         }
-        doMeshBuild(chunkX, chunkY, chunkZ, snapshot, key, genAtSubmit, context, lodTier);
+        doMeshBuild(chunkX, chunkY, chunkZ, snapshot, key, genAtSubmit, globalGenAtSubmit, context, lodTier);
       } catch (Exception e) {
         MetalLogger.error("mesher fail [%d,%d,%d]: %s", chunkX,
             chunkY, chunkZ, e.getMessage());
@@ -350,23 +357,6 @@ public class CustomChunkMesher {
 
   public void markDirty(int cx, int cy, int cz) {
     long key = packChunkKey(cx, cy, cz);
-    int currentFrame = coalesceFrameCounter;
-    long prevMark;
-    synchronized (rebuildBatchTick) {
-      if (rebuildBatchTick.size() >= 4096) {
-        rebuildBatchTick.clear();
-      }
-      prevMark = rebuildBatchTick.get(key);
-      rebuildBatchTick.put(key, currentFrame);
-    }
-    boolean recentBlockUpdate;
-    synchronized (pendingBlockUpdateNanos) {
-      recentBlockUpdate = pendingBlockUpdateNanos.containsKey(key);
-    }
-    boolean canCoalesce = prevMark != 0L
-        && (currentFrame - (int) prevMark) <= 5
-        && !recentBlockUpdate;
-
     synchronized (emptyKeys) {
       emptyKeys.remove(key);
     }
@@ -376,16 +366,12 @@ public class CustomChunkMesher {
     synchronized (pendingKeys) {
       pendingKeys.remove(key);
     }
-    if (!canCoalesce) {
-      synchronized (dirtyGeneration) {
-        dirtyGeneration.put(key, dirtyGeneration.get(key) + 1L);
-      }
-      synchronized (snapshotCache) {
-        snapshotCache.remove(key);
-      }
-      synchronized (snapshotCacheGen) {
-        snapshotCacheGen.remove(key);
-      }
+    synchronized (dirtyGeneration) {
+      dirtyGeneration.put(key, dirtyGeneration.get(key) + 1L);
+    }
+    synchronized (snapshotCache) {
+      snapshotCache.remove(key);
+      snapshotCacheGen.remove(key);
     }
   }
 
@@ -404,6 +390,17 @@ public class CustomChunkMesher {
         dirtyKeys.add(k);
       for (long k : emptyArr)
         dirtyKeys.add(k);
+    }
+    globalBuildGeneration.incrementAndGet();
+    synchronized (dirtyGeneration) {
+      for (long k : keys)
+        dirtyGeneration.put(k, dirtyGeneration.get(k) + 1L);
+      for (long k : emptyArr)
+        dirtyGeneration.put(k, dirtyGeneration.get(k) + 1L);
+    }
+    synchronized (snapshotCache) {
+      snapshotCache.clear();
+      snapshotCacheGen.clear();
     }
   }
 
@@ -424,6 +421,13 @@ public class CustomChunkMesher {
     }
     synchronized (dirtyKeys) {
       dirtyKeys.remove(key);
+    }
+    synchronized (dirtyGeneration) {
+      dirtyGeneration.put(key, dirtyGeneration.get(key) + 1L);
+    }
+    synchronized (snapshotCache) {
+      snapshotCache.remove(key);
+      snapshotCacheGen.remove(key);
     }
     meshUpdateGeneration.incrementAndGet();
   }
@@ -453,18 +457,13 @@ public class CustomChunkMesher {
     synchronized (emptyKeys) {
       emptyKeys.clear();
     }
+    globalBuildGeneration.incrementAndGet();
     synchronized (snapshotCache) {
       snapshotCache.clear();
-    }
-    synchronized (snapshotCacheGen) {
       snapshotCacheGen.clear();
     }
     synchronized (batchRegData) {
       batchRegCount = 0;
-    }
-    coalesceFrameCounter = 0;
-    synchronized (rebuildBatchTick) {
-      rebuildBatchTick.clear();
     }
     MetalLogger.info("mesher data cleared (%d).", count);
   }
@@ -566,10 +565,6 @@ public class CustomChunkMesher {
       NativeBridge.nRegisterChunkMeshBatch(toFlush, batchRegData);
       batchRegCount = 0;
     }
-  }
-
-  public void bumpCoalesceFrame() {
-    coalesceFrameCounter++;
   }
 
   public int getMeshUpdateGeneration() {
@@ -678,7 +673,10 @@ public class CustomChunkMesher {
     return backgroundPool.getActiveCount() + backgroundPool.getQueue().size();
   }
 
-  private boolean isTaskCancelled(long key, long generation) {
+  private boolean isTaskCancelled(long key, long generation, long globalGeneration) {
+    if (globalBuildGeneration.get() != globalGeneration) {
+      return true;
+    }
     synchronized (dirtyGeneration) {
       return dirtyGeneration.get(key) != generation;
     }
@@ -744,6 +742,13 @@ public class CustomChunkMesher {
       this.paddedLight = paddedLight;
       this.biomeTints = biomeTints;
     }
+
+    SectionSnapshot copy() {
+      return new SectionSnapshot(valid, empty,
+          paddedBlockStates != null ? Arrays.copyOf(paddedBlockStates, paddedBlockStates.length) : null,
+          paddedLight != null ? Arrays.copyOf(paddedLight, paddedLight.length) : null,
+          biomeTints != null ? Arrays.copyOf(biomeTints, biomeTints.length) : null);
+    }
   }
 
   private static final class SnapshotData {
@@ -753,6 +758,35 @@ public class CustomChunkMesher {
   }
 
   private static final ThreadLocal<SnapshotData> SNAPSHOT_POOL = ThreadLocal.withInitial(SnapshotData::new);
+
+  private static long snapshotCacheToken(long generation, boolean useApproximateLight) {
+    return (generation << 1) | (useApproximateLight ? 1L : 0L);
+  }
+
+  private SectionSnapshot getCachedSnapshot(long key, long token) {
+    synchronized (snapshotCache) {
+      if (snapshotCacheGen.get(key) != token) {
+        snapshotCache.remove(key);
+        snapshotCacheGen.remove(key);
+        return null;
+      }
+      return snapshotCache.get(key);
+    }
+  }
+
+  private void cacheSnapshot(long key, long token, SectionSnapshot snapshot) {
+    synchronized (snapshotCache) {
+      if (!snapshotCache.containsKey(key) && snapshotCache.size() >= SNAPSHOT_CACHE_CAPACITY) {
+        long[] keys = snapshotCache.keySet().toLongArray();
+        if (keys.length > 0) {
+          snapshotCache.remove(keys[0]);
+          snapshotCacheGen.remove(keys[0]);
+        }
+      }
+      snapshotCache.put(key, snapshot.copy());
+      snapshotCacheGen.put(key, token);
+    }
+  }
 
   private static final class MeshBuildContext {
     final BlockStateModelSet blockModels;
@@ -1005,11 +1039,11 @@ public class CustomChunkMesher {
       .withInitial(() -> RandomSource.create(0));
 
   private void doMeshBuild(int chunkX, int chunkY, int chunkZ,
-      SectionSnapshot snapshot, long key, long generation,
+      SectionSnapshot snapshot, long key, long generation, long globalGeneration,
       MeshBuildContext context, int lodTier) {
     long buildStart = System.nanoTime();
     try {
-      if (isTaskCancelled(key, generation)) {
+      if (isTaskCancelled(key, generation, globalGeneration)) {
         return;
       }
 
@@ -1051,7 +1085,7 @@ public class CustomChunkMesher {
       long visibilityMask = computeVisibilityMask(snapshot.paddedBlockStates);
       int dataLen = quadCount * 4 * VERTEX_STRIDE;
 
-      if (isTaskCancelled(key, generation)) {
+      if (isTaskCancelled(key, generation, globalGeneration)) {
         return;
       }
 
