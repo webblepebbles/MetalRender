@@ -402,7 +402,6 @@ public class MetalWorldRenderer {
       return;
     if (chunkMesher != null) {
       chunkMesher.flushMeshRegistrations();
-      chunkMesher.bumpCoalesceFrame();
     }
     projectionMatrix.set(projection);
     modelViewMatrix.set(modelView);
