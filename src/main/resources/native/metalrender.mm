@@ -17,6 +17,7 @@
 #include <mach/mach_host.h>
 #include <mach/mach_time.h>
 #include <mutex>
+#include <limits>
 #include <shared_mutex>
 #include <thread>
 #include <unordered_map>
@@ -469,29 +470,9 @@ static inline int visibleOpaqueQuadCount(const int counts[7], uint32_t mask) {
 }
 
 static inline uint32_t visibleFacingMaskForAabb(float ox, float oy, float oz) {
-  if (!g_cameraFacingCullingEnabled.load(std::memory_order_relaxed))
-    return 0x7Fu;
+  return 0x7Fu;
 
-  uint32_t mask = 1u << 6;
-  if (0.0f < oy)
-    mask |= 1u << 0;
-  else if (0.0f > oy + 16.0f)
-    mask |= 1u << 1;
-  else
-    mask |= (1u << 0) | (1u << 1);
-  if (0.0f < oz)
-    mask |= 1u << 2;
-  else if (0.0f > oz + 16.0f)
-    mask |= 1u << 3;
-  else
-    mask |= (1u << 2) | (1u << 3);
-  if (0.0f < ox)
-    mask |= 1u << 4;
-  else if (0.0f > ox + 16.0f)
-    mask |= 1u << 5;
-  else
-    mask |= (1u << 4) | (1u << 5);
-  return mask;
+
 }
 
 static inline int opaqueBucketStartQuad(const int counts[7], int bucket) {
@@ -2417,27 +2398,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBatch(
       return;
     }
 
-    static int g_drawBudget = 65536;
-    static const int MIN_BUDGET = 16384;
-    static const int MAX_BUDGET = 65536;
-    float gpuMs = g_lastGpuMs.load(std::memory_order_relaxed);
-    if (gpuMs > 14.0f && g_drawBudget > MIN_BUDGET) {
-      g_drawBudget = MAX(MIN_BUDGET, (int)(g_drawBudget * 0.92f));
-    } else if (gpuMs < 12.0f && g_drawBudget < MAX_BUDGET) {
-      g_drawBudget = MIN(MAX_BUDGET, (int)(g_drawBudget * 1.12f) + 2);
-    }
-    int preCapCount = validCount;
-    if (validCount > g_drawBudget) {
-      megaCount = 0;
-      for (int i = 0; i < g_drawBudget; i++) {
-        if (cmds[i].isMega)
-          megaCount++;
-      }
-      validCount = g_drawBudget;
-    }
     if (g_frameCount % 600 == 0) {
-      dbg("DRAW_BUDGET: budget=%d, preCap=%d, drawn=%d, gpuMs=%.1f\n",
-          g_drawBudget, preCapCount, validCount, gpuMs);
+      dbg("DRAW_BUDGET: disabled, resident=%d, gpuMs=%.1f\n",
+          validCount, g_lastGpuMs.load(std::memory_order_relaxed));
     }
     if (g_megaVB) {
       [g_currentEncoder setVertexBuffer:g_megaVB offset:0 atIndex:0];
@@ -2913,8 +2876,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
     int validCount = 0;
     int megaCount = 0;
 
-    const float baseDist = fmaxf(256.0f, (float)g_configuredRenderDistBlocks);
-    const float maxDrawDistSq = baseDist * baseDist;
+    const float maxDrawDistSq = std::numeric_limits<float>::infinity();
 
     int totalActive = 0;
 
@@ -2937,6 +2899,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         s_snapshotsCap = activeTotal * 2;
         s_snapshots = new MeshSnapshot[s_snapshotsCap];
       }
+      totalActive = 0;
       for (int k = 0; k < activeTotal; k++) {
         int i = g_activeMeshIndices[k];
         const NativeMesh &nm = g_nativeMeshes[i];
@@ -2981,10 +2944,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         float cx = ms.ox + 8.0f, cy = ms.oy + 8.0f, cz = ms.oz + 8.0f;
 
         float distSq = cx * cx + cz * cz;
-        if (__builtin_expect(distSq > maxDrawDistSq, 0)) {
-          distCulled++;
-          return;
-        }
         int idxCount = ms.quadCount * 6;
         int opaqueIdxCount = ms.opaqueQuadCount * 6;
         bool mega = isMegaHandle(ms.bufferHandle);
@@ -3033,10 +2992,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       };
 
       for (int si = 0; si < totalActive; si++) {
-        const MeshSnapshot &ms = s_snapshots[si];
-        if (!frustumTestAABB(frustumPlanes, ms.ox, ms.oy, ms.oz, ms.ox + 16.0f,
-                             ms.oy + 16.0f, ms.oz + 16.0f))
-          continue;
         processVisible(si);
       }
 
