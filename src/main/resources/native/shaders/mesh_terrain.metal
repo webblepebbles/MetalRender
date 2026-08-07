@@ -110,19 +110,6 @@ void object_terrain(
         return;
     }
 
-    float3 minC = float3(m.worldX, m.worldY, m.worldZ);
-    float3 maxC = minC + float3(16.0, 16.0, 16.0);
-    for (uint i = 0u; i < 6u; i++) {
-        float4 plane = camera.frustumPlanes[i];
-        float3 pv;
-        pv.x = (plane.x > 0.0) ? maxC.x : minC.x;
-        pv.y = (plane.y > 0.0) ? maxC.y : minC.y;
-        pv.z = (plane.z > 0.0) ? maxC.z : minC.z;
-        if (dot(plane.xyz, pv) + plane.w < 0.0) {
-            grid.set_threadgroups_per_grid(uint3(0, 0, 0));
-            return;
-        }
-    }
     payload.chunkIndex = tid;
     uint numGroups = (m.vertexCount + 255u) / 256u;
     grid.set_threadgroups_per_grid(uint3(numGroups, 1, 1));
@@ -199,7 +186,7 @@ void mesh_terrain(
             uint pl      = uint(v.packedLight);
             half blockL  = half(kGamma[pl & 0xFu]);
             half skyL    = half(kGamma[(pl >> 4u) & 0xFu]);
-            out.light    = half(max(float(blockL), float(skyL) * skyBr));
+            out.light    = half(max(max(float(blockL), float(skyL) * skyBr), 0.15f));
             out.normalIndex = normalIndex;
             out.worldPos    = worldPos;
 
