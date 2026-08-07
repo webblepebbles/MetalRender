@@ -78,9 +78,11 @@ public class MetalWorldRenderer {
   private static final float TURN_PRIORITY_SCAN_COS_THRESHOLD = 0.45f;
   private static final int IMMEDIATE_LOADED_CHUNK_BUILD_RANGE = 8;
   private static final int IMPORTANT_REBUILD_CHUNK_RANGE = 2;
-  private static final int LOD_REFRESH_FRAME_INTERVAL = 45;
+  private static final int LOD_REFRESH_FRAME_INTERVAL = 1;
   private static final int LOD_UPGRADE_HYSTERESIS_CHUNKS = 1;
-  private static final int MAX_LOD_REFRESH_SUBMITS_PER_PASS = 48;
+  private static final int MAX_LOD_REFRESH_SUBMITS_PER_PASS = 4;
+  private static final int LOD_REFRESH_PENDING_LIMIT = 64;
+  private static final int LOD_REFRESH_IN_FLIGHT_LIMIT = 48;
   private static final int INTERACTIVE_PRIORITY_CHUNK_RANGE = 6;
   private static final int INTERACTIVE_PRIORITY_SUBMISSIONS_PER_PASS = 8;
   private static final int MAX_INTERACTIVE_PRIORITY_QUEUE_DEPTH = 16;
@@ -357,11 +359,11 @@ public class MetalWorldRenderer {
         pruneFarMeshes(mc, camPos);
       }
       long t1 = System.nanoTime();
-      buildPendingChunkMeshes(mc);
-      long t2 = System.nanoTime();
       if (frameCount % LOD_REFRESH_FRAME_INTERVAL == 0) {
         refreshLodTiers(mc);
       }
+      buildPendingChunkMeshes(mc);
+      long t2 = System.nanoTime();
       long t3 = System.nanoTime();
       jPruneAcc += (t1 - t0);
       jBuildAcc += (t2 - t1);
@@ -720,6 +722,7 @@ public class MetalWorldRenderer {
   private int turnPriorityFrames = 0;
   private int remainingPrioritizedBuilds = PRIORITIZED_BUILD_STREAK_LIMIT;
   private int cachedThermalState = 0;
+  private int lodRefreshCursor = 0;
 
   private static final class PendingBuildCandidate {
     final long key;
@@ -1439,13 +1442,28 @@ public class MetalWorldRenderer {
     } else {
       CustomChunkMesher.setLodThermalBias(0);
     }
-    if (!pendingBuildSet.isEmpty() || chunkMesher.getPendingCount() > 16) {
+    if (cachedThermalState >= 2 || pendingBuildSet.size() >= LOD_REFRESH_PENDING_LIMIT ||
+        chunkMesher.getPendingCount() >= LOD_REFRESH_IN_FLIGHT_LIMIT) {
+      return;
+    }
+    int meshCount = chunkMesher.getMeshSnapshotSize();
+    if (meshCount == 0) {
+      lodRefreshCursor = 0;
       return;
     }
     int playerChunkX = mc.player.chunkPosition().x();
     int playerChunkZ = mc.player.chunkPosition().z();
     int queued = 0;
-    for (CustomChunkMesher.ChunkMeshData mesh : chunkMesher.getAllMeshes()) {
+    int inspected = 0;
+    while (inspected < meshCount && queued < refreshBudget) {
+      if (lodRefreshCursor >= meshCount) {
+        lodRefreshCursor = 0;
+      }
+      CustomChunkMesher.ChunkMeshData mesh = chunkMesher.getMeshSnapshotAt(lodRefreshCursor++);
+      inspected++;
+      if (mesh == null || mesh.lodTier < 1) {
+        continue;
+      }
       int dx = Math.abs(mesh.chunkX - playerChunkX);
       int dz = Math.abs(mesh.chunkZ - playerChunkZ);
       int chunkDist = Math.max(dx, dz);
@@ -1454,16 +1472,18 @@ public class MetalWorldRenderer {
           CustomChunkMesher.lodTierForDistance(chunkDist + LOD_UPGRADE_HYSTERESIS_CHUNKS) < mesh.lodTier;
       boolean downgrade = desiredTier > mesh.lodTier &&
           CustomChunkMesher.lodTierForDistance(chunkDist - LOD_UPGRADE_HYSTERESIS_CHUNKS) > mesh.lodTier;
-      if (!upgrade && !downgrade) {
+      boolean tierChanged = upgrade || downgrade;
+      long key = packChunkKey(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
+      if (pendingBuildSet.contains(key) || chunkMesher.isBuildPending(mesh.chunkX, mesh.chunkY, mesh.chunkZ)) {
+        continue;
+      }
+      if (!tierChanged && mesh.lodTier < 1) {
         continue;
       }
       chunkMesher.markDirty(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
-      if (pendingBuildSet.add(packChunkKey(mesh.chunkX, mesh.chunkY, mesh.chunkZ))) {
+      if (pendingBuildSet.add(key)) {
         sortedListDirty = true;
-      }
-      queued++;
-      if (queued >= MAX_LOD_REFRESH_SUBMITS_PER_PASS) {
-        break;
+        queued++;
       }
     }
   }

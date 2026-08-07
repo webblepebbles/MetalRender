@@ -300,7 +300,7 @@ public class CustomChunkMesher {
           return;
         }
         if (snapshot.empty) {
-          removeEmptyMesh(key, chunkX, chunkY, chunkZ);
+          removeEmptyMesh(key, chunkX, chunkY, chunkZ, genAtSubmit, globalGenAtSubmit);
           return;
         }
         doMeshBuild(chunkX, chunkY, chunkZ, snapshot, key, genAtSubmit, globalGenAtSubmit, context, lodTier);
@@ -308,8 +308,12 @@ public class CustomChunkMesher {
         MetalLogger.error("mesher fail [%d,%d,%d]: %s", chunkX,
             chunkY, chunkZ, e.getMessage());
       } finally {
-        synchronized (pendingKeys) {
-          pendingKeys.remove(key);
+        synchronized (dirtyGeneration) {
+          if (dirtyGeneration.get(key) == genAtSubmit) {
+            synchronized (pendingKeys) {
+              pendingKeys.remove(key);
+            }
+          }
         }
       }
     }, chunkX, chunkZ);
@@ -352,6 +356,13 @@ public class CustomChunkMesher {
     long key = packChunkKey(cx, cy, cz);
     synchronized (meshCache) {
       return meshCache.containsKey(key);
+    }
+  }
+
+  public boolean isBuildPending(int cx, int cy, int cz) {
+    long key = packChunkKey(cx, cy, cz);
+    synchronized (pendingKeys) {
+      return pendingKeys.contains(key);
     }
   }
 
@@ -407,8 +418,11 @@ public class CustomChunkMesher {
   public void removeMesh(int cx, int cy, int cz) {
     long key = packChunkKey(cx, cy, cz);
     ChunkMeshData old;
-    synchronized (meshCache) {
-      old = meshCache.remove(key);
+    synchronized (dirtyGeneration) {
+      dirtyGeneration.put(key, dirtyGeneration.get(key) + 1L);
+      synchronized (meshCache) {
+        old = meshCache.remove(key);
+      }
     }
     if (old != null) {
       NativeBridge.nUnregisterChunkMesh(cx, cy, cz);
@@ -421,9 +435,6 @@ public class CustomChunkMesher {
     }
     synchronized (dirtyKeys) {
       dirtyKeys.remove(key);
-    }
-    synchronized (dirtyGeneration) {
-      dirtyGeneration.put(key, dirtyGeneration.get(key) + 1L);
     }
     synchronized (snapshotCache) {
       snapshotCache.remove(key);
@@ -572,6 +583,23 @@ public class CustomChunkMesher {
   }
 
   public Iterable<ChunkMeshData> getAllMeshes() {
+    refreshCachedMeshSnapshot();
+    return cachedMeshSnapshot;
+  }
+
+  public int getMeshSnapshotSize() {
+    refreshCachedMeshSnapshot();
+    return cachedMeshSnapshot.size();
+  }
+
+  public ChunkMeshData getMeshSnapshotAt(int index) {
+    refreshCachedMeshSnapshot();
+    return index >= 0 && index < cachedMeshSnapshot.size()
+        ? cachedMeshSnapshot.get(index)
+        : null;
+  }
+
+  private void refreshCachedMeshSnapshot() {
     int currentGen = meshUpdateGeneration.get();
     if (cachedSnapshotGen != currentGen) {
       synchronized (meshCache) {
@@ -580,7 +608,6 @@ public class CustomChunkMesher {
       }
       cachedSnapshotGen = currentGen;
     }
-    return cachedMeshSnapshot;
   }
 
   private static long packChunkKey(int x, int y, int z) {
@@ -707,15 +734,23 @@ public class CustomChunkMesher {
     }
   }
 
-  private void removeEmptyMesh(long key, int chunkX, int chunkY, int chunkZ) {
-    synchronized (meshCache) {
-      ChunkMeshData old = meshCache.remove(key);
-      if (old != null) {
-        NativeBridge.nUnregisterChunkMesh(chunkX, chunkY, chunkZ);
-        NativeBridge.nDestroyBuffer(old.bufferHandle);
-        meshCountAtomic.decrementAndGet();
-        vertexCountAtomic.addAndGet(-old.quadCount * 4);
+  private void removeEmptyMesh(long key, int chunkX, int chunkY, int chunkZ,
+      long generation, long globalGeneration) {
+    ChunkMeshData old;
+    synchronized (dirtyGeneration) {
+      if (globalBuildGeneration.get() != globalGeneration ||
+          dirtyGeneration.get(key) != generation) {
+        return;
       }
+      synchronized (meshCache) {
+        old = meshCache.remove(key);
+      }
+    }
+    if (old != null) {
+      NativeBridge.nUnregisterChunkMesh(chunkX, chunkY, chunkZ);
+      NativeBridge.nDestroyBuffer(old.bufferHandle);
+      meshCountAtomic.decrementAndGet();
+      vertexCountAtomic.addAndGet(-old.quadCount * 4);
     }
     synchronized (emptyKeys) {
       emptyKeys.add(key);
@@ -913,6 +948,7 @@ public class CustomChunkMesher {
     net.minecraft.world.level.chunk.DataLayer[] blockLightLayers = null;
     net.minecraft.world.level.chunk.DataLayer[] skyLightLayers = null;
     boolean[] lightLayerResolved = null;
+    byte[] approximateLightGrid = useApproximateLight ? new byte[125] : null;
     if (!useApproximateLight) {
       blockLightListener = world.getChunkSource().getLightEngine()
           .getLayerListener(LightLayer.BLOCK);
@@ -921,6 +957,43 @@ public class CustomChunkMesher {
       blockLightLayers = new net.minecraft.world.level.chunk.DataLayer[27];
       skyLightLayers = new net.minecraft.world.level.chunk.DataLayer[27];
       lightLayerResolved = new boolean[27];
+    }
+    if (useApproximateLight) {
+      blockLightListener = world.getChunkSource().getLightEngine()
+          .getLayerListener(LightLayer.BLOCK);
+      skyLightListener = world.getChunkSource().getLightEngine()
+          .getLayerListener(LightLayer.SKY);
+      blockLightLayers = new net.minecraft.world.level.chunk.DataLayer[27];
+      skyLightLayers = new net.minecraft.world.level.chunk.DataLayer[27];
+      lightLayerResolved = new boolean[27];
+      for (int gy = 0; gy < 5; gy++) {
+        for (int gz = 0; gz < 5; gz++) {
+          for (int gx = 0; gx < 5; gx++) {
+            int sampleX = baseX + gx * 4 - 1;
+            int sampleY = baseY + gy * 4 - 1;
+            int sampleZ = baseZ + gz * 4 - 1;
+            int sectionX = sampleX >> 4;
+            int sectionY = sampleY >> 4;
+            int sectionZ = sampleZ >> 4;
+            int layerIdx = ((sectionY - chunkY + 1) * 3 + (sectionZ - chunkZ + 1)) * 3 +
+                (sectionX - chunkX + 1);
+            if (!lightLayerResolved[layerIdx]) {
+              net.minecraft.core.SectionPos sectionPos = net.minecraft.core.SectionPos.of(sectionX, sectionY,
+                  sectionZ);
+              blockLightLayers[layerIdx] = blockLightListener.getDataLayerData(sectionPos);
+              skyLightLayers[layerIdx] = skyLightListener.getDataLayerData(sectionPos);
+              lightLayerResolved[layerIdx] = true;
+            }
+            net.minecraft.world.level.chunk.DataLayer blockLayer = blockLightLayers[layerIdx];
+            net.minecraft.world.level.chunk.DataLayer skyLayer = skyLightLayers[layerIdx];
+            BlockPos.MutableBlockPos samplePos = mutablePos.set(sampleX, sampleY, sampleZ);
+            int block = blockLayer != null ? blockLayer.get(sampleX & 15, sampleY & 15, sampleZ & 15) : 0;
+            int sky = skyLayer != null ? skyLayer.get(sampleX & 15, sampleY & 15, sampleZ & 15)
+                : skyLightListener.getLightValue(samplePos);
+            approximateLightGrid[(gy * 25) + (gz * 5) + gx] = (byte) ((block & 0xF) | ((sky & 0xF) << 4));
+          }
+        }
+      }
     }
 
     for (int py = 0; py < PADDED_SIZE; py++) {
@@ -961,7 +1034,10 @@ public class CustomChunkMesher {
           paddedBlockStates[pIdx] = stateId;
 
           if (useApproximateLight) {
-            paddedLight[pIdx] = (byte) 0xFF;
+            int lightX = Math.min(4, (px + 2) >> 2);
+            int lightY = Math.min(4, (py + 2) >> 2);
+            int lightZ = Math.min(4, (pz + 2) >> 2);
+            paddedLight[pIdx] = approximateLightGrid[(lightY * 25) + (lightZ * 5) + lightX];
           } else {
             int sectionX = wx >> 4;
             int sectionY = wy >> 4;
@@ -1049,7 +1125,7 @@ public class CustomChunkMesher {
 
       if (snapshot != null && snapshot.paddedBlockStates != null &&
           isSectionFullyOccluded(snapshot.paddedBlockStates)) {
-        removeEmptyMesh(key, chunkX, chunkY, chunkZ);
+        removeEmptyMesh(key, chunkX, chunkY, chunkZ, generation, globalGeneration);
         return;
       }
 
@@ -1068,7 +1144,7 @@ public class CustomChunkMesher {
       int quadCount = opaqueQuadCount + waterQuadCount;
 
       if (quadCount == 0) {
-        removeEmptyMesh(key, chunkX, chunkY, chunkZ);
+        removeEmptyMesh(key, chunkX, chunkY, chunkZ, generation, globalGeneration);
         return;
       }
 
@@ -1115,8 +1191,14 @@ public class CustomChunkMesher {
           context.buildPlayerCX, context.buildPlayerCY, context.buildPlayerCZ,
           visibilityMask, facingQuadCounts, lodTier);
       ChunkMeshData old;
-      synchronized (meshCache) {
-        old = meshCache.put(key, mesh);
+      synchronized (dirtyGeneration) {
+        if (isTaskCancelled(key, generation, globalGeneration)) {
+          NativeBridge.nDestroyBuffer(bufferHandle);
+          return;
+        }
+        synchronized (meshCache) {
+          old = meshCache.put(key, mesh);
+        }
       }
       if (old == null) {
         meshCountAtomic.incrementAndGet();
@@ -1126,25 +1208,27 @@ public class CustomChunkMesher {
       }
 
       int flushCount = -1;
-      synchronized (batchRegData) {
-        int idx = batchRegCount * BATCH_REG_STRIDE;
-        batchRegData[idx] = (chunkX & 0xFFFFFFFFL) | ((long) chunkY << 32);
-        batchRegData[idx + 1] = (chunkZ & 0xFFFFFFFFL) | ((long) quadCount << 32);
-        batchRegData[idx + 2] = bufferHandle;
-        batchRegData[idx + 3] = visibilityMask;
-        batchRegData[idx + 4] = (opaqueQuadCount & 0xFFFFFFFFL)
-            | ((long) (facingQuadCounts.length > 0 ? facingQuadCounts[0] : 0) << 32);
-        batchRegData[idx + 5] = ((long) (facingQuadCounts.length > 1 ? facingQuadCounts[1] : 0) & 0xFFFFFFFFL)
-            | ((long) (facingQuadCounts.length > 2 ? facingQuadCounts[2] : 0) << 32);
-        batchRegData[idx + 6] = ((long) (facingQuadCounts.length > 3 ? facingQuadCounts[3] : 0) & 0xFFFFFFFFL)
-            | ((long) (facingQuadCounts.length > 4 ? facingQuadCounts[4] : 0) << 32);
-        batchRegData[idx + 7] = ((long) (facingQuadCounts.length > 5 ? facingQuadCounts[5] : 0) & 0xFFFFFFFFL)
-            | ((long) (facingQuadCounts.length > 6 ? facingQuadCounts[6] : 0) << 32);
-        batchRegData[idx + 8] = lodTier;
-        batchRegCount++;
-        if (batchRegCount >= BATCH_REG_CAPACITY) {
-          flushCount = batchRegCount;
-          batchRegCount = 0;
+      synchronized (dirtyGeneration) {
+        synchronized (batchRegData) {
+          int idx = batchRegCount * BATCH_REG_STRIDE;
+          batchRegData[idx] = (chunkX & 0xFFFFFFFFL) | ((long) chunkY << 32);
+          batchRegData[idx + 1] = (chunkZ & 0xFFFFFFFFL) | ((long) quadCount << 32);
+          batchRegData[idx + 2] = bufferHandle;
+          batchRegData[idx + 3] = visibilityMask;
+          batchRegData[idx + 4] = (opaqueQuadCount & 0xFFFFFFFFL)
+              | ((long) (facingQuadCounts.length > 0 ? facingQuadCounts[0] : 0) << 32);
+          batchRegData[idx + 5] = ((long) (facingQuadCounts.length > 1 ? facingQuadCounts[1] : 0) & 0xFFFFFFFFL)
+              | ((long) (facingQuadCounts.length > 2 ? facingQuadCounts[2] : 0) << 32);
+          batchRegData[idx + 6] = ((long) (facingQuadCounts.length > 3 ? facingQuadCounts[3] : 0) & 0xFFFFFFFFL)
+              | ((long) (facingQuadCounts.length > 4 ? facingQuadCounts[4] : 0) << 32);
+          batchRegData[idx + 7] = ((long) (facingQuadCounts.length > 5 ? facingQuadCounts[5] : 0) & 0xFFFFFFFFL)
+              | ((long) (facingQuadCounts.length > 6 ? facingQuadCounts[6] : 0) << 32);
+          batchRegData[idx + 8] = lodTier;
+          batchRegCount++;
+          if (batchRegCount >= BATCH_REG_CAPACITY) {
+            flushCount = batchRegCount;
+            batchRegCount = 0;
+          }
         }
       }
       if (flushCount > 0) {
@@ -1167,8 +1251,12 @@ public class CustomChunkMesher {
     } finally {
       long buildElapsed = System.nanoTime() - buildStart;
       MetalRenderProfiler.getInstance().recordMeshingTime(buildElapsed);
-      synchronized (pendingKeys) {
-        pendingKeys.remove(key);
+      synchronized (dirtyGeneration) {
+        if (dirtyGeneration.get(key) == generation) {
+          synchronized (pendingKeys) {
+            pendingKeys.remove(key);
+          }
+        }
       }
     }
   }
