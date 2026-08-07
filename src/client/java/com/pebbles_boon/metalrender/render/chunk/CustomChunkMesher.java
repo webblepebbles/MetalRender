@@ -287,9 +287,8 @@ public class CustomChunkMesher {
         int lodTier = lodTierForDistance(Math.max(
             Math.abs(chunkX - context.buildPlayerCX),
             Math.abs(chunkZ - context.buildPlayerCZ)));
-        // Keep the same full-resolution light samples for every tier. LOD reduces
-        // geometry/detail, not the lighting model, so distant terrain does not
-        // change brightness when it crosses a tier boundary.
+        // Keep full-resolution samples in every tier. The LOD budget comes
+        // from geometry reduction, not a different lighting model.
         boolean useApproximateLight = false;
         long snapshotToken = snapshotCacheToken(genAtSubmit, useApproximateLight);
         SectionSnapshot snapshot = getCachedSnapshot(key, snapshotToken);
@@ -378,9 +377,6 @@ public class CustomChunkMesher {
       dirtyKeys.add(key);
     }
     synchronized (dirtyGeneration) {
-      // Keep an in-flight task marked pending. Its generation check will
-      // cancel publication, and its finally block will release ownership;
-      // clearing this here permits overlapping stale refreshes.
       dirtyGeneration.put(key, dirtyGeneration.get(key) + 1L);
     }
     synchronized (snapshotCache) {
@@ -972,9 +968,6 @@ public class CustomChunkMesher {
       for (int gy = 0; gy < 5; gy++) {
         for (int gz = 0; gz < 5; gz++) {
           for (int gx = 0; gx < 5; gx++) {
-            // The padded snapshot covers local coordinates -1..16. Keep the
-            // final coarse sample on the neighbor section instead of reusing
-            // the opaque edge block at coordinate 15.
             int sampleX = baseX + (gx == 4 ? 16 : gx * 4 - 1);
             int sampleY = baseY + (gy == 4 ? 16 : gy * 4 - 1);
             int sampleZ = baseZ + (gz == 4 ? 16 : gz * 4 - 1);
@@ -993,19 +986,10 @@ public class CustomChunkMesher {
             net.minecraft.world.level.chunk.DataLayer blockLayer = blockLightLayers[layerIdx];
             net.minecraft.world.level.chunk.DataLayer skyLayer = skyLightLayers[layerIdx];
             BlockPos.MutableBlockPos samplePos = mutablePos.set(sampleX, sampleY, sampleZ);
-            // Query the light engine directly for approximate samples. A
-            // DataLayer can be present while still carrying an uninitialized
-            // snapshot during a lighting update; using it was producing
-            // intermittent zero-light patches in refreshed LOD meshes.
-            int block = blockLightListener.getLightValue(samplePos);
-            int sky = skyLightListener.getLightValue(samplePos);
-            // A missing DataLayer means the light engine has not resolved this
-            // section yet. Only then use a conservative floor; valid dark
-            // caves and night lighting must remain dark.
-            boolean unresolved = blockLayer == null || skyLayer == null;
-            if (unresolved && block == 0 && sky == 0) {
-              sky = 4;
-            }
+            int block = blockLayer != null ? blockLayer.get(sampleX & 15, sampleY & 15, sampleZ & 15)
+                : blockLightListener.getLightValue(samplePos);
+            int sky = skyLayer != null ? skyLayer.get(sampleX & 15, sampleY & 15, sampleZ & 15)
+                : skyLightListener.getLightValue(samplePos);
             approximateLightGrid[(gy * 25) + (gz * 5) + gx] = (byte) ((block & 0xF) | ((sky & 0xF) << 4));
           }
         }
@@ -1366,8 +1350,17 @@ public class CustomChunkMesher {
 
     private void renderBlockModel(BlockStateModel model, BlockState state, BlockPos pos,
         int lx, int ly, int lz, RandomSource random) {
+      // Cross-shaped plants and other tiny unculled decorations contribute a
+      // large number of distant quads but almost no silhouette. Drop only this
+      // unambiguous model family; stairs, slabs, panes, fences, and other
+      // structural non-full blocks continue to use their normal models.
+      if (lodTier >= 1 && isDistantCrossDetail(model, state, pos, random)) {
+        return;
+      }
       random.setSeed(state.getSeed(pos));
       List<BlockStateModelPart> parts = new java.util.ArrayList<>();
+
+      
       model.collectParts(random, parts);
       for (BlockStateModelPart part : parts) {
         for (Direction direction : ALL_DIRECTIONS) {
@@ -1415,10 +1408,10 @@ public class CustomChunkMesher {
         return true;
       }
       if (state.getBlock() instanceof LeavesBlock) {
-        // Keep the tier-2 leaf-face reduction: hidden leaf interiors are not
-        // worth rendering at distance, while visible leaf quads retain the
-        // exact same color/alpha/shading as full-detail terrain.
-        if (lodTier >= 2) {
+        // Interior leaf faces do not affect the distant silhouette. Cull them
+        // from the mid tier onward, while visible leaf quads keep full-detail
+        // tint, alpha, lighting, and AO.
+        if (lodTier >= 1) {
           return true;
         }
         MetalRenderConfig cfg = MetalRenderClient.getConfig();
@@ -1441,9 +1434,8 @@ public class CustomChunkMesher {
       BlockState below = getPaddedBlockState(lx, ly - 1, lz);
       boolean downVisible = below == null || below.getFluidState().isEmpty();
 
-      // Keep the full fluid surface shape and flow direction at every tier.
-      // LOD can reduce solid geometry, but flattening water creates an obvious
-      // visual seam against nearby full-detail sections.
+      // Keep the actual fluid shape at every tier. This is cheap compared to
+      // the solid mesh and prevents a visible flat-water seam at LOD borders.
       float[] cornerHeights = new float[4];
       cornerHeights[0] = sampleFluidCornerHeight(lx, ly, lz, 0, 0);
       cornerHeights[1] = sampleFluidCornerHeight(lx, ly, lz, 1, 0);
@@ -1463,6 +1455,10 @@ public class CustomChunkMesher {
             fluid.isSource());
       }
 
+      // Keep exposed fluid walls so shorelines and waterfalls retain their
+      // silhouette. The bottom is never visible from above and is omitted in
+      // the far tier, removing one quad from exposed fluid cells without
+      // changing the visible surface.
       for (Direction dir : ALL_DIRECTIONS) {
         if (dir.getAxis() == Direction.Axis.Y)
           continue;
@@ -1474,7 +1470,7 @@ public class CustomChunkMesher {
         renderFluidSide(lx, ly, lz, dir, cornerHeights, r, g, b, a, light, isLava);
       }
 
-      if (downVisible) {
+      if (lodTier < 2 && downVisible) {
         BlockState downState = getPaddedBlockState(lx, ly - 1, lz);
         if (downState == null || !downState.isSolidRender()) {
           renderFluidBottom(lx, ly, lz, r, g, b, a, light, isLava);
@@ -1713,9 +1709,7 @@ public class CustomChunkMesher {
 
       boolean isLeaves = state.getBlock() instanceof LeavesBlock;
       MetalRenderConfig cfg = MetalRenderClient.getConfig();
-      // Preserve the full-detail leaf appearance. LOD may still cull hidden
-      // leaf faces, but it must not alter the visible alpha treatment.
-      boolean fastLeaves = isLeaves && cfg != null && cfg.leafCullingMode == 0;
+      boolean fastLeaves = isLeaves && (lodTier >= 2 || (cfg != null && cfg.leafCullingMode == 0));
 
       boolean tinted = quad.materialInfo().isTinted() || quad.materialInfo().tintIndex() >= 0;
       int blockColor = tinted ? getBiomeTint(lx, ly, lz) : 0xFFFFFF;
@@ -1740,11 +1734,13 @@ public class CustomChunkMesher {
 
         byte light;
         float ao;
-        // LOD only changes how much geometry is emitted. Keep the same
-        // per-vertex light and AO calculation as full-detail chunks so a
-        // distant section does not visibly pop when its tier changes.
-        light = computeVertexLight(lx, ly, lz, face, x, y, z, quad.materialInfo().lightEmission());
-        ao = face == null ? 1.0f : computeVertexAo(lx, ly, lz, face, x, y, z);
+        if (lodTier >= 2) {
+          light = computeFaceLightFast(lx, ly, lz, face, quad.materialInfo().lightEmission());
+          ao = 1.0f;
+        } else {
+          light = computeVertexLight(lx, ly, lz, face, x, y, z, quad.materialInfo().lightEmission());
+          ao = (lodTier >= 1 || face == null) ? 1.0f : computeVertexAo(lx, ly, lz, face, x, y, z);
+        }
 
         float fr, fg, fb;
         if (tinted) {
@@ -1768,6 +1764,24 @@ public class CustomChunkMesher {
       } else {
         opaqueQuadCount++;
       }
+    }
+
+    private byte computeFaceLightFast(int lx, int ly, int lz, Direction face, int emission) {
+      int sx = lx;
+      int sy = ly;
+      int sz = lz;
+      if (face != null) {
+        sx = Math.max(-1, Math.min(16, lx + face.getStepX()));
+        sy = Math.max(-1, Math.min(16, ly + face.getStepY()));
+        sz = Math.max(-1, Math.min(16, lz + face.getStepZ()));
+      }
+      byte light = getPaddedLight(sx, sy, sz);
+      int bl = light & 0xF;
+      int sl = (light >> 4) & 0xF;
+      if (emission > 0) {
+        bl = Math.max(bl, Math.min(15, emission));
+      }
+      return (byte) ((bl & 0xF) | ((sl & 0xF) << 4));
     }
 
     private byte computeVertexLight(int lx, int ly, int lz, Direction face,
