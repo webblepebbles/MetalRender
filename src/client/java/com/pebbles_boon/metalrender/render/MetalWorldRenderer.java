@@ -354,10 +354,6 @@ public class MetalWorldRenderer {
       int pruneInterval = chunkMesher.getMeshCount() > 3000 ? 120
           : (chunkMesher.getMeshCount() > 1500 ? 60 : 30);
       boolean nearMeshLimit = chunkMesher.getMeshCount() >= maxMeshes - 500;
-      if (frameCount % pruneInterval == 0 ||
-          (nearMeshLimit && !pendingBuildSet.isEmpty())) {
-        pruneFarMeshes(mc, camPos);
-      }
       long t1 = System.nanoTime();
       if (frameCount % LOD_REFRESH_FRAME_INTERVAL == 0) {
         refreshLodTiers(mc);
@@ -1442,10 +1438,12 @@ public class MetalWorldRenderer {
     } else {
       CustomChunkMesher.setLodThermalBias(0);
     }
-    if (cachedThermalState >= 2 || pendingBuildSet.size() >= LOD_REFRESH_PENDING_LIMIT ||
+    if (pendingBuildSet.size() >= LOD_REFRESH_PENDING_LIMIT ||
         chunkMesher.getPendingCount() >= LOD_REFRESH_IN_FLIGHT_LIMIT) {
       return;
     }
+    int refreshBudget = cachedThermalState >= 3 ? 1
+        : (cachedThermalState >= 2 ? 1 : MAX_LOD_REFRESH_SUBMITS_PER_PASS);
     int meshCount = chunkMesher.getMeshSnapshotSize();
     if (meshCount == 0) {
       lodRefreshCursor = 0;
@@ -1467,17 +1465,8 @@ public class MetalWorldRenderer {
       int dx = Math.abs(mesh.chunkX - playerChunkX);
       int dz = Math.abs(mesh.chunkZ - playerChunkZ);
       int chunkDist = Math.max(dx, dz);
-      int desiredTier = CustomChunkMesher.lodTierForDistance(chunkDist);
-      boolean upgrade = desiredTier < mesh.lodTier &&
-          CustomChunkMesher.lodTierForDistance(chunkDist + LOD_UPGRADE_HYSTERESIS_CHUNKS) < mesh.lodTier;
-      boolean downgrade = desiredTier > mesh.lodTier &&
-          CustomChunkMesher.lodTierForDistance(chunkDist - LOD_UPGRADE_HYSTERESIS_CHUNKS) > mesh.lodTier;
-      boolean tierChanged = upgrade || downgrade;
       long key = packChunkKey(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
       if (pendingBuildSet.contains(key) || chunkMesher.isBuildPending(mesh.chunkX, mesh.chunkY, mesh.chunkZ)) {
-        continue;
-      }
-      if (!tierChanged && mesh.lodTier < 1) {
         continue;
       }
       chunkMesher.markDirty(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
