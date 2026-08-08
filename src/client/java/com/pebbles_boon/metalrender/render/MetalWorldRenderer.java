@@ -1455,7 +1455,7 @@ public class MetalWorldRenderer {
     int playerChunkZ = mc.player.chunkPosition().z();
     int queued = 0;
     int inspected = 0;
-    while (inspected < meshCount && queued < refreshBudget) {
+    while (inspected < meshCount && queued < MAX_LOD_REFRESH_SUBMITS_PER_PASS) {
       if (lodRefreshCursor >= meshCount) {
         lodRefreshCursor = 0;
       }

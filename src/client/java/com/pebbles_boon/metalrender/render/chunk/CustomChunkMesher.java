@@ -1350,13 +1350,6 @@ public class CustomChunkMesher {
 
     private void renderBlockModel(BlockStateModel model, BlockState state, BlockPos pos,
         int lx, int ly, int lz, RandomSource random) {
-      // Cross-shaped plants and other tiny unculled decorations contribute a
-      // large number of distant quads but almost no silhouette. Drop only this
-      // unambiguous model family; stairs, slabs, panes, fences, and other
-      // structural non-full blocks continue to use their normal models.
-      if (lodTier >= 1 && isDistantCrossDetail(model, state, pos, random)) {
-        return;
-      }
       random.setSeed(state.getSeed(pos));
       List<BlockStateModelPart> parts = new java.util.ArrayList<>();
 
