@@ -287,7 +287,7 @@ public class CustomChunkMesher {
         int lodTier = lodTierForDistance(Math.max(
             Math.abs(chunkX - context.buildPlayerCX),
             Math.abs(chunkZ - context.buildPlayerCZ)));
-        boolean useApproximateLight = false;
+        boolean useApproximateLight = lodTier >= 1;
         long snapshotToken = snapshotCacheToken(genAtSubmit, useApproximateLight);
         SectionSnapshot snapshot = getCachedSnapshot(key, snapshotToken);
         if (snapshot == null) {
@@ -373,6 +373,9 @@ public class CustomChunkMesher {
     }
     synchronized (dirtyKeys) {
       dirtyKeys.add(key);
+    }
+    synchronized (pendingKeys) {
+      pendingKeys.remove(key);
     }
     synchronized (dirtyGeneration) {
       dirtyGeneration.put(key, dirtyGeneration.get(key) + 1L);
@@ -966,9 +969,9 @@ public class CustomChunkMesher {
       for (int gy = 0; gy < 5; gy++) {
         for (int gz = 0; gz < 5; gz++) {
           for (int gx = 0; gx < 5; gx++) {
-            int sampleX = baseX + (gx == 4 ? 16 : gx * 4 - 1);
-            int sampleY = baseY + (gy == 4 ? 16 : gy * 4 - 1);
-            int sampleZ = baseZ + (gz == 4 ? 16 : gz * 4 - 1);
+            int sampleX = baseX + gx * 4 - 1;
+            int sampleY = baseY + gy * 4 - 1;
+            int sampleZ = baseZ + gz * 4 - 1;
             int sectionX = sampleX >> 4;
             int sectionY = sampleY >> 4;
             int sectionZ = sampleZ >> 4;
@@ -984,8 +987,7 @@ public class CustomChunkMesher {
             net.minecraft.world.level.chunk.DataLayer blockLayer = blockLightLayers[layerIdx];
             net.minecraft.world.level.chunk.DataLayer skyLayer = skyLightLayers[layerIdx];
             BlockPos.MutableBlockPos samplePos = mutablePos.set(sampleX, sampleY, sampleZ);
-            int block = blockLayer != null ? blockLayer.get(sampleX & 15, sampleY & 15, sampleZ & 15)
-                : blockLightListener.getLightValue(samplePos);
+            int block = blockLayer != null ? blockLayer.get(sampleX & 15, sampleY & 15, sampleZ & 15) : 0;
             int sky = skyLayer != null ? skyLayer.get(sampleX & 15, sampleY & 15, sampleZ & 15)
                 : skyLightListener.getLightValue(samplePos);
             approximateLightGrid[(gy * 25) + (gz * 5) + gx] = (byte) ((block & 0xF) | ((sky & 0xF) << 4));
@@ -1032,9 +1034,9 @@ public class CustomChunkMesher {
           paddedBlockStates[pIdx] = stateId;
 
           if (useApproximateLight) {
-            int lightX = Math.min(4, px >> 2);
-            int lightY = Math.min(4, py >> 2);
-            int lightZ = Math.min(4, pz >> 2);
+            int lightX = Math.min(4, (px + 2) >> 2);
+            int lightY = Math.min(4, (py + 2) >> 2);
+            int lightZ = Math.min(4, (pz + 2) >> 2);
             paddedLight[pIdx] = approximateLightGrid[(lightY * 25) + (lightZ * 5) + lightX];
           } else {
             int sectionX = wx >> 4;
@@ -1051,8 +1053,7 @@ public class CustomChunkMesher {
             }
             net.minecraft.world.level.chunk.DataLayer blockLayer = blockLightLayers[layerIdx];
             net.minecraft.world.level.chunk.DataLayer skyLayer = skyLightLayers[layerIdx];
-            int bl = blockLayer != null ? blockLayer.get(wx & 15, wy & 15, wz & 15)
-                : blockLightListener.getLightValue(mutablePos);
+            int bl = blockLayer != null ? blockLayer.get(wx & 15, wy & 15, wz & 15) : 0;
             int sl = skyLayer != null ? skyLayer.get(wx & 15, wy & 15, wz & 15)
                 : skyLightListener.getLightValue(mutablePos);
             paddedLight[pIdx] = (byte) ((bl & 0xF) | ((sl & 0xF) << 4));
@@ -1350,7 +1351,6 @@ public class CustomChunkMesher {
         int lx, int ly, int lz, RandomSource random) {
       random.setSeed(state.getSeed(pos));
       List<BlockStateModelPart> parts = new java.util.ArrayList<>();
-
       model.collectParts(random, parts);
       for (BlockStateModelPart part : parts) {
         for (Direction direction : ALL_DIRECTIONS) {
@@ -1398,478 +1398,496 @@ public class CustomChunkMesher {
         return true;
       }
       if (state.getBlock() instanceof LeavesBlock) {
+        if (lodTier >= 2) {
+          return true;
+        }
         MetalRenderConfig cfg = MetalRenderClient.getConfig();
         return cfg == null || cfg.leafCullingMode == 0;
       }
       return false;
-  }
-
-  private void renderFluid(FluidState fluid, BlockPos pos, int lx, int ly, int lz) {
-    boolean isWater = fluid.getType() == net.minecraft.world.level.material.Fluids.WATER ||
-        fluid.getType() == net.minecraft.world.level.material.Fluids.FLOWING_WATER;
-    boolean isLava = fluid.getType() == net.minecraft.world.level.material.Fluids.LAVA ||
-        fluid.getType() == net.minecraft.world.level.material.Fluids.FLOWING_LAVA;
-    if (!isWater && !isLava) {
-      return;
     }
 
-    BlockState above = getPaddedBlockState(lx, ly + 1, lz);
-    boolean upVisible = above == null || above.getFluidState().isEmpty();
-    BlockState below = getPaddedBlockState(lx, ly - 1, lz);
-    boolean downVisible = below == null || below.getFluidState().isEmpty();
-
-    float[] cornerHeights = new float[4];
-    cornerHeights[0] = sampleFluidCornerHeight(lx, ly, lz, 0, 0);
-    cornerHeights[1] = sampleFluidCornerHeight(lx, ly, lz, 1, 0);
-    cornerHeights[2] = sampleFluidCornerHeight(lx, ly, lz, 1, 1);
-    cornerHeights[3] = sampleFluidCornerHeight(lx, ly, lz, 0, 1);
-
-    byte light = getPaddedLight(lx, ly, lz);
-    int fluidColor = getBiomeTint(lx, ly, lz);
-    byte r = (byte) ((fluidColor >> 16) & 0xFF);
-    byte g = (byte) ((fluidColor >> 8) & 0xFF);
-    byte b = (byte) (fluidColor & 0xFF);
-    byte a = isLava ? (byte) 0xFF : WATER_ALPHA;
-
-    if (upVisible) {
-      float flowAngle = computeFluidFlowAngle(lx, ly, lz);
-      renderFluidTop(lx, ly, lz, cornerHeights, r, g, b, a, light, flowAngle, isLava,
-          fluid.isSource());
-    }
-    for (Direction dir : ALL_DIRECTIONS) {
-      if (dir.getAxis() == Direction.Axis.Y)
-        continue;
-      BlockState neighbor = getPaddedBlockState(lx + dir.getStepX(), ly, lz + dir.getStepZ());
-      if (neighbor == null || !neighbor.getFluidState().isEmpty())
-        continue;
-      if (neighbor.isSolidRender())
-        continue;
-      renderFluidSide(lx, ly, lz, dir, cornerHeights, r, g, b, a, light, isLava);
-    }
-
-    if (lodTier < 2 && downVisible) {
-      BlockState downState = getPaddedBlockState(lx, ly - 1, lz);
-      if (downState == null || !downState.isSolidRender()) {
-        renderFluidBottom(lx, ly, lz, r, g, b, a, light, isLava);
+    private void renderFluid(FluidState fluid, BlockPos pos, int lx, int ly, int lz) {
+      boolean isWater = fluid.getType() == net.minecraft.world.level.material.Fluids.WATER ||
+          fluid.getType() == net.minecraft.world.level.material.Fluids.FLOWING_WATER;
+      boolean isLava = fluid.getType() == net.minecraft.world.level.material.Fluids.LAVA ||
+          fluid.getType() == net.minecraft.world.level.material.Fluids.FLOWING_LAVA;
+      if (!isWater && !isLava) {
+        return;
       }
-    }
-  }
 
-  private boolean isWaterFluid(FluidState fs) {
-    return fs.getType() == net.minecraft.world.level.material.Fluids.WATER ||
-        fs.getType() == net.minecraft.world.level.material.Fluids.FLOWING_WATER;
-  }
+      BlockState above = getPaddedBlockState(lx, ly + 1, lz);
+      boolean upVisible = above == null || above.getFluidState().isEmpty();
+      BlockState below = getPaddedBlockState(lx, ly - 1, lz);
+      boolean downVisible = below == null || below.getFluidState().isEmpty();
 
-  private short mapFluidU(TextureAtlasSprite sprite, float u) {
-    if (sprite == null) {
-      return (short) (u * 65535f);
-    }
-    float t = sprite.getU0() + u * (sprite.getU1() - sprite.getU0());
-    return (short) (t * 65535f);
-  }
-
-  private short mapFluidV(TextureAtlasSprite sprite, float v) {
-    if (sprite == null) {
-      return (short) (v * 65535f);
-    }
-    float t = sprite.getV0() + v * (sprite.getV1() - sprite.getV0());
-    return (short) (t * 65535f);
-  }
-
-  private float sampleFluidHeight(int x, int y, int z) {
-    BlockState state = getPaddedBlockState(x, y, z);
-    if (state == null)
-      return 0.0f;
-    FluidState fs = state.getFluidState();
-    if (fs.isEmpty() || !isWaterFluid(fs))
-      return 0.0f;
-    BlockState above = getPaddedBlockState(x, y + 1, z);
-    if (above != null) {
-      FluidState aboveFs = above.getFluidState();
-      if (!aboveFs.isEmpty() && isWaterFluid(aboveFs)) {
-        return 1.0f;
+      float[] cornerHeights = new float[4];
+      if (lodTier >= 2) {
+        float flatHeight = sampleFluidHeight(lx, ly, lz);
+        if (flatHeight <= 0.0f) {
+          flatHeight = fluid.getOwnHeight();
+        }
+        cornerHeights[0] = flatHeight;
+        cornerHeights[1] = flatHeight;
+        cornerHeights[2] = flatHeight;
+        cornerHeights[3] = flatHeight;
+      } else {
+        cornerHeights[0] = sampleFluidCornerHeight(lx, ly, lz, 0, 0);
+        cornerHeights[1] = sampleFluidCornerHeight(lx, ly, lz, 1, 0);
+        cornerHeights[2] = sampleFluidCornerHeight(lx, ly, lz, 1, 1);
+        cornerHeights[3] = sampleFluidCornerHeight(lx, ly, lz, 0, 1);
       }
-    }
-    return fs.getOwnHeight();
-  }
 
-  private float sampleFluidCornerHeight(int lx, int ly, int lz, int dx, int dz) {
-    float sum = 0.0f;
-    int count = 0;
-    for (int sx = 0; sx <= 1; sx++) {
-      for (int sz = 0; sz <= 1; sz++) {
-        int nx = lx + dx + sx - 1;
-        int nz = lz + dz + sz - 1;
-        float h = sampleFluidHeight(nx, ly, nz);
-        if (h > 0.0f) {
-          sum += h;
-          count++;
+      byte light = getPaddedLight(lx, ly, lz);
+      int fluidColor = getBiomeTint(lx, ly, lz);
+      byte r = (byte) ((fluidColor >> 16) & 0xFF);
+      byte g = (byte) ((fluidColor >> 8) & 0xFF);
+      byte b = (byte) (fluidColor & 0xFF);
+      byte a = isLava ? (byte) 0xFF : WATER_ALPHA;
+
+      if (upVisible) {
+        float flowAngle = lodTier >= 2 ? Float.NaN : computeFluidFlowAngle(lx, ly, lz);
+        renderFluidTop(lx, ly, lz, cornerHeights, r, g, b, a, light, flowAngle, isLava,
+            fluid.isSource());
+      }
+
+      for (Direction dir : ALL_DIRECTIONS) {
+        if (dir.getAxis() == Direction.Axis.Y)
+          continue;
+        BlockState neighbor = getPaddedBlockState(lx + dir.getStepX(), ly, lz + dir.getStepZ());
+        if (neighbor == null || !neighbor.getFluidState().isEmpty())
+          continue;
+        if (neighbor.isSolidRender())
+          continue;
+        renderFluidSide(lx, ly, lz, dir, cornerHeights, r, g, b, a, light, isLava);
+      }
+
+      if (downVisible) {
+        BlockState downState = getPaddedBlockState(lx, ly - 1, lz);
+        if (downState == null || !downState.isSolidRender()) {
+          renderFluidBottom(lx, ly, lz, r, g, b, a, light, isLava);
         }
       }
     }
-    return count > 0 ? sum / count : 0.0f;
-  }
 
-  private float computeFluidFlowAngle(int lx, int ly, int lz) {
-    float hEast = sampleFluidHeight(lx + 1, ly, lz);
-    float hWest = sampleFluidHeight(lx - 1, ly, lz);
-    float hSouth = sampleFluidHeight(lx, ly, lz + 1);
-    float hNorth = sampleFluidHeight(lx, ly, lz - 1);
-
-    float dx = hWest - hEast;
-    float dz = hNorth - hSouth;
-
-    if (Math.abs(dx) < 1e-6f && Math.abs(dz) < 1e-6f) {
-      return Float.NaN;
-    }
-    return (float) Math.atan2(dz, dx);
-  }
-
-  private void renderFluidTop(int lx, int ly, int lz, float[] heights, byte r, byte g, byte b, byte a, byte light,
-      float flowAngle, boolean lava, boolean isSource) {
-    float h0 = heights[0];
-    float h1 = heights[1];
-    float h2 = heights[2];
-    float h3 = heights[3];
-    float minH = Math.min(Math.min(h0, h1), Math.min(h2, h3));
-    if (minH <= 0.0f)
-      return;
-
-    float baseY = ly + 0.875f;
-    float y0 = baseY - (1.0f - h0) * 0.875f;
-    float y1 = baseY - (1.0f - h1) * 0.875f;
-    float y2 = baseY - (1.0f - h2) * 0.875f;
-    float y3 = baseY - (1.0f - h3) * 0.875f;
-
-    short px0 = (short) (lx * 256.0f);
-    short pz0 = (short) (lz * 256.0f);
-    short px1 = (short) ((lx + 1) * 256.0f);
-    short pz1 = (short) ((lz + 1) * 256.0f);
-
-    short py0 = (short) (y0 * 256.0f);
-    short py1 = (short) (y1 * 256.0f);
-    short py2 = (short) (y2 * 256.0f);
-    short py3 = (short) (y3 * 256.0f);
-
-    float fu0, fv0, fu1, fv1, fu2, fv2, fu3, fv3;
-    if (Float.isNaN(flowAngle)) {
-      fu0 = 0.0f;
-      fv0 = 0.0f;
-      fu1 = 0.0f;
-      fv1 = 1.0f;
-      fu2 = 1.0f;
-      fv2 = 1.0f;
-      fu3 = 1.0f;
-      fv3 = 0.0f;
-    } else {
-      float dir = flowAngle - ((float) Math.PI / 2.0f);
-      float sin = (float) Math.sin(dir) * 0.25f;
-      float cos = (float) Math.cos(dir) * 0.25f;
-      fu0 = 0.5f + (-cos - sin);
-      fv0 = 0.5f + (-cos + sin);
-      fu1 = 0.5f + (-cos + sin);
-      fv1 = 0.5f + (cos + sin);
-      fu2 = 0.5f + (cos + sin);
-      fv2 = 0.5f + (cos - sin);
-      fu3 = 0.5f + (cos - sin);
-      fv3 = 0.5f + (-cos - sin);
+    private boolean isWaterFluid(FluidState fs) {
+      return fs.getType() == net.minecraft.world.level.material.Fluids.WATER ||
+          fs.getType() == net.minecraft.world.level.material.Fluids.FLOWING_WATER;
     }
 
-    TextureAtlasSprite topSprite = lava ? context.lavaStillSprite : context.waterStillSprite;
-    short u0 = mapFluidU(topSprite, fu0);
-    short v0 = mapFluidV(topSprite, fv0);
-    short u1 = mapFluidU(topSprite, fu1);
-    short v1 = mapFluidV(topSprite, fv1);
-    short u2 = mapFluidU(topSprite, fu2);
-    short v2 = mapFluidV(topSprite, fv2);
-    short u3 = mapFluidU(topSprite, fu3);
-    short v3 = mapFluidV(topSprite, fv3);
+    private short mapFluidU(TextureAtlasSprite sprite, float u) {
+      if (sprite == null) {
+        return (short) (u * 65535f);
+      }
+      float t = sprite.getU0() + u * (sprite.getU1() - sprite.getU0());
+      return (short) (t * 65535f);
+    }
 
-    ByteBuffer target = waterBuffer;
-    emitVertex(target, px0, py0, pz0, u0, v0, r, g, b, a, light, (byte) 1);
-    emitVertex(target, px0, py3, pz1, u1, v1, r, g, b, a, light, (byte) 1);
-    emitVertex(target, px1, py2, pz1, u2, v2, r, g, b, a, light, (byte) 1);
-    emitVertex(target, px1, py1, pz0, u3, v3, r, g, b, a, light, (byte) 1);
-    waterQuadCount++;
-  }
+    private short mapFluidV(TextureAtlasSprite sprite, float v) {
+      if (sprite == null) {
+        return (short) (v * 65535f);
+      }
+      float t = sprite.getV0() + v * (sprite.getV1() - sprite.getV0());
+      return (short) (t * 65535f);
+    }
 
-  private void renderFluidSide(int lx, int ly, int lz, Direction dir, float[] heights, byte r, byte g, byte b, byte a,
-      byte light, boolean lava) {
-    float h0, h1;
-    short x0, z0, x1, z1;
-    TextureAtlasSprite sideSprite = lava ? context.lavaFlowingSprite : context.waterFlowingSprite;
-    short u0 = mapFluidU(sideSprite, 0.0f);
-    short u1 = mapFluidU(sideSprite, 1.0f);
-    short v0 = mapFluidV(sideSprite, 0.0f);
-    short v1 = mapFluidV(sideSprite, 1.0f);
+    private float sampleFluidHeight(int x, int y, int z) {
+      BlockState state = getPaddedBlockState(x, y, z);
+      if (state == null)
+        return 0.0f;
+      FluidState fs = state.getFluidState();
+      if (fs.isEmpty() || !isWaterFluid(fs))
+        return 0.0f;
+      BlockState above = getPaddedBlockState(x, y + 1, z);
+      if (above != null) {
+        FluidState aboveFs = above.getFluidState();
+        if (!aboveFs.isEmpty() && isWaterFluid(aboveFs)) {
+          return 1.0f;
+        }
+      }
+      return fs.getOwnHeight();
+    }
 
-    switch (dir) {
-      case NORTH:
-        h0 = heights[0];
-        h1 = heights[1];
-        x0 = (short) (lx * 256.0f);
-        z0 = (short) (lz * 256.0f);
-        x1 = (short) ((lx + 1) * 256.0f);
-        z1 = (short) (lz * 256.0f);
-        break;
-      case SOUTH:
-        h0 = heights[3];
-        h1 = heights[2];
-        x0 = (short) (lx * 256.0f);
-        z0 = (short) ((lz + 1) * 256.0f);
-        x1 = (short) ((lx + 1) * 256.0f);
-        z1 = (short) ((lz + 1) * 256.0f);
-        break;
-      case WEST:
-        h0 = heights[0];
-        h1 = heights[3];
-        x0 = (short) (lx * 256.0f);
-        z0 = (short) (lz * 256.0f);
-        x1 = (short) (lx * 256.0f);
-        z1 = (short) ((lz + 1) * 256.0f);
-        break;
-      case EAST:
-        h0 = heights[1];
-        h1 = heights[2];
-        x0 = (short) ((lx + 1) * 256.0f);
-        z0 = (short) (lz * 256.0f);
-        x1 = (short) ((lx + 1) * 256.0f);
-        z1 = (short) ((lz + 1) * 256.0f);
-        break;
-      default:
+    private float sampleFluidCornerHeight(int lx, int ly, int lz, int dx, int dz) {
+      float sum = 0.0f;
+      int count = 0;
+      for (int sx = 0; sx <= 1; sx++) {
+        for (int sz = 0; sz <= 1; sz++) {
+          int nx = lx + dx + sx - 1;
+          int nz = lz + dz + sz - 1;
+          float h = sampleFluidHeight(nx, ly, nz);
+          if (h > 0.0f) {
+            sum += h;
+            count++;
+          }
+        }
+      }
+      return count > 0 ? sum / count : 0.0f;
+    }
+
+    private float computeFluidFlowAngle(int lx, int ly, int lz) {
+      float hEast = sampleFluidHeight(lx + 1, ly, lz);
+      float hWest = sampleFluidHeight(lx - 1, ly, lz);
+      float hSouth = sampleFluidHeight(lx, ly, lz + 1);
+      float hNorth = sampleFluidHeight(lx, ly, lz - 1);
+
+      float dx = hWest - hEast;
+      float dz = hNorth - hSouth;
+
+      if (Math.abs(dx) < 1e-6f && Math.abs(dz) < 1e-6f) {
+        return Float.NaN;
+      }
+      return (float) Math.atan2(dz, dx);
+    }
+
+    private void renderFluidTop(int lx, int ly, int lz, float[] heights, byte r, byte g, byte b, byte a, byte light,
+        float flowAngle, boolean lava, boolean isSource) {
+      float h0 = heights[0];
+      float h1 = heights[1];
+      float h2 = heights[2];
+      float h3 = heights[3];
+      float minH = Math.min(Math.min(h0, h1), Math.min(h2, h3));
+      if (minH <= 0.0f)
         return;
-    }
 
-    float baseY = ly + 0.875f;
-    float y0 = baseY - (1.0f - h0) * 0.875f;
-    float y1 = baseY - (1.0f - h1) * 0.875f;
-    short py0 = (short) (y0 * 256.0f);
-    short py1 = (short) (y1 * 256.0f);
-    short pyBase = (short) (ly * 256.0f);
+      float baseY = ly + 0.875f;
+      float y0 = baseY - (1.0f - h0) * 0.875f;
+      float y1 = baseY - (1.0f - h1) * 0.875f;
+      float y2 = baseY - (1.0f - h2) * 0.875f;
+      float y3 = baseY - (1.0f - h3) * 0.875f;
 
-    byte normal = (byte) dir.get3DDataValue();
-    ByteBuffer target = waterBuffer;
-    emitVertex(target, x0, py0, z0, u1, v0, r, g, b, a, light, normal);
-    emitVertex(target, x0, pyBase, z0, u1, v1, r, g, b, a, light, normal);
-    emitVertex(target, x1, pyBase, z1, u0, v1, r, g, b, a, light, normal);
-    emitVertex(target, x1, py1, z1, u0, v0, r, g, b, a, light, normal);
-    waterQuadCount++;
-  }
+      short px0 = (short) (lx * 256.0f);
+      short pz0 = (short) (lz * 256.0f);
+      short px1 = (short) ((lx + 1) * 256.0f);
+      short pz1 = (short) ((lz + 1) * 256.0f);
 
-  private void renderFluidBottom(int lx, int ly, int lz, byte r, byte g, byte b, byte a, byte light, boolean lava) {
-    short px0 = (short) (lx * 256.0f);
-    short pz0 = (short) (lz * 256.0f);
-    short px1 = (short) ((lx + 1) * 256.0f);
-    short pz1 = (short) ((lz + 1) * 256.0f);
-    short py = (short) (ly * 256.0f);
+      short py0 = (short) (y0 * 256.0f);
+      short py1 = (short) (y1 * 256.0f);
+      short py2 = (short) (y2 * 256.0f);
+      short py3 = (short) (y3 * 256.0f);
 
-    TextureAtlasSprite bottomSprite = lava ? context.lavaStillSprite : context.waterStillSprite;
-    short u0 = mapFluidU(bottomSprite, 0.0f);
-    short u1 = mapFluidU(bottomSprite, 1.0f);
-    short v0 = mapFluidV(bottomSprite, 0.0f);
-    short v1 = mapFluidV(bottomSprite, 1.0f);
-
-    ByteBuffer target = waterBuffer;
-    emitVertex(target, px0, py, pz1, u0, v1, r, g, b, a, light, (byte) 0);
-    emitVertex(target, px0, py, pz0, u0, v0, r, g, b, a, light, (byte) 0);
-    emitVertex(target, px1, py, pz0, u1, v0, r, g, b, a, light, (byte) 0);
-    emitVertex(target, px1, py, pz1, u1, v1, r, g, b, a, light, (byte) 0);
-    waterQuadCount++;
-  }
-
-  private void emitBakedQuad(BakedQuad quad, int lx, int ly, int lz,
-      BlockState state, boolean water) {
-    ByteBuffer target = water ? waterBuffer : solidBuffer;
-    Direction face = quad.direction();
-    byte normalIndex = (byte) (face != null ? face.get3DDataValue() : 6);
-    float shade = quad.materialInfo().shade() ? getFaceShade(normalIndex) : 1.0f;
-
-    boolean tinted = quad.materialInfo().isTinted() || quad.materialInfo().tintIndex() >= 0;
-    int blockColor = tinted ? getBiomeTint(lx, ly, lz) : 0xFFFFFF;
-    byte tintR = (byte) ((blockColor >> 16) & 0xFF);
-    byte tintG = (byte) ((blockColor >> 8) & 0xFF);
-    byte tintB = (byte) (blockColor & 0xFF);
-
-    for (int i = 0; i < 4; i++) {
-      org.joml.Vector3fc pos = quad.position(i);
-      long packedUV = quad.packedUV(i);
-      float x = pos.x() + lx;
-      float y = pos.y() + ly;
-      float z = pos.z() + lz;
-      float u = Float.intBitsToFloat((int) (packedUV >> 32));
-      float v = Float.intBitsToFloat((int) packedUV);
-
-      short px = (short) (x * 256.0f);
-      short py = (short) (y * 256.0f);
-      short pz = (short) (z * 256.0f);
-      short su = (short) (u * 65535f);
-      short sv = (short) (v * 65535f);
-
-      byte light;
-      float ao;
-      if (lodTier >= 2) {
-        light = computeFaceLightFast(lx, ly, lz, face, quad.materialInfo().lightEmission());
-        ao = 1.0f;
+      float fu0, fv0, fu1, fv1, fu2, fv2, fu3, fv3;
+      if (Float.isNaN(flowAngle)) {
+        fu0 = 0.0f;
+        fv0 = 0.0f;
+        fu1 = 0.0f;
+        fv1 = 1.0f;
+        fu2 = 1.0f;
+        fv2 = 1.0f;
+        fu3 = 1.0f;
+        fv3 = 0.0f;
       } else {
-        light = computeVertexLight(lx, ly, lz, face, x, y, z, quad.materialInfo().lightEmission());
-        ao = (lodTier >= 1 || face == null) ? 1.0f : computeVertexAo(lx, ly, lz, face, x, y, z);
+        float dir = flowAngle - ((float) Math.PI / 2.0f);
+        float sin = (float) Math.sin(dir) * 0.25f;
+        float cos = (float) Math.cos(dir) * 0.25f;
+        fu0 = 0.5f + (-cos - sin);
+        fv0 = 0.5f + (-cos + sin);
+        fu1 = 0.5f + (-cos + sin);
+        fv1 = 0.5f + (cos + sin);
+        fu2 = 0.5f + (cos + sin);
+        fv2 = 0.5f + (cos - sin);
+        fu3 = 0.5f + (cos - sin);
+        fv3 = 0.5f + (-cos - sin);
       }
 
-      float fr, fg, fb;
-      if (tinted) {
-        fr = (tintR & 0xFF) * shade * ao;
-        fg = (tintG & 0xFF) * shade * ao;
-        fb = (tintB & 0xFF) * shade * ao;
-      } else {
-        fr = 255f * shade * ao;
-        fg = 255f * shade * ao;
-        fb = 255f * shade * ao;
-      }
-      byte r = (byte) Math.min(255, (int) fr);
-      byte g = (byte) Math.min(255, (int) fg);
-      byte b = (byte) Math.min(255, (int) fb);
-      byte a = (byte) 0xFF;
+      TextureAtlasSprite topSprite = lava ? context.lavaStillSprite : context.waterStillSprite;
+      short u0 = mapFluidU(topSprite, fu0);
+      short v0 = mapFluidV(topSprite, fv0);
+      short u1 = mapFluidU(topSprite, fu1);
+      short v1 = mapFluidV(topSprite, fv1);
+      short u2 = mapFluidU(topSprite, fu2);
+      short v2 = mapFluidV(topSprite, fv2);
+      short u3 = mapFluidU(topSprite, fu3);
+      short v3 = mapFluidV(topSprite, fv3);
 
-      emitVertex(target, px, py, pz, su, sv, r, g, b, a, light, normalIndex);
-    }
-    if (water) {
+      ByteBuffer target = waterBuffer;
+      emitVertex(target, px0, py0, pz0, u0, v0, r, g, b, a, light, (byte) 1);
+      emitVertex(target, px0, py3, pz1, u1, v1, r, g, b, a, light, (byte) 1);
+      emitVertex(target, px1, py2, pz1, u2, v2, r, g, b, a, light, (byte) 1);
+      emitVertex(target, px1, py1, pz0, u3, v3, r, g, b, a, light, (byte) 1);
       waterQuadCount++;
-    } else {
-      opaqueQuadCount++;
-    }
-  }
-
-  private byte computeFaceLightFast(int lx, int ly, int lz, Direction face, int emission) {
-    int sx = lx;
-    int sy = ly;
-    int sz = lz;
-    if (face != null) {
-      sx = Math.max(-1, Math.min(16, lx + face.getStepX()));
-      sy = Math.max(-1, Math.min(16, ly + face.getStepY()));
-      sz = Math.max(-1, Math.min(16, lz + face.getStepZ()));
-    }
-    byte light = getPaddedLight(sx, sy, sz);
-    int bl = light & 0xF;
-    int sl = (light >> 4) & 0xF;
-    if (emission > 0) {
-      bl = Math.max(bl, Math.min(15, emission));
-    }
-    return (byte) ((bl & 0xF) | ((sl & 0xF) << 4));
-  }
-
-  private byte computeVertexLight(int lx, int ly, int lz, Direction face,
-      float vx, float vy, float vz, int emission) {
-    if (face == null) {
-      face = Direction.UP;
     }
 
-    int baseX = Math.max(-1, Math.min(16, (int) Math.floor(vx + 0.5f * face.getStepX())));
-    int baseY = Math.max(-1, Math.min(16, (int) Math.floor(vy + 0.5f * face.getStepY())));
-    int baseZ = Math.max(-1, Math.min(16, (int) Math.floor(vz + 0.5f * face.getStepZ())));
+    private void renderFluidSide(int lx, int ly, int lz, Direction dir, float[] heights, byte r, byte g, byte b, byte a,
+        byte light, boolean lava) {
+      float h0, h1;
+      short x0, z0, x1, z1;
+      TextureAtlasSprite sideSprite = lava ? context.lavaFlowingSprite : context.waterFlowingSprite;
+      short u0 = mapFluidU(sideSprite, 0.0f);
+      short u1 = mapFluidU(sideSprite, 1.0f);
+      short v0 = mapFluidV(sideSprite, 0.0f);
+      short v1 = mapFluidV(sideSprite, 1.0f);
 
-    int blSum = 0;
-    int slSum = 0;
-    for (int i = 0; i < 4; i++) {
-      int sx, sy, sz;
-      switch (face) {
-        case UP:
-        case DOWN:
-          sx = baseX + ((i & 1) == 0 ? 0 : -1);
-          sy = baseY;
-          sz = baseZ + ((i & 2) == 0 ? 0 : -1);
-          break;
+      switch (dir) {
         case NORTH:
+          h0 = heights[0];
+          h1 = heights[1];
+          x0 = (short) (lx * 256.0f);
+          z0 = (short) (lz * 256.0f);
+          x1 = (short) ((lx + 1) * 256.0f);
+          z1 = (short) (lz * 256.0f);
+          break;
         case SOUTH:
-          sx = baseX + ((i & 1) == 0 ? 0 : -1);
-          sy = baseY + ((i & 2) == 0 ? 0 : -1);
-          sz = baseZ;
+          h0 = heights[3];
+          h1 = heights[2];
+          x0 = (short) (lx * 256.0f);
+          z0 = (short) ((lz + 1) * 256.0f);
+          x1 = (short) ((lx + 1) * 256.0f);
+          z1 = (short) ((lz + 1) * 256.0f);
           break;
         case WEST:
+          h0 = heights[0];
+          h1 = heights[3];
+          x0 = (short) (lx * 256.0f);
+          z0 = (short) (lz * 256.0f);
+          x1 = (short) (lx * 256.0f);
+          z1 = (short) ((lz + 1) * 256.0f);
+          break;
         case EAST:
-          sx = baseX;
-          sy = baseY + ((i & 1) == 0 ? 0 : -1);
-          sz = baseZ + ((i & 2) == 0 ? 0 : -1);
+          h0 = heights[1];
+          h1 = heights[2];
+          x0 = (short) ((lx + 1) * 256.0f);
+          z0 = (short) (lz * 256.0f);
+          x1 = (short) ((lx + 1) * 256.0f);
+          z1 = (short) ((lz + 1) * 256.0f);
           break;
         default:
-          sx = baseX;
-          sy = baseY;
-          sz = baseZ;
+          return;
       }
-      sx = Math.max(-1, Math.min(16, sx));
-      sy = Math.max(-1, Math.min(16, sy));
-      sz = Math.max(-1, Math.min(16, sz));
+
+      float baseY = ly + 0.875f;
+      float y0 = baseY - (1.0f - h0) * 0.875f;
+      float y1 = baseY - (1.0f - h1) * 0.875f;
+      short py0 = (short) (y0 * 256.0f);
+      short py1 = (short) (y1 * 256.0f);
+      short pyBase = (short) (ly * 256.0f);
+
+      byte normal = (byte) dir.get3DDataValue();
+      ByteBuffer target = waterBuffer;
+      emitVertex(target, x0, py0, z0, u1, v0, r, g, b, a, light, normal);
+      emitVertex(target, x0, pyBase, z0, u1, v1, r, g, b, a, light, normal);
+      emitVertex(target, x1, pyBase, z1, u0, v1, r, g, b, a, light, normal);
+      emitVertex(target, x1, py1, z1, u0, v0, r, g, b, a, light, normal);
+      waterQuadCount++;
+    }
+
+    private void renderFluidBottom(int lx, int ly, int lz, byte r, byte g, byte b, byte a, byte light, boolean lava) {
+      short px0 = (short) (lx * 256.0f);
+      short pz0 = (short) (lz * 256.0f);
+      short px1 = (short) ((lx + 1) * 256.0f);
+      short pz1 = (short) ((lz + 1) * 256.0f);
+      short py = (short) (ly * 256.0f);
+
+      TextureAtlasSprite bottomSprite = lava ? context.lavaStillSprite : context.waterStillSprite;
+      short u0 = mapFluidU(bottomSprite, 0.0f);
+      short u1 = mapFluidU(bottomSprite, 1.0f);
+      short v0 = mapFluidV(bottomSprite, 0.0f);
+      short v1 = mapFluidV(bottomSprite, 1.0f);
+
+      ByteBuffer target = waterBuffer;
+      emitVertex(target, px0, py, pz1, u0, v1, r, g, b, a, light, (byte) 0);
+      emitVertex(target, px0, py, pz0, u0, v0, r, g, b, a, light, (byte) 0);
+      emitVertex(target, px1, py, pz0, u1, v0, r, g, b, a, light, (byte) 0);
+      emitVertex(target, px1, py, pz1, u1, v1, r, g, b, a, light, (byte) 0);
+      waterQuadCount++;
+    }
+
+    private void emitBakedQuad(BakedQuad quad, int lx, int ly, int lz,
+        BlockState state, boolean water) {
+      ByteBuffer target = water ? waterBuffer : solidBuffer;
+      Direction face = quad.direction();
+      byte normalIndex = (byte) (face != null ? face.get3DDataValue() : 6);
+      float shade = quad.materialInfo().shade() ? getFaceShade(normalIndex) : 1.0f;
+
+      boolean isLeaves = state.getBlock() instanceof LeavesBlock;
+      MetalRenderConfig cfg = MetalRenderClient.getConfig();
+      boolean fastLeaves = isLeaves && (lodTier >= 2 || (cfg != null && cfg.leafCullingMode == 0));
+
+      boolean tinted = quad.materialInfo().isTinted() || quad.materialInfo().tintIndex() >= 0;
+      int blockColor = tinted ? getBiomeTint(lx, ly, lz) : 0xFFFFFF;
+      byte tintR = (byte) ((blockColor >> 16) & 0xFF);
+      byte tintG = (byte) ((blockColor >> 8) & 0xFF);
+      byte tintB = (byte) (blockColor & 0xFF);
+
+      for (int i = 0; i < 4; i++) {
+        org.joml.Vector3fc pos = quad.position(i);
+        long packedUV = quad.packedUV(i);
+        float x = pos.x() + lx;
+        float y = pos.y() + ly;
+        float z = pos.z() + lz;
+        float u = Float.intBitsToFloat((int) (packedUV >> 32));
+        float v = Float.intBitsToFloat((int) packedUV);
+
+        short px = (short) (x * 256.0f);
+        short py = (short) (y * 256.0f);
+        short pz = (short) (z * 256.0f);
+        short su = (short) (u * 65535f);
+        short sv = (short) (v * 65535f);
+
+        byte light;
+        float ao;
+        if (lodTier >= 2) {
+          light = computeFaceLightFast(lx, ly, lz, face, quad.materialInfo().lightEmission());
+          ao = 1.0f;
+        } else {
+          light = computeVertexLight(lx, ly, lz, face, x, y, z, quad.materialInfo().lightEmission());
+          ao = (lodTier >= 1 || face == null) ? 1.0f : computeVertexAo(lx, ly, lz, face, x, y, z);
+        }
+
+        float fr, fg, fb;
+        if (tinted) {
+          fr = (tintR & 0xFF) * shade * ao;
+          fg = (tintG & 0xFF) * shade * ao;
+          fb = (tintB & 0xFF) * shade * ao;
+        } else {
+          fr = 255f * shade * ao;
+          fg = 255f * shade * ao;
+          fb = 255f * shade * ao;
+        }
+        byte r = (byte) Math.min(255, (int) fr);
+        byte g = (byte) Math.min(255, (int) fg);
+        byte b = (byte) Math.min(255, (int) fb);
+        byte a = fastLeaves ? (byte) 0xFE : (byte) 0xFF;
+
+        emitVertex(target, px, py, pz, su, sv, r, g, b, a, light, normalIndex);
+      }
+      if (water) {
+        waterQuadCount++;
+      } else {
+        opaqueQuadCount++;
+      }
+    }
+
+    private byte computeFaceLightFast(int lx, int ly, int lz, Direction face, int emission) {
+      int sx = lx;
+      int sy = ly;
+      int sz = lz;
+      if (face != null) {
+        sx = Math.max(-1, Math.min(16, lx + face.getStepX()));
+        sy = Math.max(-1, Math.min(16, ly + face.getStepY()));
+        sz = Math.max(-1, Math.min(16, lz + face.getStepZ()));
+      }
       byte light = getPaddedLight(sx, sy, sz);
-      blSum += light & 0xF;
-      slSum += (light >> 4) & 0xF;
-    }
-    int bl = (blSum + 2) >> 2;
-    int sl = (slSum + 2) >> 2;
-
-    if (emission > 0) {
-      bl = Math.max(bl, Math.min(15, emission));
-    }
-    return (byte) ((bl & 0xF) | ((sl & 0xF) << 4));
-  }
-
-  private static final int[][] AO_AXIS_A = {
-      { 1, 0, 0 },
-      { 1, 0, 0 },
-      { 1, 0, 0 },
-      { 1, 0, 0 },
-      { 0, 1, 0 },
-      { 0, 1, 0 }
-  };
-  private static final int[][] AO_AXIS_B = {
-      { 0, 0, 1 },
-      { 0, 0, 1 },
-      { 0, 1, 0 },
-      { 0, 1, 0 },
-      { 0, 0, 1 },
-      { 0, 0, 1 }
-  };
-
-  private float computeVertexAo(int lx, int ly, int lz, Direction face,
-      float vx, float vy, float vz) {
-    int[] axisA = AO_AXIS_A[face.get3DDataValue()];
-    int[] axisB = AO_AXIS_B[face.get3DDataValue()];
-
-    float centerX = lx + 0.5f;
-    float centerY = ly + 0.5f;
-    float centerZ = lz + 0.5f;
-
-    float dotA = (vx - centerX) * axisA[0] + (vy - centerY) * axisA[1] + (vz - centerZ) * axisA[2];
-    float dotB = (vx - centerX) * axisB[0] + (vy - centerY) * axisB[1] + (vz - centerZ) * axisB[2];
-    int signA = dotA > 0 ? 1 : -1;
-    int signB = dotB > 0 ? 1 : -1;
-
-    int bx = Math.max(-1, Math.min(16, (int) Math.floor(vx + 0.5f * face.getStepX())));
-    int by = Math.max(-1, Math.min(16, (int) Math.floor(vy + 0.5f * face.getStepY())));
-    int bz = Math.max(-1, Math.min(16, (int) Math.floor(vz + 0.5f * face.getStepZ())));
-
-    boolean a = isOccluder(bx + signA * axisA[0], by + signA * axisA[1], bz + signA * axisA[2]);
-    boolean b = isOccluder(bx + signB * axisB[0], by + signB * axisB[1], bz + signB * axisB[2]);
-    boolean c = isOccluder(bx + signA * axisA[0] + signB * axisB[0],
-        by + signA * axisA[1] + signB * axisB[1],
-        bz + signA * axisA[2] + signB * axisB[2]);
-
-    if (a && b) {
-      c = true;
+      int bl = light & 0xF;
+      int sl = (light >> 4) & 0xF;
+      if (emission > 0) {
+        bl = Math.max(bl, Math.min(15, emission));
+      }
+      return (byte) ((bl & 0xF) | ((sl & 0xF) << 4));
     }
 
-    int ao = (a ? 1 : 0) + (b ? 1 : 0) + (c ? 1 : 0);
-    return AO_CURVE[ao];
-  }
+    private byte computeVertexLight(int lx, int ly, int lz, Direction face,
+        float vx, float vy, float vz, int emission) {
+      if (face == null) {
+        face = Direction.UP;
+      }
 
-  private static final float[] AO_CURVE = { 1.0f, 0.96f, 0.86f, 0.72f };
+      int baseX = Math.max(-1, Math.min(16, (int) Math.floor(vx + 0.5f * face.getStepX())));
+      int baseY = Math.max(-1, Math.min(16, (int) Math.floor(vy + 0.5f * face.getStepY())));
+      int baseZ = Math.max(-1, Math.min(16, (int) Math.floor(vz + 0.5f * face.getStepZ())));
 
-  private boolean isOccluder(int x, int y, int z) {
-    x = Math.max(-1, Math.min(16, x));
-    y = Math.max(-1, Math.min(16, y));
-    z = Math.max(-1, Math.min(16, z));
-    BlockState state = getPaddedBlockState(x, y, z);
-    return state != null && state.isSolidRender();
-  }
+      int blSum = 0;
+      int slSum = 0;
+      for (int i = 0; i < 4; i++) {
+        int sx, sy, sz;
+        switch (face) {
+          case UP:
+          case DOWN:
+            sx = baseX + ((i & 1) == 0 ? 0 : -1);
+            sy = baseY;
+            sz = baseZ + ((i & 2) == 0 ? 0 : -1);
+            break;
+          case NORTH:
+          case SOUTH:
+            sx = baseX + ((i & 1) == 0 ? 0 : -1);
+            sy = baseY + ((i & 2) == 0 ? 0 : -1);
+            sz = baseZ;
+            break;
+          case WEST:
+          case EAST:
+            sx = baseX;
+            sy = baseY + ((i & 1) == 0 ? 0 : -1);
+            sz = baseZ + ((i & 2) == 0 ? 0 : -1);
+            break;
+          default:
+            sx = baseX;
+            sy = baseY;
+            sz = baseZ;
+        }
+        sx = Math.max(-1, Math.min(16, sx));
+        sy = Math.max(-1, Math.min(16, sy));
+        sz = Math.max(-1, Math.min(16, sz));
+        byte light = getPaddedLight(sx, sy, sz);
+        blSum += light & 0xF;
+        slSum += (light >> 4) & 0xF;
+      }
+      int bl = (blSum + 2) >> 2;
+      int sl = (slSum + 2) >> 2;
 
+      if (emission > 0) {
+        bl = Math.max(bl, Math.min(15, emission));
+      }
+      return (byte) ((bl & 0xF) | ((sl & 0xF) << 4));
+    }
+
+    private static final int[][] AO_AXIS_A = {
+        { 1, 0, 0 },
+        { 1, 0, 0 },
+        { 1, 0, 0 },
+        { 1, 0, 0 },
+        { 0, 1, 0 },
+        { 0, 1, 0 }
+    };
+    private static final int[][] AO_AXIS_B = {
+        { 0, 0, 1 },
+        { 0, 0, 1 },
+        { 0, 1, 0 },
+        { 0, 1, 0 },
+        { 0, 0, 1 },
+        { 0, 0, 1 }
+    };
+
+    private float computeVertexAo(int lx, int ly, int lz, Direction face,
+        float vx, float vy, float vz) {
+      int[] axisA = AO_AXIS_A[face.get3DDataValue()];
+      int[] axisB = AO_AXIS_B[face.get3DDataValue()];
+
+      float centerX = lx + 0.5f;
+      float centerY = ly + 0.5f;
+      float centerZ = lz + 0.5f;
+
+      float dotA = (vx - centerX) * axisA[0] + (vy - centerY) * axisA[1] + (vz - centerZ) * axisA[2];
+      float dotB = (vx - centerX) * axisB[0] + (vy - centerY) * axisB[1] + (vz - centerZ) * axisB[2];
+      int signA = dotA > 0 ? 1 : -1;
+      int signB = dotB > 0 ? 1 : -1;
+
+      int bx = Math.max(-1, Math.min(16, (int) Math.floor(vx + 0.5f * face.getStepX())));
+      int by = Math.max(-1, Math.min(16, (int) Math.floor(vy + 0.5f * face.getStepY())));
+      int bz = Math.max(-1, Math.min(16, (int) Math.floor(vz + 0.5f * face.getStepZ())));
+
+      boolean a = isOccluder(bx + signA * axisA[0], by + signA * axisA[1], bz + signA * axisA[2]);
+      boolean b = isOccluder(bx + signB * axisB[0], by + signB * axisB[1], bz + signB * axisB[2]);
+      boolean c = isOccluder(bx + signA * axisA[0] + signB * axisB[0],
+          by + signA * axisA[1] + signB * axisB[1],
+          bz + signA * axisA[2] + signB * axisB[2]);
+
+      if (a && b) {
+        c = true;
+      }
+
+      int ao = (a ? 1 : 0) + (b ? 1 : 0) + (c ? 1 : 0);
+      return AO_CURVE[ao];
+    }
+
+    private static final float[] AO_CURVE = { 1.0f, 0.96f, 0.86f, 0.72f };
+
+    private boolean isOccluder(int x, int y, int z) {
+      x = Math.max(-1, Math.min(16, x));
+      y = Math.max(-1, Math.min(16, y));
+      z = Math.max(-1, Math.min(16, z));
+      BlockState state = getPaddedBlockState(x, y, z);
+      return state != null && state.isSolidRender();
+    }
   }
 
   private static void emitVertex(ByteBuffer buf, short px, short py, short pz,
