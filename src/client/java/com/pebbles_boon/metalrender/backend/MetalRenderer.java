@@ -1,5 +1,6 @@
 package com.pebbles_boon.metalrender.backend;
 
+import com.pebbles_boon.metalrender.config.MetalRenderConfig;
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
 import java.nio.ByteBuffer;
 import org.joml.Matrix4f;
@@ -51,7 +52,7 @@ public final class MetalRenderer implements RenderBackend {
   }
 
   public void init(int width, int height) {
-    this.handle = NativeBridge.nInit(width, height, 1.0f);
+    this.handle = NativeBridge.nInit(width, height, MetalRenderConfig.resolutionScale());
     if (this.handle != 0L) {
       this.available = true;
     }
@@ -67,7 +68,7 @@ public final class MetalRenderer implements RenderBackend {
 
   public void resize(int width, int height) {
     if (handle != 0)
-      NativeBridge.nResize(handle, width, height, 1.0f);
+      NativeBridge.nResize(handle, width, height, MetalRenderConfig.resolutionScale());
   }
 
   public void beginFrame(float tickDelta) {
