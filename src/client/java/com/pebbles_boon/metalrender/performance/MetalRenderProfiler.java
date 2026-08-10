@@ -59,6 +59,7 @@ public final class MetalRenderProfiler {
   private final MetricHistory uploadHistory = new MetricHistory(HISTORY_SIZE);
   private final MetricHistory cullHistory = new MetricHistory(HISTORY_SIZE);
   private final MetricHistory gpuHistory = new MetricHistory(HISTORY_SIZE);
+  private volatile double latestGpuMs;
 
   private long lastLogTimeMs;
   private long lastCsvEmitMs;
@@ -72,6 +73,10 @@ public final class MetalRenderProfiler {
 
   public static MetalRenderProfiler getInstance() {
     return INSTANCE;
+  }
+
+  public double getLatestGpuMs() {
+    return latestGpuMs;
   }
 
   public synchronized void startDevelopmentRunCsv() {
@@ -183,6 +188,7 @@ public final class MetalRenderProfiler {
       } catch (Throwable ignored) {
       }
     }
+    latestGpuMs = gpuMs;
 
     int meshesBuilt = meshesBuiltAcc.getAndSet(0);
     int uploadsDone = uploadsDoneAcc.getAndSet(0);

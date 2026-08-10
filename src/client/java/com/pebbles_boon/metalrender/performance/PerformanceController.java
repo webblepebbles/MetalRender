@@ -43,6 +43,7 @@ public final class PerformanceController {
     double gpuMs = profiler.getSnapshot().currentGpuMs;
     BUDGET_ESTIMATOR.record(meshMs, uploadMs, gpuMs);
     profiler.endFrame();
+    AdaptiveResolutionController.getInstance().tick(profiler.getLatestGpuMs());
     chunksProcessed = 0;
     chunksDrawn = 0;
     frustumCulled = 0;
