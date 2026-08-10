@@ -46,6 +46,7 @@ public class MetalRenderSettingsScreen extends Screen {
   private static final int C_SCROLLTHUMB_HOVER = 0xFF007AFF;
 
   private static final int PANEL_W = 720;
+  // remember to test config settings monday night
   private static final int PANEL_H = 500;
   private static final int HDR_H = 44;
   private static final int TAB_H = 34;
@@ -499,8 +500,7 @@ public class MetalRenderSettingsScreen extends Screen {
         || (config.lodMidChunks != initialLodMidChunks);
 
     boolean biomeChanged = config.biomeTransitionDetail != initialBiomeDetail;
-    boolean cameraFacingCullingChanged =
-        config.enableCameraFacingCulling != initialCameraFacingCulling;
+    boolean cameraFacingCullingChanged = config.enableCameraFacingCulling != initialCameraFacingCulling;
     com.pebbles_boon.metalrender.util.MetalLogger.info(
         "settings close: rebuild=%b rd=%b bm=%b lf=%b lt=%b",
         needsRebuild,
@@ -697,6 +697,17 @@ public class MetalRenderSettingsScreen extends Screen {
     tog("Burst Thread Mode", config.enableBurstThreadMode, v -> config.enableBurstThreadMode = v);
     tog("Sacrifice TPS for FPS", config.prioritizeFpsOverTps, v -> config.prioritizeFpsOverTps = v);
     nfo("FPS Priority Mode", config.prioritizeFpsOverTps ? "Simulation Distance <= 5" : "Off");
+    tog("Adaptive Resolution", MetalRenderConfig.isAdaptiveResolutionEnabled(),
+        MetalRenderConfig::setAdaptiveResolutionEnabled);
+    tog("Temporal MetalFX", MetalRenderConfig.isMetalFXTemporalEnabled(),
+        MetalRenderConfig::setMetalFXTemporalEnabled);
+    nfo("MetalFX Mode", MetalRenderConfig.isMetalFXTemporalEnabled() ? "Temporal" : "Spatial");
+    sld(MetalRenderConfig.isAdaptiveResolutionEnabled()
+        ? "Resolution Scale (auto)"
+        : "Resolution Scale",
+        0.50f, 1.50f, 0.05f, MetalRenderConfig.resolutionScale(),
+        MetalRenderConfig::setResolutionScale,
+        v -> Component.literal(String.format(java.util.Locale.ROOT, "%.0f%%", v * 100.0f)));
     sec("Memory");
     sld("Max GPU Memory (MB)", 512, 4096, 512, pendingMaxMemMb, v -> pendingMaxMemMb = (int) (float) v);
     tog("Memory Fallback", config.enableMemoryPressureFallback, v -> config.enableMemoryPressureFallback = v);
