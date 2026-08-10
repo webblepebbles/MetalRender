@@ -11,30 +11,30 @@ public class FrustumCuller {
   public void update(Matrix4f projection, Matrix4f modelView,
       Vector3f cameraPos) {
     projection.mul(modelView, mvp);
-    planes[0][0] = mvp.m03() + mvp.m00();
-    planes[0][1] = mvp.m13() + mvp.m10();
-    planes[0][2] = mvp.m23() + mvp.m20();
-    planes[0][3] = mvp.m33() + mvp.m30();
-    planes[1][0] = mvp.m03() - mvp.m00();
-    planes[1][1] = mvp.m13() - mvp.m10();
-    planes[1][2] = mvp.m23() - mvp.m20();
-    planes[1][3] = mvp.m33() - mvp.m30();
-    planes[2][0] = mvp.m03() + mvp.m01();
-    planes[2][1] = mvp.m13() + mvp.m11();
-    planes[2][2] = mvp.m23() + mvp.m21();
-    planes[2][3] = mvp.m33() + mvp.m31();
-    planes[3][0] = mvp.m03() - mvp.m01();
-    planes[3][1] = mvp.m13() - mvp.m11();
-    planes[3][2] = mvp.m23() - mvp.m21();
-    planes[3][3] = mvp.m33() - mvp.m31();
-    planes[4][0] = mvp.m03() + mvp.m02();
-    planes[4][1] = mvp.m13() + mvp.m12();
-    planes[4][2] = mvp.m23() + mvp.m22();
-    planes[4][3] = mvp.m33() + mvp.m32();
-    planes[5][0] = mvp.m03() - mvp.m02();
-    planes[5][1] = mvp.m13() - mvp.m12();
-    planes[5][2] = mvp.m23() - mvp.m22();
-    planes[5][3] = mvp.m33() - mvp.m32();
+    planes[0][0] = mvp.m30() + mvp.m00();
+    planes[0][1] = mvp.m31() + mvp.m01();
+    planes[0][2] = mvp.m32() + mvp.m02();
+    planes[0][3] = mvp.m33() + mvp.m03();
+    planes[1][0] = mvp.m30() - mvp.m00();
+    planes[1][1] = mvp.m31() - mvp.m01();
+    planes[1][2] = mvp.m32() - mvp.m02();
+    planes[1][3] = mvp.m33() - mvp.m03();
+    planes[2][0] = mvp.m30() + mvp.m10();
+    planes[2][1] = mvp.m31() + mvp.m11();
+    planes[2][2] = mvp.m32() + mvp.m12();
+    planes[2][3] = mvp.m33() + mvp.m13();
+    planes[3][0] = mvp.m30() - mvp.m10();
+    planes[3][1] = mvp.m31() - mvp.m11();
+    planes[3][2] = mvp.m32() - mvp.m12();
+    planes[3][3] = mvp.m33() - mvp.m13();
+    planes[4][0] = mvp.m30() + mvp.m20();
+    planes[4][1] = mvp.m31() + mvp.m21();
+    planes[4][2] = mvp.m32() + mvp.m22();
+    planes[4][3] = mvp.m33() + mvp.m23();
+    planes[5][0] = mvp.m30() - mvp.m20();
+    planes[5][1] = mvp.m31() - mvp.m21();
+    planes[5][2] = mvp.m32() - mvp.m22();
+    planes[5][3] = mvp.m33() - mvp.m23();
     for (int i = 0; i < 6; i++) {
       float len = (float) Math.sqrt(planes[i][0] * planes[i][0] +
           planes[i][1] * planes[i][1] +
