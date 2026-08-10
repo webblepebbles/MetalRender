@@ -1,6 +1,8 @@
 package com.pebbles_boon.metalrender.gui;
 
 import com.pebbles_boon.metalrender.MetalRenderClient;
+import com.pebbles_boon.metalrender.config.MetalRenderConfig;
+import com.pebbles_boon.metalrender.performance.AdaptiveResolutionController;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElement;
 import net.fabricmc.fabric.api.client.rendering.v1.hud.HudElementRegistry;
@@ -30,6 +32,11 @@ public final class MetalHudOverlay implements HudElement {
       return;
     context.text(font, LABEL, 10, 10, COLOR, true);
 
+    double gpuMs = AdaptiveResolutionController.getInstance().getEmaGpuMs();
+    String scaleLine = String.format(java.util.Locale.ROOT, "Res %.0f%% | GPU %.1fms%s",
+        MetalRenderConfig.resolutionScale() * 100.0f, gpuMs > 0 ? gpuMs : 0.0,
+        MetalRenderConfig.isAdaptiveResolutionEnabled() ? " (adaptive)" : "");
+    context.text(font, scaleLine, 10, 22, 0xFF00FFFF, true);
   }
 
   public static void register() {
