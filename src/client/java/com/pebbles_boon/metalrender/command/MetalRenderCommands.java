@@ -48,6 +48,19 @@ public final class MetalRenderCommands {
                                 return 1;
                             }))
 
+                            .then(literal("adaptive")
+                                    .then(literal("on").executes(ctx -> {
+                                        MetalRenderConfig.setAdaptiveResolutionEnabled(true);
+                                        msg(ctx.getSource(), "§aAdaptive resolution enabled (auto-scales render res to keep GPU time in budget)");
+                                        return 1;
+                                    }))
+                                    .then(literal("off").executes(ctx -> {
+                                        MetalRenderConfig.setAdaptiveResolutionEnabled(false);
+                                        MetalRenderConfig.setResolutionScale(1.0f);
+                                        msg(ctx.getSource(), "§cAdaptive resolution disabled, scale reset to 1.0x");
+                                        return 1;
+                                    })))
+
                             .then(literal("config")
                                     .then(literal("open").executes(ctx -> {
                                         openConfigScreen(ctx.getSource());
@@ -137,7 +150,8 @@ public final class MetalRenderCommands {
         msg(src, "§7Enabled: " + (enabled ? "§cyea" : "§cnah"));
         msg(src, "§7Hardware: "
                 + (available ? "§a" + MetalHardwareChecker.getDeviceName() : "§cUnavailable"));
-        msg(src, "§7Resolution scale: §f" + String.format("%.2fx", MetalRenderConfig.resolutionScale()));
+        msg(src, "§7Resolution scale: §f" + String.format("%.2fx", MetalRenderConfig.resolutionScale())
+                + (MetalRenderConfig.isAdaptiveResolutionEnabled() ? " §7(§aadaptive§7)" : " §7(§cmanual§7)"));
 
         MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
         if (wr != null) {
