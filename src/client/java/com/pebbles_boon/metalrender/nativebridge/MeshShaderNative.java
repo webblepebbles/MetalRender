@@ -41,3 +41,4 @@ public final class MeshShaderNative {
       java.nio.ByteBuffer depth, int width, int height);
   public static native void destroyHiZPyramid(long handle);
 }
+//remember to test config settings monday night
