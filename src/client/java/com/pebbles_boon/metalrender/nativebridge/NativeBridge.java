@@ -33,10 +33,11 @@ public final class NativeBridge {
 
   public static native boolean nIsAvailable();
 
-  public static native long nInit(int width, int height, float scale);
+  public static native long nInit(int width, int height, float scale,
+      boolean temporalMetalFX);
 
   public static native void nResize(long handle, int width, int height,
-      float scale);
+      float scale, boolean temporalMetalFX);
 
   public static native void nBeginFrame(long handle, float[] proj, float[] view,
       float fogStart, float fogEnd);

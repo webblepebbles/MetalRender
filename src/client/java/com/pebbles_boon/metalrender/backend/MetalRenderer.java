@@ -52,7 +52,8 @@ public final class MetalRenderer implements RenderBackend {
   }
 
   public void init(int width, int height) {
-    this.handle = NativeBridge.nInit(width, height, MetalRenderConfig.resolutionScale());
+    this.handle = NativeBridge.nInit(width, height, MetalRenderConfig.resolutionScale(),
+        MetalRenderConfig.isMetalFXTemporalEnabled());
     if (this.handle != 0L) {
       this.available = true;
     }
@@ -68,7 +69,8 @@ public final class MetalRenderer implements RenderBackend {
 
   public void resize(int width, int height) {
     if (handle != 0)
-      NativeBridge.nResize(handle, width, height, MetalRenderConfig.resolutionScale());
+      NativeBridge.nResize(handle, width, height, MetalRenderConfig.resolutionScale(),
+          MetalRenderConfig.isMetalFXTemporalEnabled());
   }
 
   public void beginFrame(float tickDelta) {
