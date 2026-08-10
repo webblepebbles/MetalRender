@@ -62,7 +62,7 @@ bool isOccludedByHiZ(float3 aabbMin, float3 aabbMax,
     return (minDepth > hizDepth);
 }
 bool isInFrustum(float3 minC, float3 maxC, constant float4* planes) {
-    for (uint i = 0; i < 6; i++) {
+    for (uint i = 0; i < 4; i++) {
         float4 plane = planes[i];
         float3 pVertex;
         pVertex.x = (plane.x > 0.0) ? maxC.x : minC.x;

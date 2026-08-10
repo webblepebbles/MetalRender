@@ -112,7 +112,7 @@ void object_terrain(
 
     float3 minC = float3(m.worldX, m.worldY, m.worldZ);
     float3 maxC = minC + float3(16.0, 16.0, 16.0);
-    for (uint i = 0u; i < 6u; i++) {
+    for (uint i = 0u; i < 4u; i++) {
         float4 plane = camera.frustumPlanes[i];
         float3 pv;
         pv.x = (plane.x > 0.0) ? maxC.x : minC.x;

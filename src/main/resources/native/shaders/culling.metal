@@ -38,7 +38,7 @@ bool aabbBehindPlane(float3 minC, float3 maxC, float4 plane) {
     return (dot(plane.xyz, pVertex) + plane.w) < 0.0;
 }
 bool frustumTest(float3 minC, float3 maxC, constant float4* planes) {
-    for (uint i = 0; i < 6; i++) {
+    for (uint i = 0; i < 4; i++) {
         if (aabbBehindPlane(minC, maxC, planes[i])) return false;
     }
     return true;
