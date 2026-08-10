@@ -214,7 +214,7 @@ static void megaFree(uint64_t handle) {
     return;
   g_megaFreeList.push_back(it->second);
   g_megaAllocs.erase(it);
-
+  // remember to test config settings monday night
   size_t freeBytes = 0;
   for (const MegaSubAlloc &freeBlock : g_megaFreeList) {
     freeBytes += freeBlock.size;
@@ -265,11 +265,30 @@ static id<MTLDepthStencilState> g_depthStateEqualNoWrite = nil;
 static id<MTLTexture> g_tbColor[3] = {};
 static id<MTLTexture> g_tbDepth[3] = {};
 #ifdef METALRENDER_HAS_METALFX
-
 static id<MTLTexture> g_lrColor[3] = {};
 static id<MTLTexture> g_lrDepth[3] = {};
-static id<MTLFXSpatialScaler> g_mfxScaler = nil;
+static id<MTLTexture> g_motionTexture[3] = {};
+static id<MTLTexture> g_upscaledColor[3] = {};
+static id<MTLFXSpatialScaler> g_mfxSpatialScaler = nil;
+static id<MTLFXTemporalScaler> g_mfxTemporalScaler = nil;
+static id<MTLComputePipelineState> g_motionVectorPipeline = nil;
+static bool g_mfxTemporalEnabled = true;
+static bool g_mfxConfiguredTemporal = true;
+static bool g_mfxReset = true;
+static bool g_hasPreviousViewProjection = false;
+static float g_previousViewProjection[16] = {};
 #endif
+#ifdef METALRENDER_HAS_METALFX
+static inline bool mfxActive() {
+  return g_mfxSpatialScaler != nil || g_mfxTemporalScaler != nil;
+}
+#else
+static inline bool mfxActive() {
+  return false;
+}
+#endif
+static id<MTLTexture> g_sceneColor = nil;
+static id<MTLTexture> g_sceneDepth = nil;
 static IOSurfaceRef g_tbIOSurface[3] = {};
 static std::atomic<bool> g_tbSlotReady[3] = {{true}, {true}, {true}};
 static std::atomic<int> g_tbLastCompleted{-1};
@@ -491,6 +510,13 @@ static inline int visibleOpaqueBucketCount(const int counts[7], uint32_t mask) {
   return total;
 }
 
+struct MotionVectorParamsCPU {
+  float currentViewProjection[16];
+  float previousViewProjection[16];
+  uint32_t size[2];
+  uint32_t padding[2];
+};
+
 struct CameraUniformsCPU {
   float viewProjection[16];
   float projection[16];
@@ -525,6 +551,10 @@ static std::vector<size_t> g_meshFreeSlots;
 static std::vector<int> g_activeMeshIndices;
 static std::shared_mutex g_meshRegMutex;
 static int g_activeMeshCount = 0;
+static std::atomic<int> g_meshRegGeneration{0};
+//remember to test config settings monday night
+static std::atomic<int> g_meshRemovalGeneration{0};
+static bool g_cpuFrustumCullEnabled = true;
 static int64_t packMeshKey(int cx, int cy, int cz) {
   return ((int64_t)(cx & 0x3FFFFF) << 42) | ((int64_t)(cy & 0xFFFFF) << 22) |
          (int64_t)(cz & 0x3FFFFF);
@@ -536,53 +566,49 @@ static inline bool frustumTestAABB(const float p[24], float x0, float y0,
   float32x4_t vx0 = vdupq_n_f32(x0), vx1 = vdupq_n_f32(x1);
   float32x4_t vy0 = vdupq_n_f32(y0), vy1 = vdupq_n_f32(y1);
   float32x4_t vz0 = vdupq_n_f32(z0), vz1 = vdupq_n_f32(z1);
-  float32x4_t zero = vdupq_n_f32(0.0f);
-  for (int i = 0; i < 6; i += 2) {
-    if (i != 4) {
-      float32x4_t plane0 = vld1q_f32(&p[i * 4]);
+  float32x4_t zero =
+      vdupq_n_f32(0.0f); // remember to test config settings monday night
+  for (int i = 0; i < 4; i += 2) {
+    float32x4_t plane0 = vld1q_f32(&p[i * 4]);
 
-      float32x4_t a0 = vdupq_laneq_f32(plane0, 0);
-      float32x4_t b0 = vdupq_laneq_f32(plane0, 1);
-      float32x4_t c0 = vdupq_laneq_f32(plane0, 2);
-      float32x4_t d0 = vdupq_laneq_f32(plane0, 3);
+    float32x4_t a0 = vdupq_laneq_f32(plane0, 0);
+    float32x4_t b0 = vdupq_laneq_f32(plane0, 1);
+    float32x4_t c0 = vdupq_laneq_f32(plane0, 2);
+    float32x4_t d0 = vdupq_laneq_f32(plane0, 3);
 
-      uint32x4_t maskA0 = vcgeq_f32(a0, zero);
-      uint32x4_t maskB0 = vcgeq_f32(b0, zero);
-      uint32x4_t maskC0 = vcgeq_f32(c0, zero);
-      float32x4_t px0 = vbslq_f32(maskA0, vx1, vx0);
-      float32x4_t py0 = vbslq_f32(maskB0, vy1, vy0);
-      float32x4_t pz0 = vbslq_f32(maskC0, vz1, vz0);
+    uint32x4_t maskA0 = vcgeq_f32(a0, zero);
+    uint32x4_t maskB0 = vcgeq_f32(b0, zero);
+    uint32x4_t maskC0 = vcgeq_f32(c0, zero);
+    float32x4_t px0 = vbslq_f32(maskA0, vx1, vx0);
+    float32x4_t py0 = vbslq_f32(maskB0, vy1, vy0);
+    float32x4_t pz0 = vbslq_f32(maskC0, vz1, vz0);
 
-      float32x4_t dot0 = vfmaq_f32(d0, a0, px0);
-      dot0 = vfmaq_f32(dot0, b0, py0);
-      dot0 = vfmaq_f32(dot0, c0, pz0);
-      if (vgetq_lane_f32(dot0, 0) < 0)
-        return false;
-    }
-    if (i + 1 < 6 && i + 1 != 4) {
-      float32x4_t plane1 = vld1q_f32(&p[(i + 1) * 4]);
-      float32x4_t a1 = vdupq_laneq_f32(plane1, 0);
-      float32x4_t b1 = vdupq_laneq_f32(plane1, 1);
-      float32x4_t c1 = vdupq_laneq_f32(plane1, 2);
-      float32x4_t d1 = vdupq_laneq_f32(plane1, 3);
-      uint32x4_t maskA1 = vcgeq_f32(a1, zero);
-      uint32x4_t maskB1 = vcgeq_f32(b1, zero);
-      uint32x4_t maskC1 = vcgeq_f32(c1, zero);
-      float32x4_t px1 = vbslq_f32(maskA1, vx1, vx0);
-      float32x4_t py1 = vbslq_f32(maskB1, vy1, vy0);
-      float32x4_t pz1 = vbslq_f32(maskC1, vz1, vz0);
-      float32x4_t dot1 = vfmaq_f32(d1, a1, px1);
-      dot1 = vfmaq_f32(dot1, b1, py1);
-      dot1 = vfmaq_f32(dot1, c1, pz1);
-      if (vgetq_lane_f32(dot1, 0) < 0)
-        return false;
-    }
+    float32x4_t dot0 = vfmaq_f32(d0, a0, px0);
+    dot0 = vfmaq_f32(dot0, b0, py0);
+    dot0 = vfmaq_f32(dot0, c0, pz0);
+    if (vgetq_lane_f32(dot0, 0) < 0)
+      return false;
+
+    float32x4_t plane1 = vld1q_f32(&p[(i + 1) * 4]);
+    float32x4_t a1 = vdupq_laneq_f32(plane1, 0);
+    float32x4_t b1 = vdupq_laneq_f32(plane1, 1);
+    float32x4_t c1 = vdupq_laneq_f32(plane1, 2);
+    float32x4_t d1 = vdupq_laneq_f32(plane1, 3);
+    uint32x4_t maskA1 = vcgeq_f32(a1, zero);
+    uint32x4_t maskB1 = vcgeq_f32(b1, zero);
+    uint32x4_t maskC1 = vcgeq_f32(c1, zero);
+    float32x4_t px1 = vbslq_f32(maskA1, vx1, vx0);
+    float32x4_t py1 = vbslq_f32(maskB1, vy1, vy0);
+    float32x4_t pz1 = vbslq_f32(maskC1, vz1, vz0);
+    float32x4_t dot1 = vfmaq_f32(d1, a1, px1);
+    dot1 = vfmaq_f32(dot1, b1, py1);
+    dot1 = vfmaq_f32(dot1, c1, pz1);
+    if (vgetq_lane_f32(dot1, 0) < 0)
+      return false;
   }
   return true;
 #else
-  for (int i = 0; i < 6; i++) {
-    if (i == 4)
-      continue;
+  for (int i = 0; i < 4; i++) {
     float a = p[i * 4], b = p[i * 4 + 1], c = p[i * 4 + 2], d = p[i * 4 + 3];
     float px = (a >= 0) ? x1 : x0;
     float py = (b >= 0) ? y1 : y0;
@@ -611,9 +637,7 @@ static inline uint32_t frustumTestAABB_x4(const float p[24], const float ox[4],
   float32x4_t zero = vdupq_n_f32(0.0f);
 
   uint32x4_t visible = vdupq_n_u32(0xFFFFFFFF);
-  for (int i = 0; i < 6; i++) {
-    if (i == 4)
-      continue;
+  for (int i = 0; i < 4; i++) {
     float a = p[i * 4], b = p[i * 4 + 1], c = p[i * 4 + 2], d = p[i * 4 + 3];
 
     float32x4_t va = vdupq_n_f32(a);
@@ -655,7 +679,6 @@ static inline uint32_t frustumTestAABB_x4(const float p[24], const float ox[4],
 #endif
 
 static void extractFrustumPlanes(const float m[16], float out[24]) {
-
   out[0] = m[3] + m[0];
   out[1] = m[7] + m[4];
   out[2] = m[11] + m[8];
@@ -1434,6 +1457,9 @@ fragment float4 fragment_particle(
   };
   g_hizDownsamplePipeline = createComputePipeline(@"hiz_downsample");
   g_hizMultiPipeline = createComputePipeline(@"hiz_downsample_multi");
+#ifdef METALRENDER_HAS_METALFX
+  g_motionVectorPipeline = createComputePipeline(@"generate_motion_vectors");
+#endif
   g_cullEncodePipeline = createComputePipeline(@"cull_and_encode");
   g_resetCullPipeline = createComputePipeline(@"reset_cull_stats");
 
@@ -1579,11 +1605,31 @@ fragment float4 fragment_particle(
 static void ensure_offscreen() {
   if (!g_device)
     return;
-  int w = std::max(1, (int)(g_rtWidth * g_scale));
-  int h = std::max(1, (int)(g_rtHeight * g_scale));
+  int w = std::max(1, g_rtWidth);
+  int h = std::max(1, g_rtHeight);
+  int lowW = std::max(1, (int)(w * g_scale));
+  int lowH = std::max(1, (int)(h * g_scale));
 
   bool recreate = (!g_tbColor[0]) || ((int)g_tbColor[0].width != w) ||
                   ((int)g_tbColor[0].height != h);
+#ifdef METALRENDER_HAS_METALFX
+  if (@available(macOS 13.0, *)) {
+    bool spatialSupported = [MTLFXSpatialScalerDescriptor supportsDevice:g_device];
+    bool temporalSupported = g_motionVectorPipeline &&
+                             [MTLFXTemporalScalerDescriptor supportsDevice:g_device];
+    bool selectedSupported = temporalSupported || spatialSupported;
+    bool needLowTargets = g_scale < 0.99f && selectedSupported;
+    bool temporalResourcesExpected = g_mfxTemporalEnabled && temporalSupported;
+    bool haveLowTargets = g_lrColor[0] && g_lrDepth[0] && g_upscaledColor[0] &&
+                          (!temporalResourcesExpected || g_motionTexture[0]);
+    if (needLowTargets != haveLowTargets ||
+        (haveLowTargets && ((int)g_lrColor[0].width != lowW ||
+                            (int)g_lrColor[0].height != lowH)) ||
+        g_mfxConfiguredTemporal != g_mfxTemporalEnabled) {
+      recreate = true;
+    }
+  }
+#endif
   if (!recreate)
     return;
 
@@ -1605,6 +1651,8 @@ static void ensure_offscreen() {
   g_tbLastCompleted.store(-1, std::memory_order_release);
   g_color = nil;
   g_depth = nil;
+  g_sceneColor = nil;
+  g_sceneDepth = nil;
   g_ioSurface = NULL;
   if (g_hizPyramid) {
     [g_hizPyramid release];
@@ -1639,7 +1687,8 @@ static void ensure_offscreen() {
                                      width:w
                                     height:h
                                  mipmapped:NO];
-    cd.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+    cd.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead |
+               MTLTextureUsageShaderWrite;
     cd.storageMode = MTLStorageModeShared;
     if (g_tbIOSurface[s]) {
       g_tbColor[s] = [g_device newTextureWithDescriptor:cd
@@ -1667,8 +1716,10 @@ static void ensure_offscreen() {
 #ifdef METALRENDER_HAS_METALFX
 
   if (@available(macOS 13.0, *)) {
-    [g_mfxScaler release];
-    g_mfxScaler = nil;
+    [g_mfxSpatialScaler release];
+    g_mfxSpatialScaler = nil;
+    [g_mfxTemporalScaler release];
+    g_mfxTemporalScaler = nil;
     for (int s = 0; s < 3; s++) {
       if (g_lrColor[s]) {
         [g_lrColor[s] release];
@@ -1678,13 +1729,30 @@ static void ensure_offscreen() {
         [g_lrDepth[s] release];
         g_lrDepth[s] = nil;
       }
+      if (g_motionTexture[s]) {
+        [g_motionTexture[s] release];
+        g_motionTexture[s] = nil;
+      }
+      if (g_upscaledColor[s]) {
+        [g_upscaledColor[s] release];
+        g_upscaledColor[s] = nil;
+      }
     }
-    if (g_scale < 0.99f) {
+    g_mfxReset = true;
+    g_hasPreviousViewProjection = false;
+    bool spatialSupported = [MTLFXSpatialScalerDescriptor supportsDevice:g_device];
+    bool temporalSupported = g_motionVectorPipeline &&
+                             [MTLFXTemporalScalerDescriptor supportsDevice:g_device];
+    bool useTemporal = g_mfxTemporalEnabled && temporalSupported;
+    bool useSpatial = !useTemporal && spatialSupported;
+    bool selectedSupported = useTemporal || useSpatial;
+    g_mfxConfiguredTemporal = g_mfxTemporalEnabled;
+    if (g_scale < 0.99f && selectedSupported) {
 
       int nativeW = std::max(1, g_rtWidth);
       int nativeH = std::max(1, g_rtHeight);
-      int lrw = w;
-      int lrh = h;
+      int lrw = lowW;
+      int lrh = lowH;
       for (int s = 0; s < 3; s++) {
         MTLTextureDescriptor *lrcd = [MTLTextureDescriptor
             texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
@@ -1699,24 +1767,60 @@ static void ensure_offscreen() {
                                          width:lrw
                                         height:lrh
                                      mipmapped:NO];
-        lrdd.usage = MTLTextureUsageRenderTarget;
-        lrdd.storageMode = MTLStorageModeMemoryless;
+        lrdd.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
+        lrdd.storageMode = MTLStorageModePrivate;
         g_lrDepth[s] = [g_device newTextureWithDescriptor:lrdd];
+        if (useTemporal) {
+          MTLTextureDescriptor *mvd = [MTLTextureDescriptor
+              texture2DDescriptorWithPixelFormat:MTLPixelFormatRG16Float
+                                           width:lrw
+                                          height:lrh
+                                       mipmapped:NO];
+          mvd.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+          mvd.storageMode = MTLStorageModePrivate;
+          g_motionTexture[s] = [g_device newTextureWithDescriptor:mvd];
+        }
+        MTLTextureDescriptor *outd = [MTLTextureDescriptor
+            texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
+                                         width:nativeW
+                                        height:nativeH
+                                     mipmapped:NO];
+        outd.usage = MTLTextureUsageShaderRead | MTLTextureUsageShaderWrite;
+        outd.storageMode = MTLStorageModePrivate;
+        g_upscaledColor[s] = [g_device newTextureWithDescriptor:outd];
       }
-      MTLFXSpatialScalerDescriptor *scalerDesc =
-          [[MTLFXSpatialScalerDescriptor alloc] init];
-      scalerDesc.inputWidth = (NSUInteger)lrw;
-      scalerDesc.inputHeight = (NSUInteger)lrh;
-      scalerDesc.outputWidth = (NSUInteger)nativeW;
-      scalerDesc.outputHeight = (NSUInteger)nativeH;
-      scalerDesc.colorTextureFormat = MTLPixelFormatBGRA8Unorm;
-      scalerDesc.outputTextureFormat = MTLPixelFormatBGRA8Unorm;
-      g_mfxScaler = [scalerDesc newSpatialScalerWithDevice:g_device];
-      if (!g_mfxScaler)
-        dbg("WARN: MTLFXSpatialScaler creation failed\n");
-      else
-        dbg("MetalFX SpatialScaler created: %dx%d -> %dx%d (scale=%.2f)\n", lrw,
-            lrh, nativeW, nativeH, g_scale);
+      if (useTemporal) {
+        MTLFXTemporalScalerDescriptor *scalerDesc =
+            [[MTLFXTemporalScalerDescriptor alloc] init];
+        scalerDesc.inputWidth = (NSUInteger)lrw;
+        scalerDesc.inputHeight = (NSUInteger)lrh;
+        scalerDesc.outputWidth = (NSUInteger)nativeW;
+        scalerDesc.outputHeight = (NSUInteger)nativeH;
+        scalerDesc.colorTextureFormat = MTLPixelFormatBGRA8Unorm;
+        scalerDesc.depthTextureFormat = MTLPixelFormatDepth32Float;
+        scalerDesc.motionTextureFormat = MTLPixelFormatRG16Float;
+        scalerDesc.outputTextureFormat = MTLPixelFormatBGRA8Unorm;
+        scalerDesc.autoExposureEnabled = YES;
+        g_mfxTemporalScaler = [scalerDesc newTemporalScalerWithDevice:g_device];
+      } else if (useSpatial) {
+        MTLFXSpatialScalerDescriptor *scalerDesc =
+            [[MTLFXSpatialScalerDescriptor alloc] init];
+        scalerDesc.inputWidth = (NSUInteger)lrw;
+        scalerDesc.inputHeight = (NSUInteger)lrh;
+        scalerDesc.outputWidth = (NSUInteger)nativeW;
+        scalerDesc.outputHeight = (NSUInteger)nativeH;
+        scalerDesc.colorTextureFormat = MTLPixelFormatBGRA8Unorm;
+        scalerDesc.outputTextureFormat = MTLPixelFormatBGRA8Unorm;
+        g_mfxSpatialScaler = [scalerDesc newSpatialScalerWithDevice:g_device];
+      }
+      if (!mfxActive()) {
+        dbg("WARN: MetalFX %s scaler creation failed\n",
+            useTemporal ? "Temporal" : "Spatial");
+      } else {
+        dbg("MetalFX %s scaler created: %dx%d -> %dx%d (scale=%.2f)\n",
+            useTemporal ? "Temporal" : "Spatial",
+            lrw, lrh, nativeW, nativeH, g_scale);
+      }
     } else {
       dbg("MetalFX upscaler DISABLED (scale=%.2f >= 1.0, full-res path)\n",
           g_scale);
@@ -1726,14 +1830,18 @@ static void ensure_offscreen() {
 
   g_color = g_tbColor[0];
   g_depth = g_tbDepth[0];
+  g_sceneColor = g_color;
+  g_sceneDepth = g_depth;
   g_ioSurface = g_tbIOSurface[0];
   g_renderSlot = 0;
   dbg("Triple-buffered render targets created: %dx%d (3 sets)\n", w, h);
 
-  g_hizWidth = w;
-  g_hizHeight = h;
-  int hizW = std::max(1, w / 2);
-  int hizH = std::max(1, h / 2);
+  int sceneW = mfxActive() ? lowW : w;
+  int sceneH = mfxActive() ? lowH : h;
+  g_hizWidth = sceneW;
+  g_hizHeight = sceneH;
+  int hizW = std::max(1, sceneW / 2);
+  int hizH = std::max(1, sceneH / 2);
   g_hizMipCount = (uint32_t)floor(log2(std::max(hizW, hizH))) + 1;
   g_hizMipCount = std::min(g_hizMipCount, (uint32_t)12);
   MTLTextureDescriptor *hizDesc = [MTLTextureDescriptor
@@ -1757,24 +1865,24 @@ static void ensure_offscreen() {
   }
   MTLTextureDescriptor *oitAccumDesc = [MTLTextureDescriptor
       texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float
-                                   width:w
-                                  height:h
+                                    width:(mfxActive() ? lowW : w)
+                                   height:(mfxActive() ? lowH : h)
                                mipmapped:NO];
   oitAccumDesc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
 #if defined(__aarch64__)
-  oitAccumDesc.storageMode = MTLStorageModeMemoryless;
+  oitAccumDesc.storageMode = mfxActive() ? MTLStorageModePrivate : MTLStorageModeMemoryless;
 #else
   oitAccumDesc.storageMode = MTLStorageModePrivate;
 #endif
   g_oitAccumTex = [g_device newTextureWithDescriptor:oitAccumDesc];
   MTLTextureDescriptor *oitRevDesc = [MTLTextureDescriptor
       texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm
-                                   width:w
-                                  height:h
+                                    width:(mfxActive() ? lowW : w)
+                                   height:(mfxActive() ? lowH : h)
                                mipmapped:NO];
   oitRevDesc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
 #if defined(__aarch64__)
-  oitRevDesc.storageMode = MTLStorageModeMemoryless;
+  oitRevDesc.storageMode = mfxActive() ? MTLStorageModePrivate : MTLStorageModeMemoryless;
 #else
   oitRevDesc.storageMode = MTLStorageModePrivate;
 #endif
@@ -1797,23 +1905,31 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nIsAvailable(
 }
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nInit(
-    JNIEnv *, jclass, jint width, jint height, jfloat scale) {
+    JNIEnv *, jclass, jint width, jint height, jfloat scale,
+    jboolean temporalMetalFX) {
   ensure_device();
   g_rtWidth = (int)width;
   g_rtHeight = (int)height;
   g_scale = scale;
+#ifdef METALRENDER_HAS_METALFX
+  g_mfxTemporalEnabled = (bool)temporalMetalFX;
+#endif
   g_shuttingDown = false;
-  ensure_offscreen();
   load_shaders();
+  ensure_offscreen();
   return (g_device != nil) ? (jlong)0x1 : (jlong)0;
 }
 extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nResize(
-    JNIEnv *, jclass, jlong handle, jint width, jint height, jfloat scale) {
+    JNIEnv *, jclass, jlong handle, jint width, jint height, jfloat scale,
+    jboolean temporalMetalFX) {
   (void)handle;
   g_rtWidth = (int)width;
   g_rtHeight = (int)height;
   g_scale = scale;
+#ifdef METALRENDER_HAS_METALFX
+  g_mfxTemporalEnabled = (bool)temporalMetalFX;
+#endif
   ensure_offscreen();
 }
 static bool g_reuseTerrainFrame = false;
@@ -2640,6 +2756,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMeshB
     g_activeMeshIndices.push_back((int)mIdx);
     g_activeMeshCount++;
   }
+  g_meshRegGeneration.fetch_add(1, std::memory_order_release);
   env->ReleaseLongArrayElements(batchData, data, JNI_ABORT);
 }
 
@@ -2648,6 +2765,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMesh(
     JNIEnv *env, jclass, jint cx, jint cy, jint cz, jlong bufferHandle,
     jint quadCount, jint opaqueQuadCount, jlong visibilityMask,
     jintArray facingQuadCounts, jint lodTier) {
+  g_meshRegGeneration.fetch_add(1, std::memory_order_release);
   int64_t key = packMeshKey(cx, cy, cz);
   lodTier = std::max(0, std::min(2, (int)lodTier));
   int32_t faceCounts[14] = {};
@@ -2707,6 +2825,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMesh(
 extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUnregisterChunkMesh(
     JNIEnv *, jclass, jint cx, jint cy, jint cz) {
+  g_meshRegGeneration.fetch_add(1, std::memory_order_release);
+  g_meshRemovalGeneration.fetch_add(1, std::memory_order_release);
   int64_t key = packMeshKey(cx, cy, cz);
   std::unique_lock<std::shared_mutex> lock(g_meshRegMutex);
   auto it = g_meshKeyToIdx.find(key);
@@ -2878,20 +2998,35 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
 
     const float maxDrawDistSq = std::numeric_limits<float>::infinity();
 
-    int totalActive = 0;
-
     struct MeshSnapshot {
-      int meshIdx;
-      float ox, oy, oz;
+      int32_t chunkX, chunkY, chunkZ;
       uint64_t bufferHandle;
+      uint64_t megaOffset;
+      id<MTLBuffer> resolvedBuf;
       int quadCount;
       int opaqueQuadCount;
       int opaqueFaceCounts[7];
       int lodTier;
+      bool isMega;
     };
     static MeshSnapshot *s_snapshots = nullptr;
     static int s_snapshotsCap = 0;
-    {
+    static int s_snapshotCount = 0;
+    static int s_snapshotGeneration = -1;
+    static int s_snapshotChurnFrames = 0;
+    static int s_snapshotRemovalGeneration = -1;
+
+    int regGeneration = g_meshRegGeneration.load(std::memory_order_acquire);
+    int removalGeneration = g_meshRemovalGeneration.load(std::memory_order_acquire);
+    bool rebuildNow = removalGeneration != s_snapshotRemovalGeneration;
+    if (!rebuildNow && regGeneration != s_snapshotGeneration) {
+      s_snapshotChurnFrames++;
+      rebuildNow = (s_snapshotChurnFrames >= 2 || s_snapshotCount == 0);
+    } else if (regGeneration == s_snapshotGeneration) {
+      s_snapshotChurnFrames = 0;
+    }
+    if (rebuildNow) {
+      s_snapshotChurnFrames = 0;
       std::shared_lock<std::shared_mutex> regLock(g_meshRegMutex);
       int activeTotal = (int)g_activeMeshIndices.size();
       if (s_snapshotsCap < activeTotal) {
@@ -2899,30 +3034,47 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         s_snapshotsCap = activeTotal * 2;
         s_snapshots = new MeshSnapshot[s_snapshotsCap];
       }
-      totalActive = 0;
-      for (int k = 0; k < activeTotal; k++) {
-        int i = g_activeMeshIndices[k];
-        const NativeMesh &nm = g_nativeMeshes[i];
+      {
+        std::shared_lock<std::shared_mutex> megaLock(g_megaMutex);
+        std::shared_lock<std::shared_mutex> bufLock(g_bufferMutex);
+        s_snapshotCount = 0;
+        for (int k = 0; k < activeTotal; k++) {
+          int i = g_activeMeshIndices[k];
+          const NativeMesh &nm = g_nativeMeshes[i];
 
-        if (__builtin_expect(nm.quadCount <= 0 || nm.bufferHandle == 0, 0))
-          continue;
-        float ox = nm.chunkX * 16.0f - camX;
-        float oy = nm.chunkY * 16.0f - camY;
-        float oz = nm.chunkZ * 16.0f - camZ;
-        MeshSnapshot &snap = s_snapshots[totalActive++];
-        snap.meshIdx = i;
-        snap.ox = ox;
-        snap.oy = oy;
-        snap.oz = oz;
-        snap.bufferHandle = nm.bufferHandle;
-        snap.quadCount = nm.quadCount;
-        snap.opaqueQuadCount = nm.opaqueQuadCount;
-        memcpy(snap.opaqueFaceCounts, nm.facingQuadCounts,
-            sizeof(snap.opaqueFaceCounts));
-        snap.lodTier = nm.lodTier;
+          if (__builtin_expect(nm.quadCount <= 0 || nm.bufferHandle == 0, 0))
+            continue;
+          MeshSnapshot &snap = s_snapshots[s_snapshotCount];
+          snap.chunkX = nm.chunkX;
+          snap.chunkY = nm.chunkY;
+          snap.chunkZ = nm.chunkZ;
+          snap.bufferHandle = nm.bufferHandle;
+          snap.quadCount = nm.quadCount;
+          snap.opaqueQuadCount = nm.opaqueQuadCount;
+          memcpy(snap.opaqueFaceCounts, nm.facingQuadCounts,
+              sizeof(snap.opaqueFaceCounts));
+          snap.lodTier = nm.lodTier;
+          if (isMegaHandle(nm.bufferHandle)) {
+            auto it = g_megaAllocs.find(nm.bufferHandle);
+            if (__builtin_expect(it == g_megaAllocs.end(), 0))
+              continue;
+            snap.megaOffset = it->second.offset;
+            snap.resolvedBuf = nil;
+            snap.isMega = true;
+          } else {
+            snap.megaOffset = 0;
+            auto bit = g_buffers.find(nm.bufferHandle);
+            snap.resolvedBuf = (bit != g_buffers.end()) ? bit->second : nil;
+            snap.isMega = false;
+          }
+          s_snapshotCount++;
+        }
       }
+      s_snapshotGeneration = regGeneration;
+      s_snapshotRemovalGeneration = removalGeneration;
     }
 
+    int totalActive = s_snapshotCount;
     if (totalActive == 0)
       return 0;
 
@@ -2935,89 +3087,69 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
     g_lastFaceCullInput.store(0, std::memory_order_relaxed);
     g_lastFaceCullRemoved.store(0, std::memory_order_relaxed);
     int distCulled = 0;
-    {
-      std::shared_lock<std::shared_mutex> megaLock(g_megaMutex);
-      std::shared_lock<std::shared_mutex> bufLock(g_bufferMutex);
 
-      auto processVisible = [&](int si) {
-        const MeshSnapshot &ms = s_snapshots[si];
-        float cx = ms.ox + 8.0f, cy = ms.oy + 8.0f, cz = ms.oz + 8.0f;
+    validCount = 0;
+    megaCount = 0;
+    for (int si = 0; si < totalActive; si++) {
+      const MeshSnapshot &ms = s_snapshots[si];
+      float ox = ms.chunkX * 16.0f - camX;
+      float oy = ms.chunkY * 16.0f - camY;
+      float oz = ms.chunkZ * 16.0f - camZ;
+      float cx = ox + 8.0f, cz = oz + 8.0f;
+      DrawCmd &cmd = s_cmds[validCount];
+      cmd.bufHandle = ms.bufferHandle;
+      cmd.megaOffset = ms.megaOffset;
+      cmd.resolvedBuf = ms.resolvedBuf;
+      cmd.idxCount = ms.quadCount * 6;
+      cmd.opaqueIdxCount = ms.opaqueQuadCount *
+                           6; // remember to test config settings monday night
+      memcpy(cmd.opaqueFaceCounts, ms.opaqueFaceCounts,
+          sizeof(cmd.opaqueFaceCounts));
+      cmd.lodTier = ms.lodTier;
+      cmd.facingMask = visibleFacingMaskForAabb(ox, oy, oz);
+      cmd.distSq = cx * cx + cz * cz;
+      cmd.ox = ox;
+      cmd.oy = oy;
+      cmd.oz = oz;
+      cmd.isMega = ms.isMega;
+      validCount++;
+      if (ms.isMega)
+        megaCount++;
+    }
 
-        float distSq = cx * cx + cz * cz;
-        int idxCount = ms.quadCount * 6;
-        int opaqueIdxCount = ms.opaqueQuadCount * 6;
-        bool mega = isMegaHandle(ms.bufferHandle);
-        if (mega) {
-          auto it = g_megaAllocs.find(ms.bufferHandle);
-          if (__builtin_expect(it == g_megaAllocs.end(), 0))
-            return;
-          DrawCmd &cmd = s_cmds[validCount];
-          cmd.bufHandle = ms.bufferHandle;
-          cmd.megaOffset = it->second.offset;
-          cmd.resolvedBuf = nil;
-          cmd.idxCount = idxCount;
-          cmd.opaqueIdxCount = opaqueIdxCount;
-          memcpy(cmd.opaqueFaceCounts, ms.opaqueFaceCounts,
-              sizeof(cmd.opaqueFaceCounts));
-          cmd.lodTier = ms.lodTier;
-          cmd.facingMask = visibleFacingMaskForAabb(ms.ox, ms.oy, ms.oz);
-          cmd.distSq = distSq;
-          cmd.ox = ms.ox;
-          cmd.oy = ms.oy;
-          cmd.oz = ms.oz;
-          cmd.isMega = true;
-          megaCount++;
-        } else {
-          id<MTLBuffer> rb = nil;
-          auto bit = g_buffers.find(ms.bufferHandle);
-          if (bit != g_buffers.end())
-            rb = bit->second;
-          DrawCmd &cmd = s_cmds[validCount];
-          cmd.bufHandle = ms.bufferHandle;
-          cmd.megaOffset = 0;
-          cmd.resolvedBuf = rb;
-          cmd.idxCount = idxCount;
-          cmd.opaqueIdxCount = opaqueIdxCount;
-          memcpy(cmd.opaqueFaceCounts, ms.opaqueFaceCounts,
-              sizeof(cmd.opaqueFaceCounts));
-          cmd.lodTier = ms.lodTier;
-          cmd.facingMask = visibleFacingMaskForAabb(ms.ox, ms.oy, ms.oz);
-          cmd.distSq = distSq;
-          cmd.ox = ms.ox;
-          cmd.oy = ms.oy;
-          cmd.oz = ms.oz;
-          cmd.isMega = false;
-        }
-        validCount++;
-      };
-
+    if (g_cpuFrustumCullEnabled && totalActive > 0) {
+      int kept = 0;
       for (int si = 0; si < totalActive; si++) {
-        processVisible(si);
+        const DrawCmd &cmd = s_cmds[si];
+        if (frustumTestAABB(frustumPlanes, cmd.ox, cmd.oy, cmd.oz,
+                            cmd.ox + 16.0f, cmd.oy + 16.0f,
+                            cmd.oz + 16.0f)) {
+          kept++;
+        }
       }
-
-      bool severeUnderfill =
-          (validCount > 0 && totalActive >= 96 &&
-           (validCount <= 8 || validCount * 24 < totalActive));
-      if (severeUnderfill) {
-        validCount = 0;
+      if (kept == 0 || (totalActive >= 96 && kept * 24 < totalActive)) {
+        if (g_frameCount < 5 || (g_frameCount % 600 == 0)) {
+          dbg("CULL_FAILSAFE: kept=%d input=%d, fallback distance-only\n",
+              kept, totalActive);
+        }
+        // remember to test config settings monday night
+      } else {
+        int write = 0;
+        for (int si = 0; si < totalActive; si++) {
+          const DrawCmd &cmd = s_cmds[si];
+          if (frustumTestAABB(frustumPlanes, cmd.ox, cmd.oy, cmd.oz,
+                              cmd.ox + 16.0f, cmd.oy + 16.0f,
+                              cmd.oz + 16.0f)) {
+            if (write != si)
+              s_cmds[write] = s_cmds[si];
+            write++;
+          }
+        }
+        validCount = kept;
         megaCount = 0;
-        for (int si = 0; si < totalActive; si++) {
-          processVisible(si);
-        }
-        if (g_frameCount < 5 || (g_frameCount % 600 == 0)) {
-          dbg("CULL_FAILSAFE_LOW: visible=%d input=%d fallback distance-only\n",
-              validCount, totalActive);
-        }
-      }
-
-      if (validCount == 0 && totalActive > 0) {
-        for (int si = 0; si < totalActive; si++) {
-          processVisible(si);
-        }
-        if (g_frameCount < 5 || (g_frameCount % 600 == 0)) {
-          dbg("CULL_FAILSAFE: frustum rejected all %d chunks, fallback "
-              "distance-only\n",
-              totalActive);
+        for (int i = 0; i < validCount; i++) {
+          if (s_cmds[i].isMega)
+            megaCount++;
         }
       }
     }
@@ -3801,10 +3933,11 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawLineBuffer(
       [g_currentEncoder setDepthStencilState:g_depthState];
   }
 }
-extern "C" JNIEXPORT void JNICALL
-Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawTriangleBuffer(
-    JNIEnv *, jclass, jlong frameContext, jlong vertexBuffer,
-    jint vertexCount) {
+extern "C" JNIEXPORT void
+    JNICALL // remember to test config settings monday night
+    Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawTriangleBuffer(
+        JNIEnv *, jclass, jlong frameContext, jlong vertexBuffer,
+        jint vertexCount) {
   (void)frameContext;
   if (!g_currentEncoder || vertexCount <= 0 || !g_pipelineDebugLines)
     return;
@@ -3893,7 +4026,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetCurrentFrameCon
           [g_currentCmdBuffer computeCommandEncoder];
       if (hizEnc) {
         [hizEnc setComputePipelineState:g_hizDownsamplePipeline];
-        id<MTLTexture> srcDepth = g_depth;
+        id<MTLTexture> srcDepth = g_sceneDepth;
         if (srcDepth) {
           [hizEnc setTexture:srcDepth atIndex:0];
           [hizEnc setTexture:g_hizPyramid atIndex:1];
@@ -3936,11 +4069,15 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetCurrentFrameCon
           g_renderSlot = slot1;
           g_color = g_tbColor[g_renderSlot];
           g_depth = g_tbDepth[g_renderSlot];
+          g_sceneColor = g_color;
+          g_sceneDepth = g_depth;
           g_ioSurface = g_tbIOSurface[g_renderSlot];
         } else if (g_tbSlotReady[slot0].load(std::memory_order_acquire)) {
           g_renderSlot = slot0;
           g_color = g_tbColor[g_renderSlot];
           g_depth = g_tbDepth[g_renderSlot];
+          g_sceneColor = g_color;
+          g_sceneDepth = g_depth;
           g_ioSurface = g_tbIOSurface[g_renderSlot];
         } else {
 
@@ -3951,6 +4088,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetCurrentFrameCon
         g_renderSlot = prevSlot;
         g_color = g_tbColor[g_renderSlot];
         g_depth = g_tbDepth[g_renderSlot];
+        g_sceneColor = g_color;
+        g_sceneDepth = g_depth;
         g_ioSurface = g_tbIOSurface[g_renderSlot];
       }
     }
@@ -3978,6 +4117,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetCurrentFrameCon
       g_renderSlot = g_currentBufferIndex;
       g_color = g_tbColor[g_renderSlot];
       g_depth = g_tbDepth[g_renderSlot];
+      g_sceneColor = g_color;
+      g_sceneDepth = g_depth;
       g_ioSurface = g_tbIOSurface[g_renderSlot];
       g_tbSlotReady[g_renderSlot].store(false, std::memory_order_release);
     }
@@ -4000,7 +4141,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetCurrentFrameCon
     id<MTLTexture> depthTarget = g_depth;
     bool usingLR = false;
     if (@available(macOS 13.0, *)) {
-      if (g_mfxScaler && g_lrColor[g_renderSlot] && !reuseFrame) {
+      if (mfxActive() && g_lrColor[g_renderSlot] && !reuseFrame) {
         renderTarget = g_lrColor[g_renderSlot];
         depthTarget = g_lrDepth[g_renderSlot];
         usingLR = true;
@@ -4012,6 +4153,12 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetCurrentFrameCon
     s_cachedRP.depthAttachment.texture = depthTarget;
     s_cachedRP.depthAttachment.loadAction =
         (reuseFrame && !usingLR) ? MTLLoadActionLoad : MTLLoadActionClear;
+    s_cachedRP.depthAttachment.storeAction =
+        usingLR ? MTLStoreActionStore
+                : (g_useMemorylessTargets ? MTLStoreActionDontCare
+                                          : MTLStoreActionStore);
+    g_sceneColor = renderTarget;
+    g_sceneDepth = depthTarget;
 #else
     s_cachedRP.colorAttachments[0].texture = g_color;
     s_cachedRP.colorAttachments[0].loadAction =
@@ -4019,6 +4166,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetCurrentFrameCon
     s_cachedRP.depthAttachment.texture = g_depth;
     s_cachedRP.depthAttachment.loadAction =
         reuseFrame ? MTLLoadActionLoad : MTLLoadActionClear;
+    g_sceneColor = g_color;
+    g_sceneDepth = g_depth;
 #endif
     g_currentEncoder = [[g_currentCmdBuffer
         renderCommandEncoderWithDescriptor:s_cachedRP] retain];
@@ -4132,7 +4281,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
           [g_currentCmdBuffer computeCommandEncoder];
       if (hizEnc) {
         [hizEnc setComputePipelineState:g_hizDownsamplePipeline];
-        id<MTLTexture> srcDepth = g_depth;
+        id<MTLTexture> srcDepth = g_sceneDepth;
         if (srcDepth) {
           [hizEnc setTexture:srcDepth atIndex:0];
           [hizEnc setTexture:g_hizPyramid atIndex:1];
@@ -4144,13 +4293,85 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
       }
     }
 #ifdef METALRENDER_HAS_METALFX
-
     if (@available(macOS 13.0, *)) {
-      if (g_mfxScaler && !g_reuseTerrainFrame && g_lrColor[g_renderSlot] &&
-          g_currentCmdBuffer) {
-        g_mfxScaler.colorTexture = g_lrColor[g_renderSlot];
-        g_mfxScaler.outputTexture = g_color;
-        [g_mfxScaler encodeToCommandBuffer:g_currentCmdBuffer];
+      if (mfxActive() && !g_wasReuseFrame && g_sceneColor &&
+          g_upscaledColor[g_renderSlot] && g_currentCmdBuffer &&
+          ((!g_mfxTemporalScaler) || (g_sceneDepth && g_motionVectorPipeline &&
+                                      g_motionTexture[g_renderSlot]))) {
+        float currentViewProjection[16];
+        for (int c = 0; c < 4; c++) {
+          for (int r = 0; r < 4; r++) {
+            float sum = 0.0f;
+            for (int k = 0; k < 4; k++) {
+              sum += g_projMatrix[k * 4 + r] * g_mvMatrix[c * 4 + k];
+            }
+            currentViewProjection[c * 4 + r] = sum;
+          }
+        }
+        if (g_mfxTemporalScaler) {
+          MotionVectorParamsCPU motionParams = {};
+          memcpy(motionParams.currentViewProjection, currentViewProjection,
+                 sizeof(currentViewProjection));
+          memcpy(motionParams.previousViewProjection,
+                 g_hasPreviousViewProjection ? g_previousViewProjection
+                                              : currentViewProjection,
+                 sizeof(currentViewProjection));
+          motionParams.size[0] = (uint32_t)g_sceneColor.width;
+          motionParams.size[1] = (uint32_t)g_sceneColor.height;
+          id<MTLComputeCommandEncoder> motionEnc =
+              [g_currentCmdBuffer computeCommandEncoder];
+          if (motionEnc) {
+            [motionEnc setComputePipelineState:g_motionVectorPipeline];
+            [motionEnc setTexture:g_sceneDepth atIndex:0];
+            [motionEnc setTexture:g_motionTexture[g_renderSlot] atIndex:1];
+            [motionEnc setBytes:&motionParams
+                         length:sizeof(motionParams)
+                        atIndex:0];
+            MTLSize motionThreads = MTLSizeMake(8, 8, 1);
+            MTLSize motionGroups = MTLSizeMake(
+                ((NSUInteger)g_sceneColor.width + 7) / 8,
+                ((NSUInteger)g_sceneColor.height + 7) / 8, 1);
+            [motionEnc dispatchThreadgroups:motionGroups
+                      threadsPerThreadgroup:motionThreads];
+            [motionEnc endEncoding];
+          }
+          g_mfxTemporalScaler.colorTexture = g_sceneColor;
+          g_mfxTemporalScaler.depthTexture = g_sceneDepth;
+          g_mfxTemporalScaler.motionTexture = g_motionTexture[g_renderSlot];
+          g_mfxTemporalScaler.outputTexture = g_upscaledColor[g_renderSlot];
+          g_mfxTemporalScaler.inputContentWidth = g_sceneColor.width;
+          g_mfxTemporalScaler.inputContentHeight = g_sceneColor.height;
+          g_mfxTemporalScaler.motionVectorScaleX = 1.0f;
+          g_mfxTemporalScaler.motionVectorScaleY = 1.0f;
+          g_mfxTemporalScaler.jitterOffsetX = 0.0f;
+          g_mfxTemporalScaler.jitterOffsetY = 0.0f;
+          g_mfxTemporalScaler.depthReversed = NO;
+          g_mfxTemporalScaler.reset = g_mfxReset || !g_hasPreviousViewProjection;
+          [g_mfxTemporalScaler encodeToCommandBuffer:g_currentCmdBuffer];
+        } else if (g_mfxSpatialScaler) {
+          g_mfxSpatialScaler.colorTexture = g_sceneColor;
+          g_mfxSpatialScaler.outputTexture = g_upscaledColor[g_renderSlot];
+          [g_mfxSpatialScaler encodeToCommandBuffer:g_currentCmdBuffer];
+        }
+
+        id<MTLBlitCommandEncoder> outputBlit =
+            [g_currentCmdBuffer blitCommandEncoder];
+        if (outputBlit) {
+          [outputBlit copyFromTexture:g_upscaledColor[g_renderSlot]
+                          sourceSlice:0
+                          sourceLevel:0
+                         sourceOrigin:MTLOriginMake(0, 0, 0)
+                           sourceSize:MTLSizeMake(g_rtWidth, g_rtHeight, 1)
+                            toTexture:g_color
+                     destinationSlice:0
+                     destinationLevel:0
+                    destinationOrigin:MTLOriginMake(0, 0, 0)];
+          [outputBlit endEncoding];
+        }
+        memcpy(g_previousViewProjection, currentViewProjection,
+               sizeof(currentViewProjection));
+        g_hasPreviousViewProjection = true;
+        g_mfxReset = false;
       }
     }
 #endif
@@ -4164,6 +4385,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
         [g_depthCmdBuffer release];
         g_depthCmdBuffer = nil;
       }
+      // remember to test config settings monday night
       g_depthCmdBuffer = [g_currentCmdBuffer retain];
 
       int completedSlot = g_renderSlot;
@@ -4563,6 +4785,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateTexture2D(
       dbg("nCreateTexture2D: failed to create %dx%d texture\n", width, height);
     }
   }
+  // remember to test config settings monday night
   env->ReleaseByteArrayElements(pixelData, data, JNI_ABORT);
   return tex ? (jlong)(uintptr_t)(__bridge_retained void *)tex : 0;
 }
@@ -4714,10 +4937,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nBindIOSurfaceToTex
     return JNI_FALSE;
   CGLContextObj cglCtx = CGLGetCurrentContext();
   if (!cglCtx)
-    return JNI_FALSE;
-  int w = std::max(1, (int)(g_rtWidth * g_scale));
-  int h = std::max(1, (int)(g_rtHeight * g_scale));
-  glBindTexture(GL_TEXTURE_RECTANGLE_ARB, (GLuint)glTexture);
+    return JNI_FALSE;    int w = std::max(1, g_rtWidth);
+    int h = std::max(1, g_rtHeight);
+    glBindTexture(GL_TEXTURE_RECTANGLE_ARB, (GLuint)glTexture);
   CGLError err = CGLTexImageIOSurface2D(
       cglCtx, GL_TEXTURE_RECTANGLE_ARB, GL_RGBA, (GLsizei)w, (GLsizei)h,
       GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, blitSurface, 0);
@@ -4759,6 +4981,14 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nReadbackDepth(
   if (capacity < (jlong)bufLen)
     return JNI_FALSE;
 
+  // remember to test config settings monday night
+  if (!g_currentFrameReady) {
+    int spins = 0;
+    while (!g_currentFrameReady && spins < 10000) {
+      std::this_thread::yield();
+      spins++;
+    }
+  }
   if (!g_currentFrameReady && g_depthCmdBuffer) {
     [g_depthCmdBuffer waitUntilCompleted];
   }
@@ -5027,6 +5257,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetGPUDrivenEnable
       g_gpuDrivenEnabled ? "enabled" : "disabled", g_icbCapable ? 1 : 0);
 }
 static int g_cullMode = 0;
+static std::atomic<uint32_t> s_lastCullVisible{0};
 extern "C" JNIEXPORT jint JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRunGPUCulling(
     JNIEnv *, jclass, jlong handle, jint chunkCount) {
@@ -5098,10 +5329,14 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRunGPUCulling(
       [encoder dispatchThreads:MTLSizeMake(threadCount, 1, 1)
           threadsPerThreadgroup:MTLSizeMake(tgSize, 1, 1)];
       [encoder endEncoding];
+      // remember to test config settings monday night
+      [cmdBuf addCompletedHandler:^(id<MTLCommandBuffer> cb) {
+        uint32_t v = *(uint32_t *)[g_cullDrawCountBuffer contents];
+        s_lastCullVisible.store(v, std::memory_order_release);
+      }];
       [cmdBuf commit];
-      [cmdBuf waitUntilCompleted];
     }
-    uint32_t visibleCount = *(uint32_t *)[g_cullDrawCountBuffer contents];
+    uint32_t visibleCount = s_lastCullVisible.load(std::memory_order_acquire);
     if (g_frameCount < 5 || (g_frameCount % 300 == 0)) {
       uint32_t *stats = (uint32_t *)[g_cullStatsBuffer contents];
       dbg("GPU Cull [compute]: input=%u visible=%u frustumCulled=%u "
@@ -5377,7 +5612,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawOITPass(
           [g_currentCmdBuffer computeCommandEncoder];
       if (hizEnc) {
         [hizEnc setComputePipelineState:g_hizDownsamplePipeline];
-        id<MTLTexture> srcDepth = g_depth;
+        id<MTLTexture> srcDepth = g_sceneDepth;
         if (srcDepth) {
           [hizEnc setTexture:srcDepth atIndex:0];
           [hizEnc setTexture:g_hizPyramid atIndex:1];
@@ -5403,8 +5638,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawOITPass(
       rp.colorAttachments[1].storeAction = MTLStoreActionStore;
       rp.colorAttachments[1].clearColor = MTLClearColorMake(1, 0, 0, 0);
 
-      if (!g_useMemorylessTargets && g_depth) {
-        rp.depthAttachment.texture = g_depth;
+      if (g_sceneDepth) {
+        rp.depthAttachment.texture = g_sceneDepth;
         rp.depthAttachment.loadAction = MTLLoadActionLoad;
         rp.depthAttachment.storeAction = MTLStoreActionDontCare;
       }
@@ -5473,7 +5708,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawOITPass(
     {
       MTLRenderPassDescriptor *cRp =
           [MTLRenderPassDescriptor renderPassDescriptor];
-      cRp.colorAttachments[0].texture = g_color;
+      cRp.colorAttachments[0].texture = g_sceneColor;
       cRp.colorAttachments[0].loadAction = MTLLoadActionLoad;
       cRp.colorAttachments[0].storeAction = MTLStoreActionStore;
       id<MTLRenderCommandEncoder> cEnc =
@@ -5498,11 +5733,11 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawOITPass(
         s_resumeRP.colorAttachments[0].storeAction = MTLStoreActionStore;
         s_resumeRP.depthAttachment.clearDepth = 1.0;
       }
-      s_resumeRP.colorAttachments[0].texture = g_color;
+      s_resumeRP.colorAttachments[0].texture = g_sceneColor;
       s_resumeRP.colorAttachments[0].loadAction = MTLLoadActionLoad;
 
-      if (!g_useMemorylessTargets && g_depth) {
-        s_resumeRP.depthAttachment.texture = g_depth;
+      if (g_sceneDepth) {
+        s_resumeRP.depthAttachment.texture = g_sceneDepth;
         s_resumeRP.depthAttachment.loadAction = MTLLoadActionLoad;
         s_resumeRP.depthAttachment.storeAction = MTLStoreActionStore;
       } else {
@@ -5516,8 +5751,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawOITPass(
         MTLViewport vp;
         vp.originX = 0;
         vp.originY = 0;
-        vp.width = (double)g_color.width;
-        vp.height = (double)g_color.height;
+        vp.width = (double)g_sceneColor.width;
+        vp.height = (double)g_sceneColor.height;
         vp.znear = 0.0;
         vp.zfar = 1.0;
         [g_currentEncoder setViewport:vp];
@@ -5662,6 +5897,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nClearAllChunkRegis
   }
 
   g_meshKeyToIdx.clear();
+  g_meshRegGeneration.fetch_add(1, std::memory_order_release);
+  g_meshRemovalGeneration.fetch_add(1, std::memory_order_release);
 
   g_hasStaleDrawList = false;
   g_staleDrawCount = 0;
@@ -5746,7 +5983,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateResidencySet
     JNIEnv *, jclass, jlong device) {
 #if defined(__aarch64__) && (__MAC_OS_X_VERSION_MAX_ALLOWED >= 140000)
   if (@available(macOS 14.0, *)) {
-    id<MTLDevice> dev = (__bridge id<MTLDevice>)(void *)device;
+    id<MTLDevice> dev = (__bridge id<MTLDevice>)(void *)
+        device; // remember to test config settings monday night
     if (dev != nil && [dev respondsToSelector:@selector(newResidencySet:
                                                                   error:)]) {
       MTLResidencySetDescriptor *desc =
@@ -5898,6 +6136,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDestroyIndirectCom
   }
   auto cit = g_javaICBEncodedCount.find((uint64_t)icbHandle);
   if (cit != g_javaICBEncodedCount.end()) {
+    // remember to test config settings monday night
     g_javaICBEncodedCount.erase(cit);
   }
 }
