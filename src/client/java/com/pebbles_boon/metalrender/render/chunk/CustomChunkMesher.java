@@ -283,6 +283,7 @@ public class CustomChunkMesher {
         if (isTaskCancelled(key, genAtSubmit, globalGenAtSubmit)) {
           return;
         }
+        refreshThreadLocalCachesIfNeeded();
         MeshBuildContext context = captureBuildContext(world, chunkX, chunkY, chunkZ);
         int lodTier = lodTierForDistance(Math.max(
             Math.abs(chunkX - context.buildPlayerCX),
@@ -387,6 +388,7 @@ public class CustomChunkMesher {
   }
 
   public void markAllDirty() {
+    invalidateThreadLocalCaches();
     long[] keys;
     long[] emptyArr;
     synchronized (meshCache) {
@@ -444,6 +446,7 @@ public class CustomChunkMesher {
   }
 
   public void clearAllMeshes() {
+    invalidateThreadLocalCaches();
     int count;
     synchronized (meshCache) {
       count = meshCache.size();
@@ -1080,7 +1083,8 @@ public class CustomChunkMesher {
                         fluid.getType() == net.minecraft.world.level.material.Fluids.FLOWING_LAVA)) {
                   tint = 0xFF4500;
                 } else {
-                  net.minecraft.client.color.block.BlockTintSource source = blockColors.getTintSource(state, 0);
+                  net.minecraft.client.color.block.BlockTintSource source = getCachedTintSource(
+                      blockColors, state);
                   if (source != null) {
                     tint = source.colorInWorld(state, world, mutablePos);
                   }
@@ -1113,6 +1117,50 @@ public class CustomChunkMesher {
 
   private static final ThreadLocal<RandomSource> REUSABLE_RANDOM = ThreadLocal
       .withInitial(() -> RandomSource.create(0));
+
+  private static final int STATE_BY_ID_CACHE_CAP = 65536;
+  private static final ThreadLocal<it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<BlockState>> STATE_BY_ID_CACHE = ThreadLocal
+      .withInitial(() -> new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>(4096));
+  private static final ThreadLocal<IdentityHashMap<BlockState, BlockStateModel>> MODEL_CACHE = ThreadLocal
+      .withInitial(IdentityHashMap::new);
+  private static final int MODEL_CACHE_CAP = 32768;
+  private static final ThreadLocal<IdentityHashMap<BlockState, net.minecraft.client.color.block.BlockTintSource>> TINT_SOURCE_CACHE = ThreadLocal
+      .withInitial(IdentityHashMap::new);
+  private static final ThreadLocal<java.util.ArrayList<BlockStateModelPart>> PARTS_POOL = ThreadLocal
+      .withInitial(java.util.ArrayList::new);
+
+  private static final java.util.concurrent.atomic.AtomicInteger THREAD_LOCAL_GENERATION = new java.util.concurrent.atomic.AtomicInteger();
+  private static final ThreadLocal<Integer> THREAD_LOCAL_GEN = ThreadLocal.withInitial(() -> 0);
+
+  public static void invalidateThreadLocalCaches() {
+    THREAD_LOCAL_GENERATION.incrementAndGet();
+  }
+
+  private static void refreshThreadLocalCachesIfNeeded() {
+    int gen = THREAD_LOCAL_GENERATION.get();
+    if (THREAD_LOCAL_GEN.get() != gen) {
+      STATE_BY_ID_CACHE.remove();
+      MODEL_CACHE.remove();
+      TINT_SOURCE_CACHE.remove();
+      PARTS_POOL.remove();
+      BS_ID_CACHE.remove();
+      THREAD_LOCAL_GEN.set(gen);
+    }
+  }
+
+  private static net.minecraft.client.color.block.BlockTintSource getCachedTintSource(
+      net.minecraft.client.color.block.BlockColors blockColors, BlockState state) {
+    IdentityHashMap<BlockState, net.minecraft.client.color.block.BlockTintSource> cache = TINT_SOURCE_CACHE
+        .get();
+    net.minecraft.client.color.block.BlockTintSource source = cache.get(state);
+    if (source == null) {
+      source = blockColors.getTintSource(state, 0);
+      if (source != null && cache.size() < 65536) {
+        cache.put(state, source);
+      }
+    }
+    return source;
+  }
 
   private void doMeshBuild(int chunkX, int chunkY, int chunkZ,
       SectionSnapshot snapshot, long key, long generation, long globalGeneration,
@@ -1272,6 +1320,7 @@ public class CustomChunkMesher {
 
     int opaqueQuadCount = 0;
     int waterQuadCount = 0;
+    private final float[] cornerHeights = new float[4];
 
     MeshBuilder(ByteBuffer solidBuffer, ByteBuffer waterBuffer, BlockStateModelSet blockModels,
         SectionSnapshot snapshot, MeshBuildContext context, int chunkX, int chunkY, int chunkZ,
@@ -1298,7 +1347,7 @@ public class CustomChunkMesher {
             int stateId = getPaddedBlockStateId(x, y, z);
             if (stateId == 0)
               continue;
-            BlockState state = Block.stateById(stateId);
+            BlockState state = getStateById(stateId);
             if (state.isAir())
               continue;
 
@@ -1306,7 +1355,7 @@ public class CustomChunkMesher {
 
             if (state.getRenderShape() == net.minecraft.world.level.block.RenderShape.MODEL) {
               if (blockModels != null) {
-                BlockStateModel model = blockModels.get(state);
+                BlockStateModel model = getCachedModel(state);
                 if (model != null) {
                   renderBlockModel(model, state, pos, x, y, z, random);
                 }
@@ -1333,7 +1382,32 @@ public class CustomChunkMesher {
       int stateId = getPaddedBlockStateId(x, y, z);
       if (stateId == 0)
         return null;
-      return Block.stateById(stateId);
+      return getStateById(stateId);
+    }
+
+    private BlockState getStateById(int stateId) {
+      it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<BlockState> cache = STATE_BY_ID_CACHE
+          .get();
+      BlockState state = cache.get(stateId);
+      if (state == null) {
+        state = Block.stateById(stateId);
+        if (cache.size() < STATE_BY_ID_CACHE_CAP) {
+          cache.put(stateId, state);
+        }
+      }
+      return state;
+    }
+
+    private BlockStateModel getCachedModel(BlockState state) {
+      IdentityHashMap<BlockState, BlockStateModel> cache = MODEL_CACHE.get();
+      BlockStateModel model = cache.get(state);
+      if (model == null) {
+        model = blockModels.get(state);
+        if (model != null && cache.size() < MODEL_CACHE_CAP) {
+          cache.put(state, model);
+        }
+      }
+      return model;
     }
 
     private byte getPaddedLight(int x, int y, int z) {
@@ -1350,7 +1424,8 @@ public class CustomChunkMesher {
     private void renderBlockModel(BlockStateModel model, BlockState state, BlockPos pos,
         int lx, int ly, int lz, RandomSource random) {
       random.setSeed(state.getSeed(pos));
-      List<BlockStateModelPart> parts = new java.util.ArrayList<>();
+      java.util.ArrayList<BlockStateModelPart> parts = PARTS_POOL.get();
+      parts.clear();
       model.collectParts(random, parts);
       for (BlockStateModelPart part : parts) {
         for (Direction direction : ALL_DIRECTIONS) {
@@ -1421,7 +1496,7 @@ public class CustomChunkMesher {
       BlockState below = getPaddedBlockState(lx, ly - 1, lz);
       boolean downVisible = below == null || below.getFluidState().isEmpty();
 
-      float[] cornerHeights = new float[4];
+      float[] cornerHeights = this.cornerHeights;
       if (lodTier >= 2) {
         float flatHeight = sampleFluidHeight(lx, ly, lz);
         if (flatHeight <= 0.0f) {
@@ -2016,7 +2091,15 @@ public class CustomChunkMesher {
   }
 
   private static boolean isOpaqueState(int stateId) {
-    BlockState state = Block.stateById(stateId);
+    it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<BlockState> cache = STATE_BY_ID_CACHE
+        .get();
+    BlockState state = cache.get(stateId);
+    if (state == null) {
+      state = Block.stateById(stateId);
+      if (cache.size() < STATE_BY_ID_CACHE_CAP) {
+        cache.put(stateId, state);
+      }
+    }
     return state.isSolidRender();
   }
 }
