@@ -16,6 +16,7 @@ import com.pebbles_boon.metalrender.nativebridge.MetalHardwareChecker;
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
 import com.pebbles_boon.metalrender.nativebridge.NativeMemory;
 import com.pebbles_boon.metalrender.particle.MetalParticleRenderer;
+import com.pebbles_boon.metalrender.performance.AdaptiveResolutionController;
 import com.pebbles_boon.metalrender.render.chunk.CustomChunkMesher;
 import com.pebbles_boon.metalrender.sodium.backend.MeshShaderBackend;
 import com.pebbles_boon.metalrender.performance.BuildBudgetEstimator;
@@ -53,12 +54,12 @@ public class MetalWorldRenderer {
   private static final int MIN_CHUNK_HEAVY_BACKLOG_BUILDS_PER_FRAME = 40;
   private static final long CHUNK_SATURATED_BUILD_BUDGET_NS = 1_500_000L;
   private static final int MIN_CHUNK_SATURATED_BUILDS_PER_FRAME = 4;
-  private static final long CHUNK_TURN_BUILD_BURST_NS = 6_000_000L;
-  private static final int MIN_CHUNK_TURN_BUILDS_PER_FRAME = 18;
+  private static final long CHUNK_TURN_BUILD_BURST_NS = 3_500_000L;
+  private static final int MIN_CHUNK_TURN_BUILDS_PER_FRAME = 12;
   private static final int BASE_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 8;
   private static final int BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 16;
   private static final int HEAVY_BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 24;
-  private static final int TURN_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 24;
+  private static final int TURN_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 16;
   private static final int SATURATED_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 2;
   private static final int PRIORITIZED_BUILD_STREAK_LIMIT = 2;
   private static final int MAX_IN_FLIGHT_BUILD_TASKS = 192;
@@ -73,14 +74,15 @@ public class MetalWorldRenderer {
   private static final int SURFACE_SECTION_EXTRA_DEPTH = 2;
   private static final int TURN_PRIORITY_LOADED_CHUNK_RANGE = 24;
   private static final float BUILD_SORT_REORDER_DOT_THRESHOLD = 0.9848f;
-  private static final int TURN_PRIORITY_SCAN_FRAMES = 12;
+  private static final int TURN_PRIORITY_SCAN_FRAMES = 6;
   private static final int TURN_PRIORITY_FORWARD_SCAN_DEPTH = 6;
   private static final float TURN_PRIORITY_SCAN_COS_THRESHOLD = 0.45f;
   private static final int IMMEDIATE_LOADED_CHUNK_BUILD_RANGE = 8;
   private static final int IMPORTANT_REBUILD_CHUNK_RANGE = 2;
-  private static final int LOD_REFRESH_FRAME_INTERVAL = 1;
+  private static final int LOD_REFRESH_FRAME_INTERVAL = 2;
   private static final int LOD_UPGRADE_HYSTERESIS_CHUNKS = 1;
   private static final int MAX_LOD_REFRESH_SUBMITS_PER_PASS = 4;
+  private static final int MAX_LOD_SCAN_PER_PASS = 512;
   private static final int LOD_REFRESH_PENDING_LIMIT = 64;
   private static final int LOD_REFRESH_IN_FLIGHT_LIMIT = 48;
   private static final int INTERACTIVE_PRIORITY_CHUNK_RANGE = 6;
@@ -304,6 +306,15 @@ public class MetalWorldRenderer {
     maxMeshes = shouldPinLoadedMeshes(mc) ? PINNED_MAX_MESHES : DEFAULT_MAX_MESHES;
     int w = mc.getWindow().getWidth();
     int h = mc.getWindow().getHeight();
+    int refreshRate = mc.getWindow().getRefreshRate();
+    double budgetMs = refreshRate > 0 ? 1000.0 / refreshRate : 16.666;
+    if (!mc.options.enableVsync().get()) {
+      int fpsLimit = mc.options.framerateLimit().get();
+      if (fpsLimit > 0 && fpsLimit < 250) {
+        budgetMs = Math.min(budgetMs, 1000.0 / fpsLimit);
+      }
+    }
+    AdaptiveResolutionController.getInstance().setFrameBudgetMs(budgetMs);
     renderer.resize(w, h);
     if (!texturesReady && frameCount > 2) {
       textureManager.loadBlockAtlas();
@@ -504,35 +515,35 @@ public class MetalWorldRenderer {
   }
 
   private static void extractFrustumPlanes(Matrix4f vp, float[] out) {
-    out[0] = vp.m03() + vp.m00();
-    out[1] = vp.m13() + vp.m10();
-    out[2] = vp.m23() + vp.m20();
-    out[3] = vp.m33() + vp.m30();
+    out[0] = vp.m30() + vp.m00();
+    out[1] = vp.m31() + vp.m01();
+    out[2] = vp.m32() + vp.m02();
+    out[3] = vp.m33() + vp.m03();
     normalizePlane(out, 0);
-    out[4] = vp.m03() - vp.m00();
-    out[5] = vp.m13() - vp.m10();
-    out[6] = vp.m23() - vp.m20();
-    out[7] = vp.m33() - vp.m30();
+    out[4] = vp.m30() - vp.m00();
+    out[5] = vp.m31() - vp.m01();
+    out[6] = vp.m32() - vp.m02();
+    out[7] = vp.m33() - vp.m03();
     normalizePlane(out, 4);
-    out[8] = vp.m03() + vp.m01();
-    out[9] = vp.m13() + vp.m11();
-    out[10] = vp.m23() + vp.m21();
-    out[11] = vp.m33() + vp.m31();
+    out[8] = vp.m30() + vp.m10();
+    out[9] = vp.m31() + vp.m11();
+    out[10] = vp.m32() + vp.m12();
+    out[11] = vp.m33() + vp.m13();
     normalizePlane(out, 8);
-    out[12] = vp.m03() - vp.m01();
-    out[13] = vp.m13() - vp.m11();
-    out[14] = vp.m23() - vp.m21();
-    out[15] = vp.m33() - vp.m31();
+    out[12] = vp.m30() - vp.m10();
+    out[13] = vp.m31() - vp.m11();
+    out[14] = vp.m32() - vp.m12();
+    out[15] = vp.m33() - vp.m13();
     normalizePlane(out, 12);
-    out[16] = vp.m02();
-    out[17] = vp.m12();
-    out[18] = vp.m22();
-    out[19] = vp.m32();
+    out[16] = vp.m30() + vp.m20();
+    out[17] = vp.m31() + vp.m21();
+    out[18] = vp.m32() + vp.m22();
+    out[19] = vp.m33() + vp.m23();
     normalizePlane(out, 16);
-    out[20] = vp.m03() - vp.m02();
-    out[21] = vp.m13() - vp.m12();
-    out[22] = vp.m23() - vp.m22();
-    out[23] = vp.m33() - vp.m32();
+    out[20] = vp.m30() - vp.m20();
+    out[21] = vp.m31() - vp.m21();
+    out[22] = vp.m32() - vp.m22();
+    out[23] = vp.m33() - vp.m23();
     normalizePlane(out, 20);
   }
 
@@ -705,6 +716,8 @@ public class MetalWorldRenderer {
 
   private final it.unimi.dsi.fastutil.longs.LongOpenHashSet pendingBuildSet = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
   private final it.unimi.dsi.fastutil.longs.LongArrayList sortedBuildList = new it.unimi.dsi.fastutil.longs.LongArrayList();
+  private long[] sortKeyScratch = new long[1024];
+  private final it.unimi.dsi.fastutil.longs.LongArrayList sortReorderScratch = new it.unimi.dsi.fastutil.longs.LongArrayList();
   private boolean sortedListDirty = true;
   private int lastSortedSize = 0;
   private int consecutiveHighMeshMsFrames = 0;
@@ -783,12 +796,14 @@ public class MetalWorldRenderer {
       cachedForwardX = nextForwardX;
       cachedForwardZ = nextForwardZ;
       if (turnDot < BUILD_SORT_REORDER_DOT_THRESHOLD) {
-        if (!pendingBuildSet.isEmpty()) {
-          sortedListDirty = true;
+        if (turnPriorityFrames == 0) {
+          if (!pendingBuildSet.isEmpty()) {
+            sortedListDirty = true;
+          }
+          turnPriorityFrames = TURN_PRIORITY_SCAN_FRAMES;
+          scanFrontierRing = HOT_LOAD_REBUILD_RANGE + 1;
+          scanFrameCounter = 0;
         }
-        turnPriorityFrames = TURN_PRIORITY_SCAN_FRAMES;
-        scanFrontierRing = HOT_LOAD_REBUILD_RANGE + 1;
-        scanFrameCounter = 0;
       }
     }
     if (pendingBuildSet.size() < CHUNK_SCAN_SATURATED_THRESHOLD ||
@@ -1142,7 +1157,7 @@ public class MetalWorldRenderer {
       int playerMovedSinceSort = Math.max(
           Math.abs(playerChunkX - lastSortedPlayerCX),
           Math.abs(playerChunkZ - lastSortedPlayerCZ));
-      boolean shouldSort = turnPriorityFrames > 0
+      boolean shouldSort = turnPriorityFrames == TURN_PRIORITY_SCAN_FRAMES
           || currentSize > lastSortedSize + 64
           || currentSize < lastSortedSize * 3 / 4
           || framesSinceLastSort >= sortInterval
@@ -1156,39 +1171,30 @@ public class MetalWorldRenderer {
         final int pcz = playerChunkZ;
         final float fwdX = cachedForwardX;
         final float fwdZ = cachedForwardZ;
-        sortedBuildList.sort((a, b) -> {
-          int ax = (int) ((a >> 42) & 0x3FFFFF);
-          if ((ax & 0x200000) != 0)
-            ax |= ~0x3FFFFF;
-          int ay = (int) ((a >> 22) & 0xFFFFF);
-          if ((ay & 0x80000) != 0)
-            ay |= ~0xFFFFF;
-          int az = (int) (a & 0x3FFFFF);
-          if ((az & 0x200000) != 0)
-            az |= ~0x3FFFFF;
-          int bx = (int) ((b >> 42) & 0x3FFFFF);
-          if ((bx & 0x200000) != 0)
-            bx |= ~0x3FFFFF;
-          int by = (int) ((b >> 22) & 0xFFFFF);
-          if ((by & 0x80000) != 0)
-            by |= ~0xFFFFF;
-          int bz = (int) (b & 0x3FFFFF);
-          if ((bz & 0x200000) != 0)
-            bz |= ~0x3FFFFF;
-          float dotA = (ax - pcx) * fwdX + (az - pcz) * fwdZ;
-          float dotB = (bx - pcx) * fwdX + (bz - pcz) * fwdZ;
-          boolean frontA = dotA >= 0;
-          boolean frontB = dotB >= 0;
-          if (frontA != frontB)
-            return frontA ? -1 : 1;
-          int distA = Math.abs(ax - pcx) + Math.abs(az - pcz);
-          int distB = Math.abs(bx - pcx) + Math.abs(bz - pcz);
-          if (distA != distB)
-            return Integer.compare(distA, distB);
-          int verticalDistA = Math.abs(ay - pcy);
-          int verticalDistB = Math.abs(by - pcy);
-          return Integer.compare(verticalDistA, verticalDistB);
-        });
+        int n = sortedBuildList.size();
+        if (sortKeyScratch.length < n) {
+          sortKeyScratch = new long[Math.max(n * 2, 1024)];
+        }
+        for (int i = 0; i < n; i++) {
+          long key = sortedBuildList.getLong(i);
+          int cx = unpackChunkX(key);
+          int cy = unpackChunkY(key);
+          int cz = unpackChunkZ(key);
+          float dot = (cx - pcx) * fwdX + (cz - pcz) * fwdZ;
+          int front = dot >= 0 ? 1 : 0;
+          int dist = Math.abs(cx - pcx) + Math.abs(cz - pcz);
+          int vd = Math.abs(cy - pcy);
+          sortKeyScratch[i] = ((long) front << 63) | ((long) dist << 40)
+              | ((long) vd << 32) | (i & 0xFFFFFFFFL);
+        }
+        java.util.Arrays.sort(sortKeyScratch, 0, n);
+        sortReorderScratch.clear();
+        for (int i = 0; i < n; i++) {
+          sortReorderScratch.add(sortedBuildList.getLong(
+              (int) (sortKeyScratch[i] & 0xFFFFFFFFL)));
+        }
+        sortedBuildList.clear();
+        sortedBuildList.addAll(sortReorderScratch);
         lastSortedSize = sortedBuildList.size();
         lastSortedPlayerCX = playerChunkX;
         lastSortedPlayerCZ = playerChunkZ;
@@ -1453,7 +1459,8 @@ public class MetalWorldRenderer {
     int playerChunkZ = mc.player.chunkPosition().z();
     int queued = 0;
     int inspected = 0;
-    while (inspected < meshCount && queued < refreshBudget) {
+    while (inspected < meshCount && inspected < MAX_LOD_SCAN_PER_PASS &&
+        queued < refreshBudget) {
       if (lodRefreshCursor >= meshCount) {
         lodRefreshCursor = 0;
       }
