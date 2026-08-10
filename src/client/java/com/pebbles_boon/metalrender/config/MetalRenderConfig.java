@@ -19,6 +19,7 @@ public final class MetalRenderConfig {
   public boolean enableHiZCull = false;
   public boolean enableGpuTranslucencySort = false;
 
+  //REMEMBER TO TEST THOSE SETTINGS ON MONDAY NIGHT!!!!!
   public boolean hiddenFluidCulling = true;
   public boolean improvedFluidShaping = false;
   public boolean closestPointEntitySort = false;
@@ -36,6 +37,8 @@ public final class MetalRenderConfig {
   private static volatile boolean swapCutout = false;
   private static volatile boolean swapTranslucent = false;
   private static volatile float resolutionScale = 1.0f;
+  private static volatile boolean adaptiveResolutionEnabled = true;
+  private static volatile boolean metalFXTemporalEnabled = true;
   private static volatile boolean deepDebugActive = false;
   private static volatile boolean debugPinkBlockTintEnabled = false;
 
@@ -123,6 +126,13 @@ public final class MetalRenderConfig {
 
         if (obj.has("savedResolutionScale"))
           resolutionScale = clamp(obj.get("savedResolutionScale").getAsFloat(), 0.20f, 1.5f);
+
+        if (obj.has("enableAdaptiveResolution"))
+          adaptiveResolutionEnabled =
+              obj.get("enableAdaptiveResolution").getAsBoolean();
+
+        if (obj.has("enableMetalFXTemporal"))
+          metalFXTemporalEnabled = obj.get("enableMetalFXTemporal").getAsBoolean();
       }
     } catch (Exception e) {
 
@@ -180,6 +190,8 @@ public final class MetalRenderConfig {
       obj.addProperty("lodThermalAdaptive", lodThermalAdaptive);
 
       obj.addProperty("savedResolutionScale", resolutionScale);
+      obj.addProperty("enableAdaptiveResolution", adaptiveResolutionEnabled);
+      obj.addProperty("enableMetalFXTemporal", metalFXTemporalEnabled);
       java.nio.file.Path path = configFile();
       java.nio.file.Files.createDirectories(path.getParent());
       java.nio.file.Files.writeString(path,
@@ -257,6 +269,22 @@ public final class MetalRenderConfig {
 
   public static void setResolutionScale(float v) {
     resolutionScale = clamp(v, 0.20f, 1.5f);
+  }
+
+  public static boolean isAdaptiveResolutionEnabled() {
+    return adaptiveResolutionEnabled;
+  }
+
+  public static void setAdaptiveResolutionEnabled(boolean v) {
+    adaptiveResolutionEnabled = v;
+  }
+
+  public static boolean isMetalFXTemporalEnabled() {
+    return metalFXTemporalEnabled;
+  }
+
+  public static void setMetalFXTemporalEnabled(boolean v) {
+    metalFXTemporalEnabled = v;
   }
 
   public static void setDebugPinkBlockTint(boolean v) {
