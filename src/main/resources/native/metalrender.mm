@@ -13,11 +13,11 @@
 #include <dispatch/dispatch.h>
 #include <dlfcn.h>
 #include <jni.h>
+#include <limits>
 #include <mach/mach.h>
 #include <mach/mach_host.h>
 #include <mach/mach_time.h>
 #include <mutex>
-#include <limits>
 #include <shared_mutex>
 #include <thread>
 #include <unordered_map>
@@ -283,9 +283,7 @@ static inline bool mfxActive() {
   return g_mfxSpatialScaler != nil || g_mfxTemporalScaler != nil;
 }
 #else
-static inline bool mfxActive() {
-  return false;
-}
+static inline bool mfxActive() { return false; }
 #endif
 static id<MTLTexture> g_sceneColor = nil;
 static id<MTLTexture> g_sceneDepth = nil;
@@ -490,8 +488,6 @@ static inline int visibleOpaqueQuadCount(const int counts[7], uint32_t mask) {
 
 static inline uint32_t visibleFacingMaskForAabb(float ox, float oy, float oz) {
   return 0x7Fu;
-
-
 }
 
 static inline int opaqueBucketStartQuad(const int counts[7], int bucket) {
@@ -552,7 +548,7 @@ static std::vector<int> g_activeMeshIndices;
 static std::shared_mutex g_meshRegMutex;
 static int g_activeMeshCount = 0;
 static std::atomic<int> g_meshRegGeneration{0};
-//remember to test config settings monday night
+// remember to test config settings monday night
 static std::atomic<int> g_meshRemovalGeneration{0};
 static bool g_cpuFrustumCullEnabled = true;
 static int64_t packMeshKey(int cx, int cy, int cz) {
@@ -1614,9 +1610,11 @@ static void ensure_offscreen() {
                   ((int)g_tbColor[0].height != h);
 #ifdef METALRENDER_HAS_METALFX
   if (@available(macOS 13.0, *)) {
-    bool spatialSupported = [MTLFXSpatialScalerDescriptor supportsDevice:g_device];
-    bool temporalSupported = g_motionVectorPipeline &&
-                             [MTLFXTemporalScalerDescriptor supportsDevice:g_device];
+    bool spatialSupported =
+        [MTLFXSpatialScalerDescriptor supportsDevice:g_device];
+    bool temporalSupported =
+        g_motionVectorPipeline &&
+        [MTLFXTemporalScalerDescriptor supportsDevice:g_device];
     bool selectedSupported = temporalSupported || spatialSupported;
     bool needLowTargets = g_scale < 0.99f && selectedSupported;
     bool temporalResourcesExpected = g_mfxTemporalEnabled && temporalSupported;
@@ -1740,9 +1738,11 @@ static void ensure_offscreen() {
     }
     g_mfxReset = true;
     g_hasPreviousViewProjection = false;
-    bool spatialSupported = [MTLFXSpatialScalerDescriptor supportsDevice:g_device];
-    bool temporalSupported = g_motionVectorPipeline &&
-                             [MTLFXTemporalScalerDescriptor supportsDevice:g_device];
+    bool spatialSupported =
+        [MTLFXSpatialScalerDescriptor supportsDevice:g_device];
+    bool temporalSupported =
+        g_motionVectorPipeline &&
+        [MTLFXTemporalScalerDescriptor supportsDevice:g_device];
     bool useTemporal = g_mfxTemporalEnabled && temporalSupported;
     bool useSpatial = !useTemporal && spatialSupported;
     bool selectedSupported = useTemporal || useSpatial;
@@ -1818,8 +1818,8 @@ static void ensure_offscreen() {
             useTemporal ? "Temporal" : "Spatial");
       } else {
         dbg("MetalFX %s scaler created: %dx%d -> %dx%d (scale=%.2f)\n",
-            useTemporal ? "Temporal" : "Spatial",
-            lrw, lrh, nativeW, nativeH, g_scale);
+            useTemporal ? "Temporal" : "Spatial", lrw, lrh, nativeW, nativeH,
+            g_scale);
       }
     } else {
       dbg("MetalFX upscaler DISABLED (scale=%.2f >= 1.0, full-res path)\n",
@@ -1865,24 +1865,24 @@ static void ensure_offscreen() {
   }
   MTLTextureDescriptor *oitAccumDesc = [MTLTextureDescriptor
       texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA16Float
-                                    width:(mfxActive() ? lowW : w)
-                                   height:(mfxActive() ? lowH : h)
-                               mipmapped:NO];
+                                   width:(mfxActive() ? lowW : w)height
+                                        :(mfxActive() ? lowH : h)mipmapped:NO];
   oitAccumDesc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
 #if defined(__aarch64__)
-  oitAccumDesc.storageMode = mfxActive() ? MTLStorageModePrivate : MTLStorageModeMemoryless;
+  oitAccumDesc.storageMode =
+      mfxActive() ? MTLStorageModePrivate : MTLStorageModeMemoryless;
 #else
   oitAccumDesc.storageMode = MTLStorageModePrivate;
 #endif
   g_oitAccumTex = [g_device newTextureWithDescriptor:oitAccumDesc];
   MTLTextureDescriptor *oitRevDesc = [MTLTextureDescriptor
       texture2DDescriptorWithPixelFormat:MTLPixelFormatR8Unorm
-                                    width:(mfxActive() ? lowW : w)
-                                   height:(mfxActive() ? lowH : h)
-                               mipmapped:NO];
+                                   width:(mfxActive() ? lowW : w)height
+                                        :(mfxActive() ? lowH : h)mipmapped:NO];
   oitRevDesc.usage = MTLTextureUsageRenderTarget | MTLTextureUsageShaderRead;
 #if defined(__aarch64__)
-  oitRevDesc.storageMode = mfxActive() ? MTLStorageModePrivate : MTLStorageModeMemoryless;
+  oitRevDesc.storageMode =
+      mfxActive() ? MTLStorageModePrivate : MTLStorageModeMemoryless;
 #else
   oitRevDesc.storageMode = MTLStorageModePrivate;
 #endif
@@ -2515,8 +2515,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBatch(
     }
 
     if (g_frameCount % 600 == 0) {
-      dbg("DRAW_BUDGET: disabled, resident=%d, gpuMs=%.1f\n",
-          validCount, g_lastGpuMs.load(std::memory_order_relaxed));
+      dbg("DRAW_BUDGET: disabled, resident=%d, gpuMs=%.1f\n", validCount,
+          g_lastGpuMs.load(std::memory_order_relaxed));
     }
     if (g_megaVB) {
       [g_currentEncoder setVertexBuffer:g_megaVB offset:0 atIndex:0];
@@ -2784,13 +2784,14 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMesh(
   std::unique_lock<std::shared_mutex> lock(g_meshRegMutex);
   auto it = g_meshKeyToIdx.find(key);
   if (it != g_meshKeyToIdx.end()) {
-    NativeMesh &m = g_nativeMeshes[it->second];      m.bufferHandle = (uint64_t)bufferHandle;
-      m.quadCount = quadCount;
-      m.opaqueQuadCount = opaqueQuadCount;
-      m.visibilityMask = (uint64_t)visibilityMask;
-      memcpy(m.facingQuadCounts, faceCounts, sizeof(faceCounts));
-      m.lodTier = (int32_t)lodTier;
-      m.active = true;
+    NativeMesh &m = g_nativeMeshes[it->second];
+    m.bufferHandle = (uint64_t)bufferHandle;
+    m.quadCount = quadCount;
+    m.opaqueQuadCount = opaqueQuadCount;
+    m.visibilityMask = (uint64_t)visibilityMask;
+    memcpy(m.facingQuadCounts, faceCounts, sizeof(faceCounts));
+    m.lodTier = (int32_t)lodTier;
+    m.active = true;
 
     return;
   }
@@ -2806,12 +2807,13 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMesh(
   mesh.chunkX = (int32_t)cx;
   mesh.chunkY = (int32_t)cy;
   mesh.chunkZ = (int32_t)cz;
-  mesh.bufferHandle = (uint64_t)bufferHandle;    mesh.quadCount = (int32_t)quadCount;
-    mesh.opaqueQuadCount = (int32_t)opaqueQuadCount;
-    mesh.visibilityMask = (uint64_t)visibilityMask;
-    memcpy(mesh.facingQuadCounts, faceCounts, sizeof(faceCounts));
-    mesh.lodTier = (int32_t)lodTier;
-    mesh.active = true;
+  mesh.bufferHandle = (uint64_t)bufferHandle;
+  mesh.quadCount = (int32_t)quadCount;
+  mesh.opaqueQuadCount = (int32_t)opaqueQuadCount;
+  mesh.visibilityMask = (uint64_t)visibilityMask;
+  memcpy(mesh.facingQuadCounts, faceCounts, sizeof(faceCounts));
+  mesh.lodTier = (int32_t)lodTier;
+  mesh.active = true;
   g_nativeMeshes[idx] = mesh;
   g_meshKeyToIdx[key] = idx;
 
@@ -3017,7 +3019,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
     static int s_snapshotRemovalGeneration = -1;
 
     int regGeneration = g_meshRegGeneration.load(std::memory_order_acquire);
-    int removalGeneration = g_meshRemovalGeneration.load(std::memory_order_acquire);
+    int removalGeneration =
+        g_meshRemovalGeneration.load(std::memory_order_acquire);
     bool rebuildNow = removalGeneration != s_snapshotRemovalGeneration;
     if (!rebuildNow && regGeneration != s_snapshotGeneration) {
       s_snapshotChurnFrames++;
@@ -3052,7 +3055,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           snap.quadCount = nm.quadCount;
           snap.opaqueQuadCount = nm.opaqueQuadCount;
           memcpy(snap.opaqueFaceCounts, nm.facingQuadCounts,
-              sizeof(snap.opaqueFaceCounts));
+                 sizeof(snap.opaqueFaceCounts));
           snap.lodTier = nm.lodTier;
           if (isMegaHandle(nm.bufferHandle)) {
             auto it = g_megaAllocs.find(nm.bufferHandle);
@@ -3104,7 +3107,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       cmd.opaqueIdxCount = ms.opaqueQuadCount *
                            6; // remember to test config settings monday night
       memcpy(cmd.opaqueFaceCounts, ms.opaqueFaceCounts,
-          sizeof(cmd.opaqueFaceCounts));
+             sizeof(cmd.opaqueFaceCounts));
       cmd.lodTier = ms.lodTier;
       cmd.facingMask = visibleFacingMaskForAabb(ox, oy, oz);
       cmd.distSq = cx * cx + cz * cz;
@@ -3122,15 +3125,14 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       for (int si = 0; si < totalActive; si++) {
         const DrawCmd &cmd = s_cmds[si];
         if (frustumTestAABB(frustumPlanes, cmd.ox, cmd.oy, cmd.oz,
-                            cmd.ox + 16.0f, cmd.oy + 16.0f,
-                            cmd.oz + 16.0f)) {
+                            cmd.ox + 16.0f, cmd.oy + 16.0f, cmd.oz + 16.0f)) {
           kept++;
         }
       }
       if (kept == 0 || (totalActive >= 96 && kept * 24 < totalActive)) {
         if (g_frameCount < 5 || (g_frameCount % 600 == 0)) {
-          dbg("CULL_FAILSAFE: kept=%d input=%d, fallback distance-only\n",
-              kept, totalActive);
+          dbg("CULL_FAILSAFE: kept=%d input=%d, fallback distance-only\n", kept,
+              totalActive);
         }
         // remember to test config settings monday night
       } else {
@@ -3138,8 +3140,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         for (int si = 0; si < totalActive; si++) {
           const DrawCmd &cmd = s_cmds[si];
           if (frustumTestAABB(frustumPlanes, cmd.ox, cmd.oy, cmd.oz,
-                              cmd.ox + 16.0f, cmd.oy + 16.0f,
-                              cmd.oz + 16.0f)) {
+                              cmd.ox + 16.0f, cmd.oy + 16.0f, cmd.oz + 16.0f)) {
             if (write != si)
               s_cmds[write] = s_cmds[si];
             write++;
@@ -3165,15 +3166,14 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       uint32_t faceCullVisible = 0;
       for (int i = 0; i < validCount; i++) {
         faceCullInput += (uint32_t)std::max(0, s_cmds[i].opaqueIdxCount / 6);
-        faceCullVisible += (uint32_t)std::max(0,
-            visibleOpaqueQuadCount(s_cmds[i].opaqueFaceCounts,
-                                   s_cmds[i].facingMask));
+        faceCullVisible += (uint32_t)std::max(
+            0, visibleOpaqueQuadCount(s_cmds[i].opaqueFaceCounts,
+                                      s_cmds[i].facingMask));
       }
       g_lastFaceCullInput.store(faceCullInput, std::memory_order_relaxed);
-      g_lastFaceCullRemoved.store(faceCullInput > faceCullVisible
-                                      ? faceCullInput - faceCullVisible
-                                      : 0,
-                                  std::memory_order_relaxed);
+      g_lastFaceCullRemoved.store(
+          faceCullInput > faceCullVisible ? faceCullInput - faceCullVisible : 0,
+          std::memory_order_relaxed);
 
       if (g_staleCapacity < validCount) {
         free(g_staleDrawCmds);
@@ -3187,7 +3187,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         stale.idxCount = s_cmds[i].idxCount;
         stale.opaqueIdxCount = s_cmds[i].opaqueIdxCount;
         memcpy(stale.opaqueFaceCounts, s_cmds[i].opaqueFaceCounts,
-            sizeof(stale.opaqueFaceCounts));
+               sizeof(stale.opaqueFaceCounts));
         stale.lodTier = s_cmds[i].lodTier;
         stale.ox = s_cmds[i].ox;
         stale.oy = s_cmds[i].oy;
@@ -3227,10 +3227,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         cmd.idxCount = sc.idxCount;
         cmd.opaqueIdxCount = sc.opaqueIdxCount;
         memcpy(cmd.opaqueFaceCounts, sc.opaqueFaceCounts,
-            sizeof(cmd.opaqueFaceCounts));
+               sizeof(cmd.opaqueFaceCounts));
         cmd.lodTier = sc.lodTier;
-        cmd.facingMask = visibleFacingMaskForAabb(sc.ox - dcx, sc.oy - dcy,
-                                                  sc.oz - dcz);
+        cmd.facingMask =
+            visibleFacingMaskForAabb(sc.ox - dcx, sc.oy - dcy, sc.oz - dcz);
         cmd.distSq = 0.0f;
         cmd.ox = sc.ox - dcx;
         cmd.oy = sc.oy - dcy;
@@ -3654,9 +3654,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       } else if (!s_cmds[i].resolvedBuf) {
         continue;
       }
-      icbCandidateCount +=         visibleOpaqueBucketCount(
-           s_cmds[i].opaqueFaceCounts,
-           s_cmds[i].facingMask);
+      icbCandidateCount += visibleOpaqueBucketCount(s_cmds[i].opaqueFaceCounts,
+                                                    s_cmds[i].facingMask);
     }
     bool canICB =
         (g_icbCapable && icbCandidateCount > 0 && g_pipelineInhouseICB &&
@@ -4314,7 +4313,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
                  sizeof(currentViewProjection));
           memcpy(motionParams.previousViewProjection,
                  g_hasPreviousViewProjection ? g_previousViewProjection
-                                              : currentViewProjection,
+                                             : currentViewProjection,
                  sizeof(currentViewProjection));
           motionParams.size[0] = (uint32_t)g_sceneColor.width;
           motionParams.size[1] = (uint32_t)g_sceneColor.height;
@@ -4328,9 +4327,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
                          length:sizeof(motionParams)
                         atIndex:0];
             MTLSize motionThreads = MTLSizeMake(8, 8, 1);
-            MTLSize motionGroups = MTLSizeMake(
-                ((NSUInteger)g_sceneColor.width + 7) / 8,
-                ((NSUInteger)g_sceneColor.height + 7) / 8, 1);
+            MTLSize motionGroups =
+                MTLSizeMake(((NSUInteger)g_sceneColor.width + 7) / 8,
+                            ((NSUInteger)g_sceneColor.height + 7) / 8, 1);
             [motionEnc dispatchThreadgroups:motionGroups
                       threadsPerThreadgroup:motionThreads];
             [motionEnc endEncoding];
@@ -4346,7 +4345,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
           g_mfxTemporalScaler.jitterOffsetX = 0.0f;
           g_mfxTemporalScaler.jitterOffsetY = 0.0f;
           g_mfxTemporalScaler.depthReversed = NO;
-          g_mfxTemporalScaler.reset = g_mfxReset || !g_hasPreviousViewProjection;
+          g_mfxTemporalScaler.reset =
+              g_mfxReset || !g_hasPreviousViewProjection;
           [g_mfxTemporalScaler encodeToCommandBuffer:g_currentCmdBuffer];
         } else if (g_mfxSpatialScaler) {
           g_mfxSpatialScaler.colorTexture = g_sceneColor;
@@ -4468,7 +4468,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
       } else {
         g_thermalQualityLevel = 0;
       }
-
     }
     {
       std::lock_guard<std::mutex> lock(g_deferredMutex);
@@ -4937,9 +4936,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nBindIOSurfaceToTex
     return JNI_FALSE;
   CGLContextObj cglCtx = CGLGetCurrentContext();
   if (!cglCtx)
-    return JNI_FALSE;    int w = std::max(1, g_rtWidth);
-    int h = std::max(1, g_rtHeight);
-    glBindTexture(GL_TEXTURE_RECTANGLE_ARB, (GLuint)glTexture);
+    return JNI_FALSE;
+  int w = std::max(1, g_rtWidth);
+  int h = std::max(1, g_rtHeight);
+  glBindTexture(GL_TEXTURE_RECTANGLE_ARB, (GLuint)glTexture);
   CGLError err = CGLTexImageIOSurface2D(
       cglCtx, GL_TEXTURE_RECTANGLE_ARB, GL_RGBA, (GLsizei)w, (GLsizei)h,
       GL_BGRA, GL_UNSIGNED_INT_8_8_8_8_REV, blitSurface, 0);
@@ -6134,7 +6134,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDestroyIndirectCom
     [it->second release];
     g_javaICBs.erase(it);
   }
-  auto cit = g_javaICBEncodedCount.find((uint64_t)icbHandle);
+  auto cit = g_javaICBEncodedCount.find((uint64_t)icbHandle); 
   if (cit != g_javaICBEncodedCount.end()) {
     // remember to test config settings monday night
     g_javaICBEncodedCount.erase(cit);
