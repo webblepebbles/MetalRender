@@ -41,26 +41,6 @@ struct InhouseTerrainVertex {
 
 
 
-constant float kGamma[16] = {
-    0.0f,
-    0.38157f,
-    0.47038f,
-    0.53589f,
-    0.59018f,
-    0.63728f,
-    0.65132f,
-    0.69210f,
-    0.72984f,
-    0.76496f,
-    0.79780f,
-    0.82860f,
-    0.85752f,
-    0.88474f,
-    0.91038f,
-    1.00000f,
-};
-
-
 constant half kFaceShade[6] = {
     half(0.5),
     half(1.0),
@@ -74,8 +54,8 @@ constant half kFaceShade[6] = {
 struct MeshVertexOut {
     float4 position    [[position]];
     float2 texCoord;
+    half2  lightUV;
     half4  color;
-    half   light;
     uint   normalIndex [[flat]];
     float3 worldPos;
 };
@@ -177,7 +157,6 @@ void mesh_terrain(
     threadgroup_barrier(mem_flags::mem_threadgroup);
 
     float3 chunkOrig = float3(m.worldX, m.worldY, m.worldZ);
-    float  skyBr     = camera.cameraPosition.w;
 
     if (tid < localVerts) {
         uint sourceQuad = tid >> 2u;
@@ -197,9 +176,11 @@ void mesh_terrain(
             out.color       = half4(float4(v.color) / 255.0f);
 
             uint pl      = uint(v.packedLight);
-            half blockL  = half(kGamma[pl & 0xFu]);
-            half skyL    = half(kGamma[(pl >> 4u) & 0xFu]);
-            out.light    = half(max(float(blockL), float(skyL) * skyBr));
+            // Lightmap texel-center UVs (block -> u, sky -> v), matching the
+            // 16x16 lightmap used by the vertex/ICB terrain paths.
+            out.lightUV  = half2((float((pl & 0xFu) * 16) + 8.0) / 256.0,
+                                 (float(((pl >> 4u) & 0xFu) * 16) + 8.0) /
+                                     256.0);
             out.normalIndex = normalIndex;
             out.worldPos    = worldPos;
 
@@ -226,10 +207,13 @@ void mesh_terrain(
 fragment half4 fragment_terrain_mesh_opaque(
     MeshVertexOut in [[stage_in]],
     texture2d<half> blockAtlas [[texture(0)]],
+    texture2d<half> lightmap   [[texture(1)]],
     constant CameraUniforms& camera [[buffer(1)]]
 ) {
-    constexpr sampler s(mag_filter::nearest, min_filter::nearest,
-                        mip_filter::nearest);
+    constexpr sampler s(mag_filter::nearest, min_filter::linear,
+                        mip_filter::linear, max_anisotropy(8));
+    constexpr sampler lightSampler(mag_filter::nearest, min_filter::nearest,
+                                   mip_filter::nearest);
     half4 tex = blockAtlas.sample(s, float2(in.texCoord));
     half  va  = in.color.a;
 
@@ -244,7 +228,8 @@ fragment half4 fragment_terrain_mesh_opaque(
     }
     half4 col = tex * in.color;
 
-    col.rgb *= max(in.light, half(0.04h)) * kFaceShade[min(in.normalIndex, 5u)];
+    half3 light = lightmap.sample(lightSampler, float2(in.lightUV)).rgb;
+    col.rgb *= max(light, half3(0.04h)) * kFaceShade[min(in.normalIndex, 5u)];
 
     if (camera.waterFog > 0.0f) {
         half dist = half(fast::length(in.worldPos));
@@ -257,14 +242,18 @@ fragment half4 fragment_terrain_mesh_opaque(
 fragment half4 fragment_terrain_mesh_cutout(
     MeshVertexOut in [[stage_in]],
     texture2d<half> blockAtlas [[texture(0)]],
+    texture2d<half> lightmap   [[texture(1)]],
     constant CameraUniforms& camera [[buffer(1)]]
 ) {
-    constexpr sampler s(mag_filter::nearest, min_filter::nearest,
-                        mip_filter::nearest);
+    constexpr sampler s(mag_filter::nearest, min_filter::linear,
+                        mip_filter::linear, max_anisotropy(8));
+    constexpr sampler lightSampler(mag_filter::nearest, min_filter::nearest,
+                                   mip_filter::nearest);
     half4 tex = blockAtlas.sample(s, float2(in.texCoord));
     if (tex.a < half(0.5h)) discard_fragment();
     half4 col = tex * in.color;
-    col.rgb *= max(in.light, half(0.04h)) * kFaceShade[min(in.normalIndex, 5u)];
+    half3 light = lightmap.sample(lightSampler, float2(in.lightUV)).rgb;
+    col.rgb *= max(light, half3(0.04h)) * kFaceShade[min(in.normalIndex, 5u)];
     if (camera.waterFog > 0.0f) {
         half dist = half(fast::length(in.worldPos));
         half fog  = clamp(dist / half(32.0h), half(0.0h), half(0.85h));

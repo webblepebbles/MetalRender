@@ -494,7 +494,7 @@ public class MetalParticleRenderer {
           textureUploadFrame[glTextureId] = frameCount;
         return cached;
       }
-      long metalTex = NativeBridge.nCreateTexture2D(device, width, height, pixelData);
+      long metalTex = NativeBridge.nCreateTexture2D(device, width, height, 1, pixelData);
       if (inBounds) {
         textureCache[glTextureId] = metalTex;
         textureUploadFrame[glTextureId] = frameCount;

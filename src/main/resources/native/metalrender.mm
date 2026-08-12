@@ -272,6 +272,7 @@ static id<MTLTexture> g_upscaledColor[3] = {};
 static id<MTLFXSpatialScaler> g_mfxSpatialScaler = nil;
 static id<MTLFXTemporalScaler> g_mfxTemporalScaler = nil;
 static id<MTLComputePipelineState> g_motionVectorPipeline = nil;
+static id<MTLComputePipelineState> g_mfxAlphaPipeline = nil;
 static bool g_mfxTemporalEnabled = true;
 static bool g_mfxConfiguredTemporal = true;
 static bool g_mfxReset = true;
@@ -301,6 +302,7 @@ static id<MTLBuffer> g_depthReadBuffer = nil;
 static id<MTLCommandBuffer> g_depthCmdBuffer = nil;
 static id<MTLTexture> g_blockAtlas = nil;
 static id<MTLTexture> g_lightmap = nil;
+static id<MTLTexture> g_lightmapFallback = nil;
 static id<MTLLibrary> g_shaderLibrary = nil;
 static int g_rtWidth = 16;
 static int g_rtHeight = 16;
@@ -1163,6 +1165,23 @@ fragment float4 fragment_particle(
 	}
 	return baseColor;
 }
+
+kernel void mfx_preserve_alpha(
+	texture2d<half, access::read>   upscaled [[texture(0)]],
+	texture2d<half, access::sample> scene    [[texture(1)]],
+	texture2d<half, access::write>  output   [[texture(2)]],
+	uint2 gid [[thread_position_in_grid]]) {
+	if (gid.x >= output.get_width() || gid.y >= output.get_height()) {
+		return;
+	}
+	half4 up = upscaled.read(gid);
+	constexpr sampler nearestSampler(mag_filter::nearest, min_filter::nearest,
+	                                 address::clamp_to_edge);
+	float2 uv = (float2(gid) + 0.5f) /
+	            float2(output.get_width(), output.get_height());
+	half4 sc = scene.sample(nearestSampler, uv);
+	output.write(half4(up.rgb, sc.a), gid);
+}
 	)";
     MTLCompileOptions *opts = [[MTLCompileOptions alloc] init];
     g_shaderLibrary = [g_device newLibraryWithSource:shaderSource
@@ -1455,6 +1474,7 @@ fragment float4 fragment_particle(
   g_hizMultiPipeline = createComputePipeline(@"hiz_downsample_multi");
 #ifdef METALRENDER_HAS_METALFX
   g_motionVectorPipeline = createComputePipeline(@"generate_motion_vectors");
+  g_mfxAlphaPipeline = createComputePipeline(@"mfx_preserve_alpha");
 #endif
   g_cullEncodePipeline = createComputePipeline(@"cull_and_encode");
   g_resetCullPipeline = createComputePipeline(@"reset_cull_stats");
@@ -1578,6 +1598,23 @@ fragment float4 fragment_particle(
                       withBytes:white
                     bytesPerRow:4];
     dbg("Created 1x1 white fallback atlas texture\n");
+  }
+
+  if (!g_lightmapFallback) {
+    MTLTextureDescriptor *lmDesc = [MTLTextureDescriptor
+        texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
+                                     width:1
+                                    height:1
+                                 mipmapped:NO];
+    lmDesc.usage = MTLTextureUsageShaderRead;
+    lmDesc.storageMode = MTLStorageModeShared;
+    g_lightmapFallback = [g_device newTextureWithDescriptor:lmDesc];
+    uint8_t gray[4] = {96, 96, 96, 255};
+    [g_lightmapFallback replaceRegion:MTLRegionMake2D(0, 0, 1, 1)
+                          mipmapLevel:0
+                            withBytes:gray
+                          bytesPerRow:4];
+    dbg("Created 1x1 mid-gray fallback lightmap texture\n");
   }
 
   if (@available(macOS 11.0, *)) {
@@ -1800,7 +1837,9 @@ static void ensure_offscreen() {
         scalerDesc.depthTextureFormat = MTLPixelFormatDepth32Float;
         scalerDesc.motionTextureFormat = MTLPixelFormatRG16Float;
         scalerDesc.outputTextureFormat = MTLPixelFormatBGRA8Unorm;
-        scalerDesc.autoExposureEnabled = YES;
+        // LDR (BGRA8Unorm) input: auto-exposure is meant for HDR and would
+        // pump the exposure on dark scenes, washing everything out.
+        scalerDesc.autoExposureEnabled = NO;
         g_mfxTemporalScaler = [scalerDesc newTemporalScalerWithDevice:g_device];
       } else if (useSpatial) {
         MTLFXSpatialScalerDescriptor *scalerDesc =
@@ -3391,6 +3430,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           [g_currentEncoder setMeshBuffer:g_megaVB offset:0 atIndex:2];
 
           [g_currentEncoder setFragmentTexture:g_blockAtlas atIndex:0];
+          [g_currentEncoder
+              setFragmentTexture:(g_lightmap ?: g_lightmapFallback) atIndex:1];
           [g_currentEncoder setFragmentBuffer:camBuf offset:0 atIndex:1];
 
           MTLSize objTGS = MTLSizeMake((NSUInteger)meshletCount, 1, 1);
@@ -3669,7 +3710,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         g_currentPipeline = g_pipelineInhouseICBOpaque;
         [g_fragArgEncoderOpaque setArgumentBuffer:g_fragArgBufOpaque offset:0];
         [g_fragArgEncoderOpaque setTexture:g_blockAtlas atIndex:0];
-        [g_fragArgEncoderOpaque setTexture:g_lightmap atIndex:1];
+        [g_fragArgEncoderOpaque
+            setTexture:(g_lightmap ?: g_lightmapFallback) atIndex:1];
         [g_currentEncoder setFragmentBuffer:g_fragArgBufOpaque
                                      offset:0
                                     atIndex:0];
@@ -3678,7 +3720,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         g_currentPipeline = g_pipelineInhouseICB;
         [g_fragArgEncoder setArgumentBuffer:g_fragArgBuf offset:0];
         [g_fragArgEncoder setTexture:g_blockAtlas atIndex:0];
-        [g_fragArgEncoder setTexture:g_lightmap atIndex:1];
+        [g_fragArgEncoder
+            setTexture:(g_lightmap ?: g_lightmapFallback) atIndex:1];
         [g_currentEncoder setFragmentBuffer:g_fragArgBuf offset:0 atIndex:0];
       }
       [g_currentEncoder useResource:g_blockAtlas
@@ -4196,9 +4239,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetCurrentFrameCon
     if (g_blockAtlas) {
       [g_currentEncoder setFragmentTexture:g_blockAtlas atIndex:0];
     }
-    if (g_lightmap) {
-      [g_currentEncoder setFragmentTexture:g_lightmap atIndex:1];
-    }
+    [g_currentEncoder
+        setFragmentTexture:(g_lightmap ?: g_lightmapFallback) atIndex:1];
     if (g_frameCount < 3) {
       dbg("Triple-buffer: renderSlot=%d reuse=%d lastCompleted=%d\n",
           g_renderSlot, reuseFrame ? 1 : 0,
@@ -4354,19 +4396,37 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
           [g_mfxSpatialScaler encodeToCommandBuffer:g_currentCmdBuffer];
         }
 
-        id<MTLBlitCommandEncoder> outputBlit =
-            [g_currentCmdBuffer blitCommandEncoder];
-        if (outputBlit) {
-          [outputBlit copyFromTexture:g_upscaledColor[g_renderSlot]
-                          sourceSlice:0
-                          sourceLevel:0
-                         sourceOrigin:MTLOriginMake(0, 0, 0)
-                           sourceSize:MTLSizeMake(g_rtWidth, g_rtHeight, 1)
-                            toTexture:g_color
-                     destinationSlice:0
-                     destinationLevel:0
-                    destinationOrigin:MTLOriginMake(0, 0, 0)];
-          [outputBlit endEncoding];
+        if (g_mfxAlphaPipeline) {
+          // Preserve the low-res scene alpha through the upscaler: the GL
+          // compositor uses alpha as a coverage mask so the vanilla sky
+          // (alpha == 0) shows through. MetalFX scalers output opaque alpha.
+          id<MTLComputeCommandEncoder> mfxOutEnc =
+              [g_currentCmdBuffer computeCommandEncoder];
+          if (mfxOutEnc) {
+            [mfxOutEnc setComputePipelineState:g_mfxAlphaPipeline];
+            [mfxOutEnc setTexture:g_upscaledColor[g_renderSlot] atIndex:0];
+            [mfxOutEnc setTexture:g_sceneColor atIndex:1];
+            [mfxOutEnc setTexture:g_color atIndex:2];
+            [mfxOutEnc
+                dispatchThreads:MTLSizeMake(g_rtWidth, g_rtHeight, 1)
+          threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
+            [mfxOutEnc endEncoding];
+          }
+        } else {
+          id<MTLBlitCommandEncoder> outputBlit =
+              [g_currentCmdBuffer blitCommandEncoder];
+          if (outputBlit) {
+            [outputBlit copyFromTexture:g_upscaledColor[g_renderSlot]
+                            sourceSlice:0
+                            sourceLevel:0
+                           sourceOrigin:MTLOriginMake(0, 0, 0)
+                             sourceSize:MTLSizeMake(g_rtWidth, g_rtHeight, 1)
+                              toTexture:g_color
+                       destinationSlice:0
+                       destinationLevel:0
+                      destinationOrigin:MTLOriginMake(0, 0, 0)];
+            [outputBlit endEncoding];
+          }
         }
         memcpy(g_previousViewProjection, currentViewProjection,
                sizeof(currentViewProjection));
@@ -4724,7 +4784,7 @@ static uint8_t *compress_rgba_to_astc4x4(const uint8_t *rgba, int w, int h,
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateTexture2D(
     JNIEnv *env, jclass, jlong deviceHandle, jint width, jint height,
-    jbyteArray pixelData) {
+    jint mipLevels, jbyteArray pixelData) {
   (void)deviceHandle;
   if (!g_device || width <= 0 || height <= 0)
     return 0;
@@ -4763,11 +4823,16 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateTexture2D(
   }
 
   if (!tex) {
+    int maxMips = 1;
+    for (int s = width > height ? width : height; s > 1; s >>= 1)
+      maxMips++;
+    int mipCount = std::max(1, std::min((int)mipLevels, maxMips));
     MTLTextureDescriptor *desc = [MTLTextureDescriptor
         texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm
                                      width:(NSUInteger)width
                                     height:(NSUInteger)height
-                                 mipmapped:NO];
+                                 mipmapped:(mipCount > 1)];
+    desc.mipmapLevelCount = (NSUInteger)mipCount;
     desc.usage = MTLTextureUsageShaderRead;
     desc.storageMode = MTLStorageModeShared;
     tex = [g_device newTextureWithDescriptor:desc];
@@ -4778,8 +4843,15 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateTexture2D(
              mipmapLevel:0
                withBytes:data
              bytesPerRow:(NSUInteger)(width * 4)];
-      dbg("nCreateTexture2D: created %dx%d RGBA texture %p\n", width, height,
-          tex);
+      if (mipCount > 1 && g_queue) {
+        id<MTLCommandBuffer> cb = [g_queue commandBuffer];
+        id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+        [blit generateMipmapsForTexture:tex];
+        [blit endEncoding];
+        [cb commit];
+      }
+      dbg("nCreateTexture2D: created %dx%d RGBA texture %p (%d mips)\n",
+          width, height, tex, mipCount);
     } else {
       dbg("nCreateTexture2D: failed to create %dx%d texture\n", width, height);
     }
@@ -4833,6 +4905,13 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUpdateTexture2D(
              mipmapLevel:0
                withBytes:data
              bytesPerRow:(NSUInteger)(width * 4)];
+    }
+    if ([tex mipmapLevelCount] > 1 && g_queue) {
+      id<MTLCommandBuffer> cb = [g_queue commandBuffer];
+      id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+      [blit generateMipmapsForTexture:tex];
+      [blit endEncoding];
+      [cb commit];
     }
     env->ReleaseByteArrayElements(pixelData, data, JNI_ABORT);
   }
@@ -5117,9 +5196,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawEntityBuffer(
       [g_currentEncoder setFragmentTexture:g_blockAtlas atIndex:0];
     }
   }
-  if (g_lightmap) {
-    [g_currentEncoder setFragmentTexture:g_lightmap atIndex:1];
-  }
+  [g_currentEncoder
+      setFragmentTexture:(g_lightmap ?: g_lightmapFallback) atIndex:1];
 
   [g_currentEncoder setCullMode:MTLCullModeNone];
   [g_currentEncoder drawPrimitives:MTLPrimitiveTypeTriangle
@@ -5169,9 +5247,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawEntityBufferIn
   } else if (g_blockAtlas) {
     [g_currentEncoder setFragmentTexture:g_blockAtlas atIndex:0];
   }
-  if (g_lightmap) {
-    [g_currentEncoder setFragmentTexture:g_lightmap atIndex:1];
-  }
+  [g_currentEncoder
+      setFragmentTexture:(g_lightmap ?: g_lightmapFallback) atIndex:1];
 
   [g_currentEncoder setCullMode:MTLCullModeNone];
   [g_currentEncoder

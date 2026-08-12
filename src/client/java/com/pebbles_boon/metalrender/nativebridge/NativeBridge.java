@@ -115,7 +115,7 @@ public final class NativeBridge {
       int slot);
 
   public static native long nCreateTexture2D(long deviceHandle, int width,
-      int height, byte[] pixelData);
+      int height, int mipLevels, byte[] pixelData);
 
   public static native void nDestroyTexture2D(long textureHandle);
 

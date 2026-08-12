@@ -20,6 +20,7 @@ public class MetalTextureManager {
   private boolean usingFallbackBlockAtlas;
   private int blockAtlasWidth;
   private int blockAtlasHeight;
+  private int blockAtlasMipLevels = 1;
   private int lightmapWidth;
   private int lightmapHeight;
   private byte[] atlasUploadData = null;
@@ -29,6 +30,7 @@ public class MetalTextureManager {
   public static volatile boolean atlasDirty = true;
 
   private static final int ATLAS_MIN_UPLOAD_INTERVAL = 2;
+  private static final int ATLAS_HEARTBEAT_FRAMES = 300;
   private static final int LIGHTMAP_MIN_UPLOAD_INTERVAL = 2;
   private static final long LIGHTMAP_MIN_GAME_TIME_DELTA = 4L;
   private int atlasFramesSinceUpload = 0;
@@ -86,7 +88,9 @@ public class MetalTextureManager {
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTex);
       byte[] data = new byte[width * height * 4];
       pixels.get(data);
-      long newTexture = NativeBridge.nCreateTexture2D(deviceHandle, width, height, data);
+      int mipLevels = currentMipmapLevels();
+      long newTexture = NativeBridge.nCreateTexture2D(deviceHandle, width,
+          height, mipLevels, data);
       if (newTexture != 0) {
         if (blockAtlasTexture != 0 && blockAtlasTexture != newTexture) {
           NativeBridge.nDestroyTexture2D(blockAtlasTexture);
@@ -94,9 +98,11 @@ public class MetalTextureManager {
         blockAtlasTexture = newTexture;
         blockAtlasWidth = width;
         blockAtlasHeight = height;
+        blockAtlasMipLevels = mipLevels;
         blockAtlasLoaded = true;
         usingFallbackBlockAtlas = false;
-        MetalLogger.info("atlas weady: %dx%d h=%d", width, height, newTexture);
+        MetalLogger.info("atlas weady: %dx%d h=%d mips=%d", width, height,
+            newTexture, mipLevels);
       } else {
         MetalLogger.error("atlas tex create fail");
         blockAtlasLoaded = true;
@@ -116,8 +122,15 @@ public class MetalTextureManager {
 
     if (atlasFramesSinceUpload < ATLAS_MIN_UPLOAD_INTERVAL)
       return;
+    if (!atlasDirty && atlasFramesSinceUpload < ATLAS_HEARTBEAT_FRAMES)
+      return;
     atlasFramesSinceUpload = 0;
     atlasDirty = false;
+    int mipLevels = currentMipmapLevels();
+    if (mipLevels != blockAtlasMipLevels) {
+      loadBlockAtlas();
+      return;
+    }
 
     try {
       Minecraft mc = Minecraft.getInstance();
@@ -211,6 +224,17 @@ public class MetalTextureManager {
     return lightmapTexture;
   }
 
+  private int currentMipmapLevels() {
+    try {
+      Minecraft mc = Minecraft.getInstance();
+      if (mc != null && mc.options != null && mc.options.mipmapLevels() != null) {
+        return Math.max(1, mc.options.mipmapLevels().get() + 1);
+      }
+    } catch (Exception ignored) {
+    }
+    return 1;
+  }
+
   private void uploadLightmap() {
     try {
       Minecraft mc = Minecraft.getInstance();
@@ -255,7 +279,7 @@ public class MetalTextureManager {
       if (lightmapTexture == 0 || width != lightmapWidth ||
           height != lightmapHeight) {
         long newTexture = NativeBridge.nCreateTexture2D(
-            deviceHandle, width, height, lightmapUploadData);
+            deviceHandle, width, height, 1, lightmapUploadData);
         if (newTexture == 0) {
           return;
         }
@@ -289,6 +313,7 @@ public class MetalTextureManager {
     usingFallbackBlockAtlas = false;
     blockAtlasWidth = 0;
     blockAtlasHeight = 0;
+    blockAtlasMipLevels = 1;
     lightmapWidth = 0;
     lightmapHeight = 0;
     lastLightmapObservedGameTime = Long.MIN_VALUE;

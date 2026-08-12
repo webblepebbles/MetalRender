@@ -1022,7 +1022,7 @@ public class MetalEntityRenderer {
       byte[] pixelData = new byte[width * height * 4];
       pixels.get(pixelData);
 
-      long metalTexture = NativeBridge.nCreateTexture2D(device, width, height, pixelData);
+      long metalTexture = NativeBridge.nCreateTexture2D(device, width, height, 1, pixelData);
       if (glTextureId >= 0 && glTextureId < TEXTURE_CACHE_SIZE) {
         textureCache[glTextureId] = metalTexture;
       }
