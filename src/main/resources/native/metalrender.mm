@@ -21,6 +21,7 @@
 #include <shared_mutex>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 #include <vector>
 #ifdef __aarch64__
@@ -54,6 +55,10 @@ static void ensureTimebase() {
     mach_timebase_info(&g_cachedTimebase);
 }
 static id<MTLBuffer> get_buffer(uint64_t h);
+extern "C" int metalrenderSortTranslucency(const float *keys,
+                                             uint32_t *order, int count);
+static bool isClusterVisible(int32_t chunkX, int32_t chunkZ);
+static bool isGpuCullVisible(uint64_t bufferHandle);
 struct ResolvedBuf {
   id<MTLBuffer> buf;
   size_t offset;
@@ -303,7 +308,7 @@ static id<MTLCommandBuffer> g_depthCmdBuffer = nil;
 static id<MTLTexture> g_blockAtlas = nil;
 static id<MTLTexture> g_lightmap = nil;
 static id<MTLTexture> g_lightmapFallback = nil;
-static id<MTLLibrary> g_shaderLibrary = nil;
+id<MTLLibrary> g_shaderLibrary = nil;
 static int g_rtWidth = 16;
 static int g_rtHeight = 16;
 static float g_scale = 1.0f;
@@ -348,6 +353,14 @@ static int g_hizCachedW = 0;
 static int g_hizCachedH = 0;
 static NSUInteger g_cullMaxTG = 0;
 static uint32_t g_hizMipCount = 0;
+static bool g_hizReady = false;
+static bool g_hizCullEnabled = false;
+static bool g_gpuCullFilterEnabled = false;
+static std::unordered_set<uint64_t> g_gpuVisibleBufferHandles;
+static bool g_clusterCullingEnabled = false;
+static bool g_translucencySortEnabled = false;
+static std::unordered_set<int64_t> g_visibleClusterKeys;
+static std::mutex g_clusterVisibilityMutex;
 
 static inline void hizUpdateThreadgroupSize(id<MTLTexture> srcDepth) {
   int w = (int)srcDepth.width;
@@ -357,6 +370,43 @@ static inline void hizUpdateThreadgroupSize(id<MTLTexture> srcDepth) {
     g_hizCachedH = h;
     g_hizGroups = MTLSizeMake((w + 15) / 16, (h + 15) / 16, 1);
   }
+}
+static bool g_useMemorylessTargets = false;
+struct HiZParamsCPU {
+  uint32_t srcSize[2];
+  uint32_t dstSize[2];
+  uint32_t mipLevel;
+  uint32_t padding[3];
+};
+static void encodeHiZDownsample(id<MTLCommandBuffer> commandBuffer) {
+  if (!commandBuffer || !g_hizDownsamplePipeline || !g_hizPyramid ||
+      !g_sceneDepth || g_useMemorylessTargets) {
+    return;
+  }
+  id<MTLComputeCommandEncoder> encoder = [commandBuffer computeCommandEncoder];
+  if (!encoder) {
+    return;
+  }
+  HiZParamsCPU params = {};
+  params.srcSize[0] = (uint32_t)g_sceneDepth.width;
+  params.srcSize[1] = (uint32_t)g_sceneDepth.height;
+  params.dstSize[0] = (uint32_t)g_hizPyramid.width;
+  params.dstSize[1] = (uint32_t)g_hizPyramid.height;
+  [encoder setComputePipelineState:g_hizDownsamplePipeline];
+  [encoder setTexture:g_sceneDepth atIndex:0];
+  [encoder setTexture:g_hizPyramid atIndex:1];
+  [encoder setBytes:&params length:sizeof(params) atIndex:0];
+  MTLSize groups = MTLSizeMake((params.dstSize[0] + 15) / 16,
+                               (params.dstSize[1] + 15) / 16, 1);
+  [encoder dispatchThreadgroups:groups
+         threadsPerThreadgroup:MTLSizeMake(16, 16, 1)];
+  [encoder endEncoding];
+  id<MTLBlitCommandEncoder> blit = [commandBuffer blitCommandEncoder];
+  if (blit) {
+    [blit generateMipmapsForTexture:g_hizPyramid];
+    [blit endEncoding];
+  }
+  g_hizReady = true;
 }
 static int g_hizWidth = 0;
 static int g_hizHeight = 0;
@@ -421,7 +471,6 @@ static float g_staleCamX = 0, g_staleCamY = 0, g_staleCamZ = 0;
 static float g_targetFrameTimeMs = 16.67f;
 static float g_avgFrameTimeMs = 0.0f;
 static int g_configuredRenderDistBlocks = 512;
-static bool g_useMemorylessTargets = false;
 static float g_lastGpuFrameMs = 0.0f;
 static float g_targetScale = 1.0f;
 static bool g_useProgrammableBlending = false;
@@ -1892,6 +1941,7 @@ static void ensure_offscreen() {
   hizDesc.storageMode = MTLStorageModePrivate;
   hizDesc.mipmapLevelCount = g_hizMipCount;
   g_hizPyramid = [g_device newTextureWithDescriptor:hizDesc];
+  g_hizReady = false;
   dbg("Created Hi-Z pyramid: %dx%d, %d mips\n", hizW, hizH, g_hizMipCount);
 
   if (g_oitAccumTex) {
@@ -3134,6 +3184,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
     megaCount = 0;
     for (int si = 0; si < totalActive; si++) {
       const MeshSnapshot &ms = s_snapshots[si];
+      if (!isClusterVisible(ms.chunkX, ms.chunkZ) ||
+          !isGpuCullVisible(ms.bufferHandle))
+        continue;
       float ox = ms.chunkX * 16.0f - camX;
       float oy = ms.chunkY * 16.0f - camY;
       float oz = ms.chunkZ * 16.0f - camZ;
@@ -3159,24 +3212,24 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         megaCount++;
     }
 
-    if (g_cpuFrustumCullEnabled && totalActive > 0) {
+    if (g_cpuFrustumCullEnabled && validCount > 0) {
       int kept = 0;
-      for (int si = 0; si < totalActive; si++) {
+      for (int si = 0; si < validCount; si++) {
         const DrawCmd &cmd = s_cmds[si];
         if (frustumTestAABB(frustumPlanes, cmd.ox, cmd.oy, cmd.oz,
                             cmd.ox + 16.0f, cmd.oy + 16.0f, cmd.oz + 16.0f)) {
           kept++;
         }
       }
-      if (kept == 0 || (totalActive >= 96 && kept * 24 < totalActive)) {
+      if (kept == 0 || (validCount >= 96 && kept * 24 < validCount)) {
         if (g_frameCount < 5 || (g_frameCount % 600 == 0)) {
           dbg("CULL_FAILSAFE: kept=%d input=%d, fallback distance-only\n", kept,
-              totalActive);
+              validCount);
         }
         // remember to test config settings monday night
       } else {
         int write = 0;
-        for (int si = 0; si < totalActive; si++) {
+        for (int si = 0; si < validCount; si++) {
           const DrawCmd &cmd = s_cmds[si];
           if (frustumTestAABB(frustumPlanes, cmd.ox, cmd.oy, cmd.oz,
                               cmd.ox + 16.0f, cmd.oy + 16.0f, cmd.oz + 16.0f)) {
@@ -3293,7 +3346,35 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       }
     }
 
-    if (validCount > 1 && hasTranslucentGeometry) {
+    if (validCount > 1 && hasTranslucentGeometry &&
+        g_translucencySortEnabled) {
+      static DrawCmd *s_gpuSortScratch = nullptr;
+      static int s_gpuSortScratchCap = 0;
+      static std::vector<float> s_gpuSortKeys;
+      static std::vector<uint32_t> s_gpuSortOrder;
+      if (s_gpuSortScratchCap < validCount) {
+        delete[] s_gpuSortScratch;
+        s_gpuSortScratchCap = std::max(validCount * 2, 1024);
+        s_gpuSortScratch = new DrawCmd[s_gpuSortScratchCap];
+      }
+      s_gpuSortKeys.resize(validCount);
+      s_gpuSortOrder.resize(validCount);
+      for (int i = 0; i < validCount; i++) {
+        s_gpuSortKeys[i] = s_cmds[i].distSq;
+      }
+      int sortedCount = metalrenderSortTranslucency(
+          s_gpuSortKeys.data(), s_gpuSortOrder.data(), validCount);
+      if (sortedCount == validCount) {
+        for (int i = 0; i < validCount; i++) {
+          s_gpuSortScratch[i] = s_cmds[s_gpuSortOrder[i]];
+        }
+        memcpy(s_cmds, s_gpuSortScratch,
+               (size_t)validCount * sizeof(DrawCmd));
+      }
+    }
+
+    if (validCount > 1 && hasTranslucentGeometry &&
+        !g_translucencySortEnabled) {
       static DrawCmd *s_radixScratch = nullptr;
       static int s_radixScratchCap = 0;
       if (s_radixScratchCap < validCount) {
@@ -4062,23 +4143,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetCurrentFrameCon
       [g_currentEncoder release];
       g_currentEncoder = nil;
     }
-    if (g_currentCmdBuffer && g_hizDownsamplePipeline && g_hizPyramid &&
-        !g_useMemorylessTargets) {
-      id<MTLComputeCommandEncoder> hizEnc =
-          [g_currentCmdBuffer computeCommandEncoder];
-      if (hizEnc) {
-        [hizEnc setComputePipelineState:g_hizDownsamplePipeline];
-        id<MTLTexture> srcDepth = g_sceneDepth;
-        if (srcDepth) {
-          [hizEnc setTexture:srcDepth atIndex:0];
-          [hizEnc setTexture:g_hizPyramid atIndex:1];
-          hizUpdateThreadgroupSize(srcDepth);
-          [hizEnc dispatchThreadgroups:g_hizGroups
-                 threadsPerThreadgroup:g_hizThreads];
-        }
-        [hizEnc endEncoding];
-      }
-    }
+    encodeHiZDownsample(g_currentCmdBuffer);
     if (g_currentCmdBuffer) {
       [g_currentCmdBuffer release];
       g_currentCmdBuffer = nil;
@@ -4316,23 +4381,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
       [g_currentEncoder release];
       g_currentEncoder = nil;
     }
-    if (g_currentCmdBuffer && g_hizDownsamplePipeline && g_hizPyramid &&
-        !g_useMemorylessTargets) {
-      id<MTLComputeCommandEncoder> hizEnc =
-          [g_currentCmdBuffer computeCommandEncoder];
-      if (hizEnc) {
-        [hizEnc setComputePipelineState:g_hizDownsamplePipeline];
-        id<MTLTexture> srcDepth = g_sceneDepth;
-        if (srcDepth) {
-          [hizEnc setTexture:srcDepth atIndex:0];
-          [hizEnc setTexture:g_hizPyramid atIndex:1];
-          hizUpdateThreadgroupSize(srcDepth);
-          [hizEnc dispatchThreadgroups:g_hizGroups
-                 threadsPerThreadgroup:g_hizThreads];
-        }
-        [hizEnc endEncoding];
-      }
-    }
+    encodeHiZDownsample(g_currentCmdBuffer);
 #ifdef METALRENDER_HAS_METALFX
     if (@available(macOS 13.0, *)) {
       if (mfxActive() && !g_wasReuseFrame && g_sceneColor &&
@@ -5334,16 +5383,113 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetGPUDrivenEnable
       g_gpuDrivenEnabled ? "enabled" : "disabled", g_icbCapable ? 1 : 0);
 }
 static int g_cullMode = 0;
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetHiZCullEnabled(
+    JNIEnv *, jclass, jboolean enabled) {
+  g_hizCullEnabled = enabled == JNI_TRUE;
+  g_cullMode = g_hizCullEnabled ? 1 : 0;
+  g_gpuCullFilterEnabled = false;
+  g_gpuVisibleBufferHandles.clear();
+}
+extern "C" JNIEXPORT jboolean JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nIsHiZReady(
+    JNIEnv *, jclass) {
+  return (g_hizCullEnabled && g_hizReady && g_hizPyramid) ? JNI_TRUE
+                                                        : JNI_FALSE;
+}
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetClusterCullingEnabled(
+    JNIEnv *, jclass, jboolean enabled) {
+  std::lock_guard<std::mutex> lock(g_clusterVisibilityMutex);
+  g_clusterCullingEnabled = enabled == JNI_TRUE;
+  if (!g_clusterCullingEnabled) {
+    g_visibleClusterKeys.clear();
+  }
+}
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetTranslucencySortEnabled(
+    JNIEnv *, jclass, jboolean enabled) {
+  g_translucencySortEnabled = enabled == JNI_TRUE;
+}
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUploadClusterVisibilityKeys(
+    JNIEnv *env, jclass, jlongArray keys, jint count) {
+  std::lock_guard<std::mutex> lock(g_clusterVisibilityMutex);
+  g_visibleClusterKeys.clear();
+  if (!keys || count <= 0) {
+    return;
+  }
+  jsize length = env->GetArrayLength(keys);
+  jint actualCount = std::min(count, (jint)length);
+  jlong *values = env->GetLongArrayElements(keys, nullptr);
+  if (!values) {
+    return;
+  }
+  for (jint i = 0; i < actualCount; i++) {
+    g_visibleClusterKeys.insert((int64_t)values[i]);
+  }
+  env->ReleaseLongArrayElements(keys, values, JNI_ABORT);
+}
 static std::atomic<uint32_t> s_lastCullVisible{0};
+struct GpuCullSubChunkCPU {
+  float aabbMin[4];
+  float aabbMax[4];
+  uint32_t bufHandleHi;
+  uint32_t bufHandleLo;
+  uint32_t indexCount;
+  uint32_t flags;
+};
+static void updateGpuCullVisibleHandles(uint32_t visibleCount) {
+  g_gpuVisibleBufferHandles.clear();
+  if (!g_visibleIndicesBuffer || !g_subChunkBuffer) {
+    g_gpuCullFilterEnabled = false;
+    return;
+  }
+  uint32_t limit = std::min(visibleCount, g_gpuSubChunkCount);
+  const uint32_t *indices =
+      (const uint32_t *)[g_visibleIndicesBuffer contents];
+  const GpuCullSubChunkCPU *chunks =
+      (const GpuCullSubChunkCPU *)[g_subChunkBuffer contents];
+  for (uint32_t i = 0; i < limit; i++) {
+    uint32_t index = indices[i];
+    if (index >= g_gpuSubChunkCount)
+      continue;
+    uint64_t handle = ((uint64_t)chunks[index].bufHandleHi << 32) |
+                      (uint64_t)chunks[index].bufHandleLo;
+    g_gpuVisibleBufferHandles.insert(handle);
+  }
+  g_gpuCullFilterEnabled = true;
+}
+static int64_t clusterKeyForChunk(int32_t chunkX, int32_t chunkZ) {
+  int clusterX = (int)floor((double)chunkX / 8.0);
+  int clusterZ = (int)floor((double)chunkZ / 8.0);
+  return ((int64_t)clusterX << 32) | (uint32_t)clusterZ;
+}
+static bool isClusterVisible(int32_t chunkX, int32_t chunkZ) {
+  if (!g_clusterCullingEnabled)
+    return true;
+  std::lock_guard<std::mutex> lock(g_clusterVisibilityMutex);
+  return g_visibleClusterKeys.find(clusterKeyForChunk(chunkX, chunkZ)) !=
+         g_visibleClusterKeys.end();
+}
+static bool isGpuCullVisible(uint64_t bufferHandle) {
+  if (!g_gpuCullFilterEnabled)
+    return true;
+  return g_gpuVisibleBufferHandles.find(bufferHandle) !=
+         g_gpuVisibleBufferHandles.end();
+}
 extern "C" JNIEXPORT jint JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRunGPUCulling(
     JNIEnv *, jclass, jlong handle, jint chunkCount) {
   (void)handle;
-  if (!g_device || chunkCount <= 0)
-    return 0;
+  if (!g_device || chunkCount <= 0) {
+    g_gpuCullFilterEnabled = false;
+    g_gpuVisibleBufferHandles.clear();
+    return -1;
+  }
   if (!g_visibleIndicesBuffer || !g_cullDrawCountBuffer) {
     dbg("GPU Cull: buffers not allocated\n");
-    return 0;
+    return -1;
   }
   uint32_t count = (uint32_t)chunkCount;
   size_t neededSize = (size_t)count * sizeof(uint32_t);
@@ -5353,8 +5499,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRunGPUCulling(
     g_visibleIndicesBuffer =
         [g_device newBufferWithLength:neededSize options:MTLStorageModeShared];
   }
-  if (g_cullMode == 1 && g_queue && g_cullEncodePipeline &&
-      g_resetCullPipeline && g_subChunkBuffer && g_cullStatsBuffer) {
+  if (g_cullMode == 1 && g_hizReady && g_hizPyramid && g_queue &&
+      g_cullEncodePipeline && g_resetCullPipeline && g_subChunkBuffer &&
+      g_cullStatsBuffer) {
     int bufIdx = g_currentBufferIndex % kTripleBufferCount;
     id<MTLBuffer> cameraBuf = g_tripleBuffers[bufIdx];
     if (!cameraBuf) {
@@ -5362,8 +5509,32 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRunGPUCulling(
       goto cpu_path;
     }
     CameraUniformsCPU *cam = (CameraUniformsCPU *)[cameraBuf contents];
+    float vp[16];
+    for (int c = 0; c < 4; c++) {
+      for (int r = 0; r < 4; r++) {
+        float sum = 0.0f;
+        for (int k = 0; k < 4; k++) {
+          sum += g_projMatrix[k * 4 + r] * g_mvMatrix[c * 4 + k];
+        }
+        vp[c * 4 + r] = sum;
+      }
+    }
+    memcpy(cam->viewProjection, vp, sizeof(vp));
+    memcpy(cam->projection, g_projMatrix, sizeof(g_projMatrix));
+    memcpy(cam->modelView, g_mvMatrix, sizeof(g_mvMatrix));
+    cam->cameraPosition[0] = (float)g_camX;
+    cam->cameraPosition[1] = (float)g_camY;
+    cam->cameraPosition[2] = (float)g_camZ;
+    cam->cameraPosition[3] = g_skyBrightness;
+    extractFrustumPlanes(vp, cam->frustumPlanes);
+    cam->screenSize[0] = (float)g_rtWidth;
+    cam->screenSize[1] = (float)g_rtHeight;
+    cam->nearPlane = 0.05f;
+    cam->farPlane = (float)g_configuredRenderDistBlocks;
+    cam->frameIndex = (uint32_t)g_frameCount;
+    cam->hizMipCount = g_hizMipCount;
     cam->totalChunks = count;
-    cam->hizMipCount = 0;
+    cam->waterFog = g_entityOverlayParams[2];
     id<MTLTexture> hizTex = g_hizPyramid;
     if (!hizTex) {
       if (!g_hizFallbackTexture) {
@@ -5407,13 +5578,12 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRunGPUCulling(
           threadsPerThreadgroup:MTLSizeMake(tgSize, 1, 1)];
       [encoder endEncoding];
       // remember to test config settings monday night
-      [cmdBuf addCompletedHandler:^(id<MTLCommandBuffer> cb) {
-        uint32_t v = *(uint32_t *)[g_cullDrawCountBuffer contents];
-        s_lastCullVisible.store(v, std::memory_order_release);
-      }];
       [cmdBuf commit];
+      [cmdBuf waitUntilCompleted];
     }
-    uint32_t visibleCount = s_lastCullVisible.load(std::memory_order_acquire);
+    uint32_t visibleCount = *(uint32_t *)[g_cullDrawCountBuffer contents];
+    s_lastCullVisible.store(visibleCount, std::memory_order_release);
+    updateGpuCullVisibleHandles(visibleCount);
     if (g_frameCount < 5 || (g_frameCount % 300 == 0)) {
       uint32_t *stats = (uint32_t *)[g_cullStatsBuffer contents];
       dbg("GPU Cull [compute]: input=%u visible=%u frustumCulled=%u "
@@ -5428,6 +5598,7 @@ cpu_path: {
     indices[i] = i;
   }
   *(uint32_t *)[g_cullDrawCountBuffer contents] = count;
+  updateGpuCullVisibleHandles(count);
   if (g_frameCount < 5 || (g_frameCount % 300 == 0)) {
     dbg("GPU Cull [cpu-passthrough]: all %u chunks marked visible\n", count);
   }
@@ -5683,23 +5854,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawOITPass(
       [g_currentEncoder release];
       g_currentEncoder = nil;
     }
-    if (g_currentCmdBuffer && g_hizDownsamplePipeline && g_hizPyramid &&
-        !g_useMemorylessTargets) {
-      id<MTLComputeCommandEncoder> hizEnc =
-          [g_currentCmdBuffer computeCommandEncoder];
-      if (hizEnc) {
-        [hizEnc setComputePipelineState:g_hizDownsamplePipeline];
-        id<MTLTexture> srcDepth = g_sceneDepth;
-        if (srcDepth) {
-          [hizEnc setTexture:srcDepth atIndex:0];
-          [hizEnc setTexture:g_hizPyramid atIndex:1];
-          hizUpdateThreadgroupSize(srcDepth);
-          [hizEnc dispatchThreadgroups:g_hizGroups
-                 threadsPerThreadgroup:g_hizThreads];
-        }
-        [hizEnc endEncoding];
-      }
-    }
+    encodeHiZDownsample(g_currentCmdBuffer);
 
     {
       MTLRenderPassDescriptor *rp =

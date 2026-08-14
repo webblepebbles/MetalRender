@@ -192,7 +192,7 @@ public class MetalWorldRenderer {
     boolean sortEnabled = gpuConfig != null && gpuConfig.enableGpuTranslucencySort;
     boolean icbEnabled = gpuConfig != null && gpuConfig.enableIndirectCommandBuffers;
     cullingOrcreator.setActive(clusterEnabled);
-    cullingOrcreator.setCpuFallbackEnabled(false);
+    cullingOrcreator.setCpuFallbackEnabled(true);
     hiZController.setActive(hiZEnabled);
     translucencySorter.setActive(sortEnabled);
     terrainIndirectDraw.setActive(icbEnabled);
@@ -205,9 +205,6 @@ public class MetalWorldRenderer {
           hiZController.ensureInitialized(w, h);
         }
       }
-    }
-    if (sortEnabled) {
-      translucencySorter.ensureInitialized(0);
     }
     MetalLogger.info("orchestrators: cluster=%s hiz=%s sort=%s icb=%s",
         clusterEnabled, hiZEnabled, sortEnabled, icbEnabled);
@@ -404,6 +401,60 @@ public class MetalWorldRenderer {
     }
   }
 
+  private int prepareGpuCullData(Vector3f cameraPosition) {
+    if (subChunkUploadBuffer == null || chunkUniformsBuffer == null) {
+      return 0;
+    }
+    int meshCount = chunkMesher.getMeshSnapshotSize();
+    if (meshCount <= 0) {
+      return 0;
+    }
+    if (meshCount > subChunkUploadCapacity) {
+      subChunkUploadCapacity = meshCount + (meshCount >> 2);
+      subChunkUploadBuffer = ByteBuffer.allocateDirect(subChunkUploadCapacity * 48)
+          .order(ByteOrder.nativeOrder());
+      chunkUniformsBuffer = ByteBuffer.allocateDirect(subChunkUploadCapacity * 16)
+          .order(ByteOrder.nativeOrder());
+    }
+    subChunkUploadBuffer.clear();
+    chunkUniformsBuffer.clear();
+    int count = 0;
+    for (int i = 0; i < meshCount; i++) {
+      CustomChunkMesher.ChunkMeshData mesh = chunkMesher.getMeshSnapshotAt(i);
+      if (mesh == null || mesh.bufferHandle == 0 || mesh.quadCount <= 0 ||
+          (cullingOrcreator.isActive() &&
+              !cullingOrcreator.isClusterVisible(mesh.chunkX, mesh.chunkZ))) {
+        continue;
+      }
+      float minX = mesh.chunkX * 16.0f - cameraPosition.x;
+      float minY = mesh.chunkY * 16.0f - cameraPosition.y;
+      float minZ = mesh.chunkZ * 16.0f - cameraPosition.z;
+      subChunkUploadBuffer.putFloat(minX);
+      subChunkUploadBuffer.putFloat(minY);
+      subChunkUploadBuffer.putFloat(minZ);
+      subChunkUploadBuffer.putFloat(0.0f);
+      subChunkUploadBuffer.putFloat(minX + 16.0f);
+      subChunkUploadBuffer.putFloat(minY + 16.0f);
+      subChunkUploadBuffer.putFloat(minZ + 16.0f);
+      subChunkUploadBuffer.putFloat(0.0f);
+      subChunkUploadBuffer.putInt((int) (mesh.bufferHandle >>> 32));
+      subChunkUploadBuffer.putInt((int) mesh.bufferHandle);
+      subChunkUploadBuffer.putInt(mesh.quadCount * 6);
+      subChunkUploadBuffer.putInt(0);
+      chunkUniformsBuffer.putFloat(minX);
+      chunkUniformsBuffer.putFloat(minY);
+      chunkUniformsBuffer.putFloat(minZ);
+      chunkUniformsBuffer.putFloat(0.0f);
+      count++;
+    }
+    if (count <= 0) {
+      return 0;
+    }
+    NativeBridge.nUploadSubChunkData(0, subChunkUploadBuffer, count);
+    NativeBridge.nUploadChunkUniforms(0, chunkUniformsBuffer, count);
+    return count;
+  }
+
   public void beginFrame(Camera camera, float tickDelta, Matrix4f projection,
       Matrix4f modelView) {
     MetalRenderer renderer = MetalRenderClient.getRenderer();
@@ -434,12 +485,10 @@ public class MetalWorldRenderer {
       Matrix4f vp = new Matrix4f(projectionMatrix).mul(modelViewMatrix);
       extractFrustumPlanes(vp, gpuFrustumPlanes);
       int chunkRadius = Minecraft.getInstance().options.renderDistance().get();
-      cullingOrcreator.rebuildFromFrustumCpu(frustumCuller, chunkRadius);
+      cullingOrcreator.rebuildFromFrustumCpu(frustumCuller, chunkRadius,
+          camPos.x, camPos.y, camPos.z);
       cullingOrcreator.uploadToGpu(gpuFrustumPlanes);
     }
-    Minecraft mcYaw = Minecraft.getInstance();
-    float playerYaw = mcYaw != null && mcYaw.player != null ? mcYaw.player.getYRot() : 0.0f;
-    translucencySorter.tickStable(camPos, playerYaw);
     terrainIndirectDraw.beginFrame();
 
     lastDrawnChunkCount = 0;
@@ -499,12 +548,27 @@ public class MetalWorldRenderer {
         if (!skipTerrainDraw) {
           long ibHandle = chunkMesher.getGlobalIndexBuffer();
           if (ibHandle != 0) {
-            int drawn = NativeBridge.nDrawAllVisibleChunks(frameCtx, ibHandle);
-            lastDrawnChunkCount = drawn;
-            MetalRenderProfiler.getInstance().incrementChunksDrawn(drawn);
+            boolean gpuCullDrawn = false;
+            if (hiZController.isReady()) {
+              int cullCount = prepareGpuCullData(camPos);
+              if (cullCount > 0) {
+                int visible = NativeBridge.nRunGPUCulling(renderer.getHandle(), cullCount);
+                if (visible >= 0) {
+                  int drawn = NativeBridge.nDrawAllVisibleChunks(frameCtx, ibHandle);
+                  lastDrawnChunkCount = drawn;
+                  MetalRenderProfiler.getInstance().incrementChunksDrawn(drawn);
+                  gpuCullDrawn = true;
+                }
+              }
+            }
+            if (!gpuCullDrawn) {
+              int drawn = NativeBridge.nDrawAllVisibleChunks(frameCtx, ibHandle);
+              lastDrawnChunkCount = drawn;
+              MetalRenderProfiler.getInstance().incrementChunksDrawn(drawn);
+            }
             if (frameCount < 10 || frameCount % 1000 == 0) {
               MetalLogger.info("frame %d: drew %d chunks",
-                  frameCount, drawn);
+                  frameCount, lastDrawnChunkCount);
             }
           } else {
             lastDrawnChunkCount = 0;
@@ -732,6 +796,9 @@ public class MetalWorldRenderer {
   private int remainingPrioritizedBuilds = PRIORITIZED_BUILD_STREAK_LIMIT;
   private int cachedThermalState = 0;
   private int lodRefreshCursor = 0;
+  private int lodRefreshPlayerCX = Integer.MIN_VALUE;
+  private int lodRefreshPlayerCZ = Integer.MIN_VALUE;
+  private int lodRefreshThermalBias = Integer.MIN_VALUE;
 
   private static final class PendingBuildCandidate {
     final long key;
@@ -1435,28 +1502,33 @@ public class MetalWorldRenderer {
 
   private void refreshLodTiers(Minecraft mc) {
     MetalRenderConfig config = MetalRenderClient.getConfig();
-    if (config == null || !config.enableDistanceLod || mc.player == null) {
+    if (config == null || mc.player == null) {
       return;
     }
-    if (config.lodThermalAdaptive) {
-      CustomChunkMesher.setLodThermalBias(cachedThermalState >= 3 ? 2
-          : (cachedThermalState >= 2 ? 1 : 0));
-    } else {
-      CustomChunkMesher.setLodThermalBias(0);
-    }
-    if (pendingBuildSet.size() >= LOD_REFRESH_PENDING_LIMIT ||
-        chunkMesher.getPendingCount() >= LOD_REFRESH_IN_FLIGHT_LIMIT) {
-      return;
+    int thermalBias = config.lodThermalAdaptive
+        ? (cachedThermalState >= 3 ? 2 : (cachedThermalState >= 2 ? 1 : 0))
+        : 0;
+    CustomChunkMesher.setLodThermalBias(thermalBias);
+    int playerChunkX = mc.player.chunkPosition().x();
+    int playerChunkZ = mc.player.chunkPosition().z();
+    if (playerChunkX != lodRefreshPlayerCX || playerChunkZ != lodRefreshPlayerCZ ||
+        thermalBias != lodRefreshThermalBias) {
+      lodRefreshCursor = 0;
+      lodRefreshPlayerCX = playerChunkX;
+      lodRefreshPlayerCZ = playerChunkZ;
+      lodRefreshThermalBias = thermalBias;
     }
     int refreshBudget = cachedThermalState >= 3 ? 1
         : (cachedThermalState >= 2 ? 1 : MAX_LOD_REFRESH_SUBMITS_PER_PASS);
+    if (pendingBuildSet.size() >= LOD_REFRESH_PENDING_LIMIT ||
+        chunkMesher.getPendingCount() >= LOD_REFRESH_IN_FLIGHT_LIMIT) {
+      refreshBudget = 1;
+    }
     int meshCount = chunkMesher.getMeshSnapshotSize();
     if (meshCount == 0) {
       lodRefreshCursor = 0;
       return;
     }
-    int playerChunkX = mc.player.chunkPosition().x();
-    int playerChunkZ = mc.player.chunkPosition().z();
     int queued = 0;
     int inspected = 0;
     while (inspected < meshCount && inspected < MAX_LOD_SCAN_PER_PASS &&
@@ -1466,12 +1538,16 @@ public class MetalWorldRenderer {
       }
       CustomChunkMesher.ChunkMeshData mesh = chunkMesher.getMeshSnapshotAt(lodRefreshCursor++);
       inspected++;
-      if (mesh == null || mesh.lodTier < 1) {
+      if (mesh == null) {
         continue;
       }
       int dx = Math.abs(mesh.chunkX - playerChunkX);
       int dz = Math.abs(mesh.chunkZ - playerChunkZ);
       int chunkDist = Math.max(dx, dz);
+      int targetLod = CustomChunkMesher.lodTierForDistance(chunkDist);
+      if (mesh.lodTier == targetLod) {
+        continue;
+      }
       long key = packChunkKey(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
       if (pendingBuildSet.contains(key) || chunkMesher.isBuildPending(mesh.chunkX, mesh.chunkY, mesh.chunkZ)) {
         continue;
@@ -1597,6 +1673,17 @@ public class MetalWorldRenderer {
       return;
     }
     gpuDrivenEnabled = false;
+    cullingOrcreator.setActive(config.enableClusterFrustumCulling);
+    cullingOrcreator.setCpuFallbackEnabled(config.enableClusterFrustumCulling);
+    hiZController.setActive(config.enableHiZCull);
+    translucencySorter.setActive(config.enableGpuTranslucencySort);
+    if (config.enableHiZCull) {
+      Minecraft mc = Minecraft.getInstance();
+      if (mc != null && mc.getWindow() != null) {
+        hiZController.ensureInitialized(mc.getWindow().getWidth(),
+            mc.getWindow().getHeight());
+      }
+    }
     boolean requestArgumentBuffers = config.enableArgumentBuffers || config.enableIndirectCommandBuffers;
     if (NativeBridge.isLibLoaded()) {
       NativeBridge.nSetFeatureFlags(

@@ -4,10 +4,13 @@
 #include <cstdio>
 #include <cstring>
 #include <jni.h>
+#include <limits>
 #include <mutex>
 #include <unordered_map>
 #include <vector>
 extern id<MTLDevice> g_device;
+extern id<MTLCommandQueue> g_queue;
+extern id<MTLLibrary> g_shaderLibrary;
 extern id<MTLRenderCommandEncoder> g_currentEncoder;
 extern id<MTLDepthStencilState> g_depthState;
 extern id<MTLBuffer> g_subChunkBuffer;
@@ -424,6 +427,38 @@ struct SortSSBO {
 static std::unordered_map<uint64_t, SortSSBO> g_sortSSBOs;
 static uint64_t g_nextSortHandle = 0xB000000000000000ULL;
 static std::mutex g_sortMutex;
+static id<MTLComputePipelineState> g_translucencySortPipeline = nil;
+static uint64_t g_nativeSortHandle = 0;
+
+struct TranslucencySortParams {
+  uint32_t count;
+  uint32_t j;
+  uint32_t k;
+  uint32_t padding;
+};
+
+static bool ensureTranslucencySortPipeline() {
+  if (g_translucencySortPipeline || !g_device || !g_shaderLibrary) {
+    return g_translucencySortPipeline != nil;
+  }
+  id<MTLFunction> function =
+      [g_shaderLibrary newFunctionWithName:@"translucency_bitonic_step"];
+  if (!function) {
+    return false;
+  }
+  NSError *error = nil;
+  g_translucencySortPipeline =
+      [g_device newComputePipelineStateWithFunction:function error:&error];
+  return g_translucencySortPipeline != nil;
+}
+
+static int nextPowerOfTwo(int value) {
+  int result = 1;
+  while (result < value && result < (1 << 20)) {
+    result <<= 1;
+  }
+  return result;
+}
 
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_createTranslucencySortSSBO(
@@ -459,34 +494,98 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_dispatchTranslu
     return 0;
   SortSSBO &ssbo = it->second;
   int n = std::min((int)count, ssbo.capacity);
-  if (n <= 0)
+  int sortCount = nextPowerOfTwo(n);
+  if (n <= 0 || sortCount > ssbo.capacity || !ensureTranslucencySortPipeline() ||
+      !g_queue) {
     return 0;
+  }
   uint32_t *indices = (uint32_t *)[ssbo.indexBuffer contents];
   float *keys = (float *)[ssbo.keyBuffer contents];
-  bool allZero = true;
   for (int i = 0; i < n; i++) {
-    if (keys[i] != 0.0f) {
-      allZero = false;
-      break;
+    indices[i] = (uint32_t)i;
+  }
+  for (int i = n; i < sortCount; i++) {
+    indices[i] = (uint32_t)i;
+    keys[i] = std::numeric_limits<float>::infinity();
+  }
+  id<MTLCommandBuffer> commandBuffer = [g_queue commandBuffer];
+  id<MTLComputeCommandEncoder> encoder =
+      commandBuffer ? [commandBuffer computeCommandEncoder] : nil;
+  if (!encoder) {
+    return 0;
+  }
+  [encoder setComputePipelineState:g_translucencySortPipeline];
+  NSUInteger threadgroupSize = std::min(
+      (NSUInteger)sortCount,
+      g_translucencySortPipeline.maxTotalThreadsPerThreadgroup);
+  for (uint32_t k = 2; k <= (uint32_t)sortCount; k <<= 1) {
+    for (uint32_t j = k >> 1; j > 0; j >>= 1) {
+      TranslucencySortParams params = {(uint32_t)sortCount, j, k, 0};
+      [encoder setBuffer:ssbo.keyBuffer offset:0 atIndex:0];
+      [encoder setBuffer:ssbo.indexBuffer offset:0 atIndex:1];
+      [encoder setBytes:&params length:sizeof(params) atIndex:2];
+      [encoder dispatchThreads:MTLSizeMake(sortCount, 1, 1)
+          threadsPerThreadgroup:MTLSizeMake(threadgroupSize, 1, 1)];
+      [encoder memoryBarrierWithScope:MTLBarrierScopeBuffers];
     }
   }
-  if (allZero) {
-    for (int i = 0; i < n; i++) {
-      indices[i] = (uint32_t)i;
-    }
-  } else {
-    std::vector<std::pair<float, uint32_t>> pairs;
-    pairs.reserve(n);
-    for (int i = 0; i < n; i++) {
-      pairs.push_back({keys[i], (uint32_t)i});
-    }
-    std::sort(pairs.begin(), pairs.end(),
-              [](const auto &a, const auto &b) { return a.first > b.first; });
-    for (int i = 0; i < n; i++) {
-      indices[i] = pairs[i].second;
-    }
-  }
+  [encoder endEncoding];
+  [commandBuffer commit];
+  [commandBuffer waitUntilCompleted];
   return n;
+}
+
+extern "C" int metalrenderSortTranslucency(const float *keys,
+                                      uint32_t *order, int count) {
+  if (!keys || !order || count <= 0 || !g_device) {
+    return 0;
+  }
+  int capacity = nextPowerOfTwo(count);
+  uint64_t handle = 0;
+  {
+    std::lock_guard<std::mutex> lock(g_sortMutex);
+    auto existing = g_sortSSBOs.find(g_nativeSortHandle);
+    if (existing == g_sortSSBOs.end() || existing->second.capacity < capacity) {
+      if (existing != g_sortSSBOs.end()) {
+        if (existing->second.indexBuffer)
+          [existing->second.indexBuffer release];
+        if (existing->second.keyBuffer)
+          [existing->second.keyBuffer release];
+        g_sortSSBOs.erase(existing);
+      }
+      id<MTLBuffer> indexBuffer = [g_device
+          newBufferWithLength:(NSUInteger)capacity * sizeof(uint32_t)
+                      options:MTLStorageModeShared];
+      id<MTLBuffer> keyBuffer = [g_device
+          newBufferWithLength:(NSUInteger)capacity * sizeof(float)
+                      options:MTLStorageModeShared];
+      if (!indexBuffer || !keyBuffer) {
+        if (indexBuffer)
+          [indexBuffer release];
+        if (keyBuffer)
+          [keyBuffer release];
+        return 0;
+      }
+      g_nativeSortHandle = g_nextSortHandle++;
+      g_sortSSBOs[g_nativeSortHandle] = {indexBuffer, keyBuffer, capacity};
+    }
+    handle = g_nativeSortHandle;
+    SortSSBO &ssbo = g_sortSSBOs[handle];
+    memcpy([ssbo.keyBuffer contents], keys, (size_t)count * sizeof(float));
+  }
+  int sorted = Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_dispatchTranslucencySort(
+      nullptr, nullptr, (jlong)handle, count);
+  if (sorted <= 0) {
+    return 0;
+  }
+  std::lock_guard<std::mutex> lock(g_sortMutex);
+  auto it = g_sortSSBOs.find(handle);
+  if (it == g_sortSSBOs.end()) {
+    return 0;
+  }
+  uint32_t *indices = (uint32_t *)[it->second.indexBuffer contents];
+  memcpy(order, indices, (size_t)sorted * sizeof(uint32_t));
+  return sorted;
 }
 
 extern "C" JNIEXPORT jint JNICALL
@@ -587,7 +686,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_updateHiZPyrami
            withBytes:s_floatScratch.data()
          bytesPerRow:(NSUInteger)(texW * sizeof(float))];
   if ([tex mipmapLevelCount] > 1) {
-    extern id<MTLCommandQueue> g_queue;
     if (g_queue) {
       id<MTLCommandBuffer> cb = [g_queue commandBuffer];
       id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];

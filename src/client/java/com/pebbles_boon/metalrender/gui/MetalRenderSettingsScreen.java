@@ -100,6 +100,9 @@ public class MetalRenderSettingsScreen extends Screen {
   private boolean initialSmoothLighting;
   private boolean initialDebugPinkBlockTint;
   private boolean initialCameraFacingCulling;
+  private boolean initialClusterFrustumCulling;
+  private boolean initialHiZCull;
+  private boolean initialGpuTranslucencySort;
   private boolean initialDistanceLod;
   private int initialLodNearChunks;
   private int initialLodMidChunks;
@@ -164,6 +167,9 @@ public class MetalRenderSettingsScreen extends Screen {
     initialSmoothLighting = config.enableSimpleLighting;
     initialDebugPinkBlockTint = config.debugPinkBlockTint;
     initialCameraFacingCulling = config.enableCameraFacingCulling;
+    initialClusterFrustumCulling = config.enableClusterFrustumCulling;
+    initialHiZCull = config.enableHiZCull;
+    initialGpuTranslucencySort = config.enableGpuTranslucencySort;
     initialDistanceLod = config.enableDistanceLod;
     initialLodNearChunks = config.lodNearChunks;
     initialLodMidChunks = config.lodMidChunks;
@@ -501,6 +507,10 @@ public class MetalRenderSettingsScreen extends Screen {
 
     boolean biomeChanged = config.biomeTransitionDetail != initialBiomeDetail;
     boolean cameraFacingCullingChanged = config.enableCameraFacingCulling != initialCameraFacingCulling;
+    boolean cullingFeaturesChanged =
+        config.enableClusterFrustumCulling != initialClusterFrustumCulling
+            || config.enableHiZCull != initialHiZCull
+            || config.enableGpuTranslucencySort != initialGpuTranslucencySort;
     com.pebbles_boon.metalrender.util.MetalLogger.info(
         "settings close: rebuild=%b rd=%b bm=%b lf=%b lt=%b",
         needsRebuild,
@@ -511,7 +521,7 @@ public class MetalRenderSettingsScreen extends Screen {
     MetalRenderClient.requestDeferredApply(
         metalFlip || cameraFacingCullingChanged,
         metalFlip,
-        !metalFlip && (needsRebuild || biomeChanged));
+        !metalFlip && (needsRebuild || biomeChanged || cullingFeaturesChanged));
 
     Minecraft mc = Minecraft.getInstance();
     if (mc != null)
@@ -726,6 +736,12 @@ public class MetalRenderSettingsScreen extends Screen {
     tog("Indirect CMD Buffers", config.enableIndirectCommandBuffers, v -> config.enableIndirectCommandBuffers = v);
     tog("Mesh Shaders", config.enableMeshShaders, v -> config.enableMeshShaders = v);
     tog("Programmable Blending", config.enableProgrammableBlending, v -> config.enableProgrammableBlending = v);
+    tog("Cluster Frustum Culling", config.enableClusterFrustumCulling,
+        v -> config.enableClusterFrustumCulling = v);
+    tog("Hi-Z Occlusion Culling", config.enableHiZCull,
+        v -> config.enableHiZCull = v);
+    tog("GPU Translucency Sort", config.enableGpuTranslucencySort,
+        v -> config.enableGpuTranslucencySort = v);
   }
 
   private void sec(String label) {

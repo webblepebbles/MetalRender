@@ -1,12 +1,9 @@
 package com.pebbles_boon.metalrender.culling;
 
-import com.pebbles_boon.metalrender.nativebridge.MeshShaderNative;
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
 import com.pebbles_boon.metalrender.util.MetalLogger;
-import java.nio.ByteBuffer;
 
 public class HiZController {
-  private volatile long pyramidHandle;
   private volatile int width;
   private volatile int height;
   private volatile boolean active;
@@ -17,58 +14,9 @@ public class HiZController {
         frameHeight <= 0) {
       return;
     }
-    int w = frameWidth;
-    int h = frameHeight;
-    long existing = pyramidHandle;
-    if (existing != 0 && width == w && height == h) {
-      return;
-    }
-    if (existing != 0 && (width != w || height != h)) {
-      safeDestroy(existing);
-      pyramidHandle = 0L;
-    }
-    try {
-      pyramidHandle = MeshShaderNative.createHiZPyramid(w, h);
-      if (pyramidHandle != 0) {
-        width = w;
-        height = h;
-        MetalLogger.info("hiz made: %dx%d h=0x%X", w, h, pyramidHandle);
-      } else {
-        MetalLogger.warn("hiz init 0; cpu cull fallback");
-      }
-    } catch (UnsatisfiedLinkError e) {
-      MetalLogger.warn("hiz init missing: " + e.getMessage());
-      pyramidHandle = 0L;
-      active = false;
-    }
-  }
-
-  public void pushDepthFrame(ByteBuffer depth, int frameWidth, int frameHeight) {
-    if (!active || !NativeBridge.isLibLoaded() || pyramidHandle == 0L ||
-        depth == null) {
-      return;
-    }
-    ensureInitialized(frameWidth, frameHeight);
-    if (pyramidHandle == 0L) {
-      return;
-    }
-    int expected = frameWidth * frameHeight * 2;
-    try {
-      if (depth.capacity() < expected) {
-        return;
-      }
-      MeshShaderNative.updateHiZPyramid(pyramidHandle, depth, frameWidth,
-          frameHeight);
-      lastUpdateNs = System.nanoTime();
-    } catch (UnsatisfiedLinkError e) {
-      MetalLogger.warn("hiz update missing: " + e.getMessage());
-      safeDestroy(pyramidHandle);
-      pyramidHandle = 0L;
-    }
-  }
-
-  public long getHandle() {
-    return pyramidHandle;
+    width = frameWidth;
+    height = frameHeight;
+    MetalLogger.info("hiz enabled: %dx%d", frameWidth, frameHeight);
   }
 
   public int getWidth() {
@@ -83,10 +31,25 @@ public class HiZController {
     return lastUpdateNs;
   }
 
+  public boolean isReady() {
+    if (!active || !NativeBridge.isLibLoaded() || width <= 0 || height <= 0) {
+      return false;
+    }
+    try {
+      return NativeBridge.nIsHiZReady();
+    } catch (UnsatisfiedLinkError e) {
+      active = false;
+      return false;
+    }
+  }
+
   public void setActive(boolean v) {
     active = v;
     if (!v) {
       lastUpdateNs = 0L;
+    }
+    if (NativeBridge.isLibLoaded()) {
+      NativeBridge.nSetHiZCullEnabled(v);
     }
   }
 
@@ -95,21 +58,12 @@ public class HiZController {
   }
 
   public void shutdown() {
-    long existing = pyramidHandle;
-    if (existing != 0L) {
-      safeDestroy(existing);
-      pyramidHandle = 0L;
-    }
     active = false;
     width = 0;
     height = 0;
     lastUpdateNs = 0L;
-  }
-
-  private void safeDestroy(long handle) {
-    try {
-      MeshShaderNative.destroyHiZPyramid(handle);
-    } catch (UnsatisfiedLinkError ignored) {
+    if (NativeBridge.isLibLoaded()) {
+      NativeBridge.nSetHiZCullEnabled(false);
     }
   }
 }

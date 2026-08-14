@@ -12,6 +12,7 @@ xcrun -sdk macosx metal -c $SHADER_DIR/occlusion_culling.metal -o $SHADER_DIR/oc
 xcrun -sdk macosx metal -c $SHADER_DIR/visibility_buffer.metal -o $SHADER_DIR/visibility_buffer.air
 xcrun -sdk macosx metal -c $SHADER_DIR/oit_transparency.metal -o $SHADER_DIR/oit_transparency.air
 xcrun -sdk macosx metal -c $SHADER_DIR/cull_and_encode.metal -o $SHADER_DIR/cull_and_encode.air
+xcrun -sdk macosx metal -c $SHADER_DIR/translucency_sort.metal -o $SHADER_DIR/translucency_sort.air
 xcrun -sdk macosx metal -c $SHADER_DIR/motion_vectors.metal -o $SHADER_DIR/motion_vectors.air
 
 echo "compelling shaders"
@@ -26,6 +27,7 @@ xcrun -sdk macosx metallib \
     $SHADER_DIR/visibility_buffer.air \
     $SHADER_DIR/oit_transparency.air \
     $SHADER_DIR/cull_and_encode.air \
+    $SHADER_DIR/translucency_sort.air \
     $SHADER_DIR/motion_vectors.air \
     $SHADER_DIR/mesh_terrain.air \
     -o src/main/resources/shaders.metallib

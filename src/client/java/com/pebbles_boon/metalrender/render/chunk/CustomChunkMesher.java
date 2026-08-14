@@ -290,10 +290,11 @@ public class CustomChunkMesher {
             Math.abs(chunkZ - context.buildPlayerCZ)));
         boolean useApproximateLight = lodTier >= 1;
         long snapshotToken = snapshotCacheToken(genAtSubmit, useApproximateLight);
-        SectionSnapshot snapshot = getCachedSnapshot(key, snapshotToken);
+        SectionSnapshot snapshot = useApproximateLight ? null : getCachedSnapshot(key, snapshotToken);
         if (snapshot == null) {
           snapshot = captureSectionSnapshot(world, chunkX, chunkY, chunkZ, useApproximateLight);
-          if (snapshot.valid && !snapshot.empty && !isTaskCancelled(key, genAtSubmit, globalGenAtSubmit)) {
+          if (!useApproximateLight && snapshot.valid && !snapshot.empty &&
+              !isTaskCancelled(key, genAtSubmit, globalGenAtSubmit)) {
             cacheSnapshot(key, snapshotToken, snapshot);
           }
         }
@@ -990,7 +991,8 @@ public class CustomChunkMesher {
             net.minecraft.world.level.chunk.DataLayer blockLayer = blockLightLayers[layerIdx];
             net.minecraft.world.level.chunk.DataLayer skyLayer = skyLightLayers[layerIdx];
             BlockPos.MutableBlockPos samplePos = mutablePos.set(sampleX, sampleY, sampleZ);
-            int block = blockLayer != null ? blockLayer.get(sampleX & 15, sampleY & 15, sampleZ & 15) : 0;
+            int block = blockLayer != null ? blockLayer.get(sampleX & 15, sampleY & 15, sampleZ & 15)
+                : blockLightListener.getLightValue(samplePos);
             int sky = skyLayer != null ? skyLayer.get(sampleX & 15, sampleY & 15, sampleZ & 15)
                 : skyLightListener.getLightValue(samplePos);
             approximateLightGrid[(gy * 25) + (gz * 5) + gx] = (byte) ((block & 0xF) | ((sky & 0xF) << 4));
@@ -1056,7 +1058,8 @@ public class CustomChunkMesher {
             }
             net.minecraft.world.level.chunk.DataLayer blockLayer = blockLightLayers[layerIdx];
             net.minecraft.world.level.chunk.DataLayer skyLayer = skyLightLayers[layerIdx];
-            int bl = blockLayer != null ? blockLayer.get(wx & 15, wy & 15, wz & 15) : 0;
+            int bl = blockLayer != null ? blockLayer.get(wx & 15, wy & 15, wz & 15)
+                : blockLightListener.getLightValue(mutablePos);
             int sl = skyLayer != null ? skyLayer.get(wx & 15, wy & 15, wz & 15)
                 : skyLightListener.getLightValue(mutablePos);
             paddedLight[pIdx] = (byte) ((bl & 0xF) | ((sl & 0xF) << 4));

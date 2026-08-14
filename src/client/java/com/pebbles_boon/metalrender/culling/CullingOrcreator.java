@@ -1,83 +1,99 @@
 package com.pebbles_boon.metalrender.culling;
 
-import com.pebbles_boon.metalrender.nativebridge.MeshShaderNative;
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
 import com.pebbles_boon.metalrender.util.MetalLogger;
+import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
 
 public class CullingOrcreator {
   public static final int CLUSTER_X = 8;
-  public static final int CLUSTER_Y = 4;
   public static final int CLUSTER_Z = 8;
-  public static final int SECTIONS_PER_CLUSTER = CLUSTER_X * CLUSTER_Y * CLUSTER_Z;
   private static final int MAX_REGIONS = 4096;
 
-  private final byte[] clusterBuffer = new byte[MAX_REGIONS * SECTIONS_PER_CLUSTER];
-  private volatile long lastUploadNs = 0L;
-  private volatile int visibleClusterSections = 0;
+  private final long[] visibleClusterKeys = new long[MAX_REGIONS];
+  private final LongOpenHashSet visibleClusterSet = new LongOpenHashSet();
+  private volatile long lastUploadNs;
+  private volatile int visibleClusterCount;
   private volatile boolean active;
   private volatile boolean cpuFallbackEnabled;
 
-  public boolean markSection(int regionIndex, int sectionIndex) {
-    if (regionIndex < 0 || regionIndex >= MAX_REGIONS ||
-        sectionIndex < 0 || sectionIndex >= SECTIONS_PER_CLUSTER) {
+  private static long clusterKey(int x, int z) {
+    return ((long) x << 32) | (z & 0xFFFFFFFFL);
+  }
+
+  private static int floorDiv(int value, int divisor) {
+    return Math.floorDiv(value, divisor);
+  }
+
+  public boolean markCluster(int clusterX, int clusterZ) {
+    if (visibleClusterCount >= MAX_REGIONS) {
       return false;
     }
-    int byteOffset = regionIndex * SECTIONS_PER_CLUSTER + sectionIndex;
-    if (clusterBuffer[byteOffset] != 0) {
+    long key = clusterKey(clusterX, clusterZ);
+    if (!visibleClusterSet.add(key)) {
       return false;
     }
-    clusterBuffer[byteOffset] = 1;
-    visibleClusterSections++;
+    visibleClusterKeys[visibleClusterCount++] = key;
     return true;
   }
 
   public void resetMarks() {
-    java.util.Arrays.fill(clusterBuffer, (byte) 0);
-    visibleClusterSections = 0;
+    visibleClusterSet.clear();
+    visibleClusterCount = 0;
   }
 
   public void uploadToGpu(float[] frustumPlanes) {
-    if (!active || !NativeBridge.isLibLoaded() || visibleClusterSections == 0) {
+    if (!active || !NativeBridge.isLibLoaded()) {
       return;
     }
     try {
-      if (frustumPlanes != null && frustumPlanes.length >= 24) {
-        MeshShaderNative.markFrustumPlanes(frustumPlanes);
-      }
-      int regionCount = Math.min(MAX_REGIONS,
-          (visibleClusterSections + SECTIONS_PER_CLUSTER - 1) / SECTIONS_PER_CLUSTER);
-      MeshShaderNative.uploadClusterVisibilitySSBO(regionCount, clusterBuffer);
+      NativeBridge.nUploadClusterVisibilityKeys(visibleClusterKeys, visibleClusterCount);
+      NativeBridge.nSetClusterCullingEnabled(visibleClusterCount > 0);
       lastUploadNs = System.nanoTime();
     } catch (UnsatisfiedLinkError e) {
-      MetalLogger.warn("cluster ssbo missing: " + e.getMessage());
+      MetalLogger.warn("cluster visibility upload missing: " + e.getMessage());
       active = false;
+      NativeBridge.nSetClusterCullingEnabled(false);
     }
   }
-  public int rebuildFromFrustumCpu(FrustumCuller culler, int chunkRadius) {
+
+  public int rebuildFromFrustumCpu(FrustumCuller culler, int chunkRadius,
+      float cameraX, float cameraY, float cameraZ) {
     if (!active || !cpuFallbackEnabled || culler == null) {
-      return visibleClusterSections;
+      resetMarks();
+      return 0;
     }
     resetMarks();
-    int regionSpan = Math.max(1, chunkRadius / CLUSTER_X);
-    int regionRadius = Math.min(MAX_REGIONS / 2, regionSpan);
-    for (int rx = -regionRadius; rx <= regionRadius; rx++) {
-      for (int rz = -regionRadius; rz <= regionRadius; rz++) {
-        float minX = rx * CLUSTER_X * 16.0f;
-        float minZ = rz * CLUSTER_Z * 16.0f;
+    int clusterRadius = Math.min(MAX_REGIONS / 2,
+        Math.max(1, (chunkRadius + CLUSTER_X - 1) / CLUSTER_X + 1));
+    int cameraChunkX = (int) Math.floor(cameraX / 16.0f);
+    int cameraChunkZ = (int) Math.floor(cameraZ / 16.0f);
+    int centerClusterX = floorDiv(cameraChunkX, CLUSTER_X);
+    int centerClusterZ = floorDiv(cameraChunkZ, CLUSTER_Z);
+    for (int dx = -clusterRadius; dx <= clusterRadius; dx++) {
+      for (int dz = -clusterRadius; dz <= clusterRadius; dz++) {
+        int clusterX = centerClusterX + dx;
+        int clusterZ = centerClusterZ + dz;
+        float minX = clusterX * CLUSTER_X * 16.0f;
+        float minZ = clusterZ * CLUSTER_Z * 16.0f;
         float maxX = minX + CLUSTER_X * 16.0f;
         float maxZ = minZ + CLUSTER_Z * 16.0f;
-        if (!culler.testBoundingBox(minX, -128.0f, minZ,
-            maxX, 256.0f, maxZ)) {
+        if (!culler.testBoundingBox(minX - cameraX, -128.0f - cameraY,
+            minZ - cameraZ, maxX - cameraX, 256.0f - cameraY,
+            maxZ - cameraZ)) {
           continue;
         }
-        int regionIndex = (rx + regionRadius) * (2 * regionRadius + 1)
-            + (rz + regionRadius);
-        for (int s = 0; s < SECTIONS_PER_CLUSTER; s++) {
-          markSection(regionIndex, s);
-        }
+        markCluster(clusterX, clusterZ);
       }
     }
-    return visibleClusterSections;
+    return visibleClusterCount;
+  }
+
+  public boolean isClusterVisible(int chunkX, int chunkZ) {
+    if (!active || visibleClusterCount == 0) {
+      return true;
+    }
+    return visibleClusterSet.contains(clusterKey(
+        floorDiv(chunkX, CLUSTER_X), floorDiv(chunkZ, CLUSTER_Z)));
   }
 
   public long getLastUploadNs() {
@@ -85,13 +101,17 @@ public class CullingOrcreator {
   }
 
   public int getCurrentClusterVisibleCount() {
-    return visibleClusterSections;
+    return visibleClusterCount;
   }
 
   public void setActive(boolean v) {
     active = v;
     if (!v) {
+      resetMarks();
       lastUploadNs = 0L;
+    }
+    if (NativeBridge.isLibLoaded()) {
+      NativeBridge.nSetClusterCullingEnabled(v);
     }
   }
 
@@ -107,7 +127,9 @@ public class CullingOrcreator {
     active = false;
     cpuFallbackEnabled = false;
     lastUploadNs = 0L;
-    visibleClusterSections = 0;
-    java.util.Arrays.fill(clusterBuffer, (byte) 0);
+    resetMarks();
+    if (NativeBridge.isLibLoaded()) {
+      NativeBridge.nSetClusterCullingEnabled(false);
+    }
   }
 }

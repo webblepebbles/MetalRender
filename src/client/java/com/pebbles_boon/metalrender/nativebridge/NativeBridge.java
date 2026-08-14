@@ -213,6 +213,16 @@ public final class NativeBridge {
 
   public static native void nGetGPUCullStats(int[] outStats);
 
+  public static native void nSetHiZCullEnabled(boolean enabled);
+
+  public static native boolean nIsHiZReady();
+
+  public static native void nSetClusterCullingEnabled(boolean enabled);
+
+  public static native void nUploadClusterVisibilityKeys(long[] keys, int count);
+
+  public static native void nSetTranslucencySortEnabled(boolean enabled);
+
   public static native int nGetThermalState();
   public static native float nGetGpuFrameTimeMs();
   public static native void nSetTemporalScale(float scale);
