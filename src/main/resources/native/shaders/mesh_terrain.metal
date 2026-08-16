@@ -41,15 +41,6 @@ struct InhouseTerrainVertex {
 
 
 
-constant half kFaceShade[6] = {
-    half(0.5),
-    half(1.0),
-    half(0.8),
-    half(0.8),
-    half(0.6),
-    half(0.6),
-};
-
 
 struct MeshVertexOut {
     float4 position    [[position]];
@@ -176,8 +167,6 @@ void mesh_terrain(
             out.color       = half4(float4(v.color) / 255.0f);
 
             uint pl      = uint(v.packedLight);
-            // Lightmap texel-center UVs (block -> u, sky -> v), matching the
-            // 16x16 lightmap used by the vertex/ICB terrain paths.
             out.lightUV  = half2((float((pl & 0xFu) * 16) + 8.0) / 256.0,
                                  (float(((pl >> 4u) & 0xFu) * 16) + 8.0) /
                                      256.0);
@@ -229,7 +218,7 @@ fragment half4 fragment_terrain_mesh_opaque(
     half4 col = tex * in.color;
 
     half3 light = lightmap.sample(lightSampler, float2(in.lightUV)).rgb;
-    col.rgb *= max(light, half3(0.04h)) * kFaceShade[min(in.normalIndex, 5u)];
+    col.rgb *= max(light, half3(0.04h));
 
     if (camera.waterFog > 0.0f) {
         half dist = half(fast::length(in.worldPos));
@@ -253,7 +242,7 @@ fragment half4 fragment_terrain_mesh_cutout(
     if (tex.a < half(0.5h)) discard_fragment();
     half4 col = tex * in.color;
     half3 light = lightmap.sample(lightSampler, float2(in.lightUV)).rgb;
-    col.rgb *= max(light, half3(0.04h)) * kFaceShade[min(in.normalIndex, 5u)];
+    col.rgb *= max(light, half3(0.04h));
     if (camera.waterFog > 0.0f) {
         half dist = half(fast::length(in.worldPos));
         half fog  = clamp(dist / half(32.0h), half(0.0h), half(0.85h));
