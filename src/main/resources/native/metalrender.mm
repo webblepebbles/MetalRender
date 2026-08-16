@@ -361,6 +361,8 @@ static bool g_clusterCullingEnabled = false;
 static bool g_translucencySortEnabled = false;
 static std::unordered_set<int64_t> g_visibleClusterKeys;
 static std::mutex g_clusterVisibilityMutex;
+static std::unordered_set<int64_t> s_clusterSnapshot;
+static bool s_clusterSnapshotActive = false;
 
 static inline void hizUpdateThreadgroupSize(id<MTLTexture> srcDepth) {
   int w = (int)srcDepth.width;
@@ -990,10 +992,7 @@ fragment float4 fragment_terrain(
 			discard_fragment();
 		}
 	}
-	constant float faceShade[6] = { 0.5, 1.0, 0.8, 0.8, 0.6, 0.6 };
-	float shade = (in.normalIdx < 6) ? faceShade[in.normalIdx] : 1.0;
 	float4 baseColor = texColor * float4(in.color);
-	baseColor.rgb *= shade;
 	baseColor.rgb *= max(float(in.light), 0.04f);
 	float waterFog = overlayParams.z;
 	if (waterFog > 0.0) {
@@ -1021,10 +1020,7 @@ fragment float4 fragment_terrain_icb(
 			discard_fragment();
 		}
 	}
-	constant float faceShade[6] = { 0.5, 1.0, 0.8, 0.8, 0.6, 0.6 };
-	float shade = (in.normalIdx < 6) ? faceShade[in.normalIdx] : 1.0;
 	float4 baseColor = texColor * float4(in.color);
-	baseColor.rgb *= shade;
 	baseColor.rgb *= max(float(in.light), 0.04f);
 	float waterFog = overlayParams.z;
 	if (waterFog > 0.0) {
@@ -1623,7 +1619,7 @@ kernel void mfx_preserve_alpha(
                                               options:MTLStorageModeShared];
   }
   if (!g_cullDrawArgsBuffer) {
-    size_t argsSize = g_maxGPUDrawCalls * sizeof(uint32_t);
+    size_t argsSize = g_maxGPUDrawCalls * sizeof(MTLDrawIndexedPrimitivesIndirectArguments);
     g_cullDrawArgsBuffer = [g_device newBufferWithLength:argsSize
                                                  options:MTLStorageModeShared];
   }
@@ -3032,6 +3028,12 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       return 0;
     id<MTLBuffer> ib = ibRes.buf;
     NSUInteger ibOffset = (NSUInteger)ibRes.offset;
+    {
+      std::lock_guard<std::mutex> lock(g_clusterVisibilityMutex);
+      s_clusterSnapshotActive = g_clusterCullingEnabled;
+      if (s_clusterSnapshotActive)
+        s_clusterSnapshot = g_visibleClusterKeys;
+    }
     g_deferredWaterCmdCount = 0;
     g_deferredWaterIB = nil;
     g_deferredWaterIBOffset = 0;
@@ -3087,7 +3089,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
     int validCount = 0;
     int megaCount = 0;
 
-    const float maxDrawDistSq = std::numeric_limits<float>::infinity();
+    const float maxDrawDistance = std::max(16.0f, (float)g_configuredRenderDistBlocks);
+    const float maxDrawDistSq = maxDrawDistance * maxDrawDistance;
 
     struct MeshSnapshot {
       int32_t chunkX, chunkY, chunkZ;
@@ -3191,6 +3194,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       float oy = ms.chunkY * 16.0f - camY;
       float oz = ms.chunkZ * 16.0f - camZ;
       float cx = ox + 8.0f, cz = oz + 8.0f;
+      if (cx * cx + cz * cz > maxDrawDistSq) {
+        distCulled++;
+        continue;
+      }
       DrawCmd &cmd = s_cmds[validCount];
       cmd.bufHandle = ms.bufferHandle;
       cmd.megaOffset = ms.megaOffset;
@@ -3346,35 +3353,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       }
     }
 
-    if (validCount > 1 && hasTranslucentGeometry &&
-        g_translucencySortEnabled) {
-      static DrawCmd *s_gpuSortScratch = nullptr;
-      static int s_gpuSortScratchCap = 0;
-      static std::vector<float> s_gpuSortKeys;
-      static std::vector<uint32_t> s_gpuSortOrder;
-      if (s_gpuSortScratchCap < validCount) {
-        delete[] s_gpuSortScratch;
-        s_gpuSortScratchCap = std::max(validCount * 2, 1024);
-        s_gpuSortScratch = new DrawCmd[s_gpuSortScratchCap];
-      }
-      s_gpuSortKeys.resize(validCount);
-      s_gpuSortOrder.resize(validCount);
-      for (int i = 0; i < validCount; i++) {
-        s_gpuSortKeys[i] = s_cmds[i].distSq;
-      }
-      int sortedCount = metalrenderSortTranslucency(
-          s_gpuSortKeys.data(), s_gpuSortOrder.data(), validCount);
-      if (sortedCount == validCount) {
-        for (int i = 0; i < validCount; i++) {
-          s_gpuSortScratch[i] = s_cmds[s_gpuSortOrder[i]];
-        }
-        memcpy(s_cmds, s_gpuSortScratch,
-               (size_t)validCount * sizeof(DrawCmd));
-      }
-    }
-
-    if (validCount > 1 && hasTranslucentGeometry &&
-        !g_translucencySortEnabled) {
+    if (validCount > 1 && hasTranslucentGeometry) {
       static DrawCmd *s_radixScratch = nullptr;
       static int s_radixScratchCap = 0;
       if (s_radixScratchCap < validCount) {
@@ -4582,8 +4561,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
       std::lock_guard<std::mutex> lock(g_deferredMutex);
 
       int freed = 0;
+      const size_t kMaxDeletionsPerFrame = 128;
       size_t i = 0;
-      while (i < g_deferredDeletions.size()) {
+      while (i < g_deferredDeletions.size() &&
+             (size_t)freed < kMaxDeletionsPerFrame) {
         auto &dd = g_deferredDeletions[i];
         if (g_frameCount - dd.frameQueued >= DEFERRED_FRAME_DELAY) {
           if (dd.isMega) {
@@ -4964,6 +4945,34 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUpdateTexture2D(
     }
     env->ReleaseByteArrayElements(pixelData, data, JNI_ABORT);
   }
+}
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUpdateTexture2DRegion(
+    JNIEnv *env, jclass, jlong textureHandle, jint srcWidth, jint x, jint y,
+    jint w, jint h, jbyteArray pixelData) {
+  if (!textureHandle || w <= 0 || h <= 0 || x < 0 || y < 0 || srcWidth <= 0)
+    return;
+  id<MTLTexture> tex =
+      (__bridge id<MTLTexture>)(void *)(uintptr_t)textureHandle;
+  if (!tex)
+    return;
+  jbyte *data = env->GetByteArrayElements(pixelData, NULL);
+  if (!data)
+    return;
+  MTLRegion region =
+      MTLRegionMake2D((NSUInteger)x, (NSUInteger)y, (NSUInteger)w, (NSUInteger)h);
+  [tex replaceRegion:region
+         mipmapLevel:0
+           withBytes:data + ((size_t)y * (size_t)srcWidth + (size_t)x) * 4
+         bytesPerRow:(NSUInteger)(srcWidth * 4)];
+  if ([tex mipmapLevelCount] > 1 && g_queue) {
+    id<MTLCommandBuffer> cb = [g_queue commandBuffer];
+    id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
+    [blit generateMipmapsForTexture:tex];
+    [blit endEncoding];
+    [cb commit];
+  }
+  env->ReleaseByteArrayElements(pixelData, data, JNI_ABORT);
 }
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetDeviceHandle(
@@ -5363,7 +5372,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUploadSubChunkData
   }
   memcpy([g_subChunkBuffer contents], ptr, totalSize);
   g_gpuSubChunkCount = (uint32_t)count;
-  size_t argsSize = (size_t)count * sizeof(uint32_t) * 4;
+  size_t argsSize = (size_t)count * sizeof(MTLDrawIndexedPrimitivesIndirectArguments);
   if (!g_cullDrawArgsBuffer || g_cullDrawArgsBuffer.length < argsSize) {
     if (g_cullDrawArgsBuffer)
       [g_cullDrawArgsBuffer release];
@@ -5466,11 +5475,10 @@ static int64_t clusterKeyForChunk(int32_t chunkX, int32_t chunkZ) {
   return ((int64_t)clusterX << 32) | (uint32_t)clusterZ;
 }
 static bool isClusterVisible(int32_t chunkX, int32_t chunkZ) {
-  if (!g_clusterCullingEnabled)
+  if (!s_clusterSnapshotActive)
     return true;
-  std::lock_guard<std::mutex> lock(g_clusterVisibilityMutex);
-  return g_visibleClusterKeys.find(clusterKeyForChunk(chunkX, chunkZ)) !=
-         g_visibleClusterKeys.end();
+  return s_clusterSnapshot.find(clusterKeyForChunk(chunkX, chunkZ)) !=
+         s_clusterSnapshot.end();
 }
 static bool isGpuCullVisible(uint64_t bufferHandle) {
   if (!g_gpuCullFilterEnabled)
@@ -5482,128 +5490,85 @@ extern "C" JNIEXPORT jint JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRunGPUCulling(
     JNIEnv *, jclass, jlong handle, jint chunkCount) {
   (void)handle;
-  if (!g_device || chunkCount <= 0) {
-    g_gpuCullFilterEnabled = false;
-    g_gpuVisibleBufferHandles.clear();
+  if (!g_device || chunkCount <= 0 || !g_visibleIndicesBuffer ||
+      !g_cullDrawCountBuffer || !g_cullDrawArgsBuffer || !g_subChunkBuffer ||
+      !g_cullStatsBuffer || !g_cullEncodePipeline || !g_resetCullPipeline ||
+      !g_queue || !g_hizPyramid || g_cullMode != 1 || !g_hizReady) {
     return -1;
   }
-  if (!g_visibleIndicesBuffer || !g_cullDrawCountBuffer) {
-    dbg("GPU Cull: buffers not allocated\n");
-    return -1;
-  }
+
   uint32_t count = (uint32_t)chunkCount;
   size_t neededSize = (size_t)count * sizeof(uint32_t);
   if (g_visibleIndicesBuffer.length < neededSize) {
-    if (g_visibleIndicesBuffer)
-      [g_visibleIndicesBuffer release];
+    [g_visibleIndicesBuffer release];
     g_visibleIndicesBuffer =
         [g_device newBufferWithLength:neededSize options:MTLStorageModeShared];
   }
-  if (g_cullMode == 1 && g_hizReady && g_hizPyramid && g_queue &&
-      g_cullEncodePipeline && g_resetCullPipeline && g_subChunkBuffer &&
-      g_cullStatsBuffer) {
-    int bufIdx = g_currentBufferIndex % kTripleBufferCount;
-    id<MTLBuffer> cameraBuf = g_tripleBuffers[bufIdx];
-    if (!cameraBuf) {
-      g_cullMode = 0;
-      goto cpu_path;
-    }
-    CameraUniformsCPU *cam = (CameraUniformsCPU *)[cameraBuf contents];
-    float vp[16];
-    for (int c = 0; c < 4; c++) {
-      for (int r = 0; r < 4; r++) {
-        float sum = 0.0f;
-        for (int k = 0; k < 4; k++) {
-          sum += g_projMatrix[k * 4 + r] * g_mvMatrix[c * 4 + k];
-        }
-        vp[c * 4 + r] = sum;
+
+  int bufIdx = g_currentBufferIndex % kTripleBufferCount;
+  id<MTLBuffer> cameraBuf = g_tripleBuffers[bufIdx];
+  if (!cameraBuf) {
+    return -1;
+  }
+
+  CameraUniformsCPU *cam = (CameraUniformsCPU *)[cameraBuf contents];
+  float vp[16];
+  for (int c = 0; c < 4; c++) {
+    for (int r = 0; r < 4; r++) {
+      float sum = 0.0f;
+      for (int k = 0; k < 4; k++) {
+        sum += g_projMatrix[k * 4 + r] * g_mvMatrix[c * 4 + k];
       }
+      vp[c * 4 + r] = sum;
     }
-    memcpy(cam->viewProjection, vp, sizeof(vp));
-    memcpy(cam->projection, g_projMatrix, sizeof(g_projMatrix));
-    memcpy(cam->modelView, g_mvMatrix, sizeof(g_mvMatrix));
-    cam->cameraPosition[0] = (float)g_camX;
-    cam->cameraPosition[1] = (float)g_camY;
-    cam->cameraPosition[2] = (float)g_camZ;
-    cam->cameraPosition[3] = g_skyBrightness;
-    extractFrustumPlanes(vp, cam->frustumPlanes);
-    cam->screenSize[0] = (float)g_rtWidth;
-    cam->screenSize[1] = (float)g_rtHeight;
-    cam->nearPlane = 0.05f;
-    cam->farPlane = (float)g_configuredRenderDistBlocks;
-    cam->frameIndex = (uint32_t)g_frameCount;
-    cam->hizMipCount = g_hizMipCount;
-    cam->totalChunks = count;
-    cam->waterFog = g_entityOverlayParams[2];
-    id<MTLTexture> hizTex = g_hizPyramid;
-    if (!hizTex) {
-      if (!g_hizFallbackTexture) {
-        MTLTextureDescriptor *desc = [MTLTextureDescriptor
-            texture2DDescriptorWithPixelFormat:MTLPixelFormatR32Float
-                                         width:1
-                                        height:1
-                                     mipmapped:NO];
-        desc.usage = MTLTextureUsageShaderRead;
-        desc.storageMode = MTLStorageModePrivate;
-        g_hizFallbackTexture = [g_device newTextureWithDescriptor:desc];
-      }
-      hizTex = g_hizFallbackTexture;
-    }
-    @autoreleasepool {
-      id<MTLCommandBuffer> cmdBuf = [g_queue commandBuffer];
-      if (!cmdBuf)
-        goto cpu_path;
-      id<MTLComputeCommandEncoder> encoder = [cmdBuf computeCommandEncoder];
-      if (!encoder)
-        goto cpu_path;
-      [encoder setComputePipelineState:g_resetCullPipeline];
-      [encoder setBuffer:g_cullDrawCountBuffer offset:0 atIndex:0];
-      [encoder setBuffer:g_cullStatsBuffer offset:0 atIndex:1];
-      [encoder dispatchThreads:MTLSizeMake(1, 1, 1)
-          threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
-      [encoder setComputePipelineState:g_cullEncodePipeline];
-      [encoder setBuffer:g_subChunkBuffer offset:0 atIndex:0];
-      [encoder setBuffer:g_visibleIndicesBuffer offset:0 atIndex:1];
-      [encoder setBuffer:g_cullDrawCountBuffer offset:0 atIndex:2];
-      [encoder setBuffer:g_cullStatsBuffer offset:0 atIndex:3];
-      [encoder setBuffer:cameraBuf offset:0 atIndex:4];
-      [encoder setTexture:hizTex atIndex:0];
-      NSUInteger threadCount = (NSUInteger)count;
-      if (g_cullMaxTG == 0)
-        g_cullMaxTG =
-            (NSUInteger)g_cullEncodePipeline.maxTotalThreadsPerThreadgroup;
-      NSUInteger tgSize =
-          std::min(threadCount, std::min(g_cullMaxTG, (NSUInteger)256));
-      [encoder dispatchThreads:MTLSizeMake(threadCount, 1, 1)
-          threadsPerThreadgroup:MTLSizeMake(tgSize, 1, 1)];
-      [encoder endEncoding];
-      // remember to test config settings monday night
-      [cmdBuf commit];
-      [cmdBuf waitUntilCompleted];
-    }
-    uint32_t visibleCount = *(uint32_t *)[g_cullDrawCountBuffer contents];
-    s_lastCullVisible.store(visibleCount, std::memory_order_release);
-    updateGpuCullVisibleHandles(visibleCount);
-    if (g_frameCount < 5 || (g_frameCount % 300 == 0)) {
-      uint32_t *stats = (uint32_t *)[g_cullStatsBuffer contents];
-      dbg("GPU Cull [compute]: input=%u visible=%u frustumCulled=%u "
-          "distCulled=%u\n",
-          count, visibleCount, stats[1], stats[3]);
-    }
-    return (jint)visibleCount;
   }
-cpu_path: {
-  uint32_t *indices = (uint32_t *)[g_visibleIndicesBuffer contents];
-  for (uint32_t i = 0; i < count; i++) {
-    indices[i] = i;
+  memcpy(cam->viewProjection, vp, sizeof(vp));
+  memcpy(cam->projection, g_projMatrix, sizeof(g_projMatrix));
+  memcpy(cam->modelView, g_mvMatrix, sizeof(g_mvMatrix));
+  cam->cameraPosition[0] = (float)g_camX;
+  cam->cameraPosition[1] = (float)g_camY;
+  cam->cameraPosition[2] = (float)g_camZ;
+  cam->cameraPosition[3] = g_skyBrightness;
+  extractFrustumPlanes(vp, cam->frustumPlanes);
+  cam->screenSize[0] = (float)g_rtWidth;
+  cam->screenSize[1] = (float)g_rtHeight;
+  cam->nearPlane = 0.05f;
+  cam->farPlane = (float)g_configuredRenderDistBlocks;
+  cam->frameIndex = (uint32_t)g_frameCount;
+  cam->hizMipCount = g_hizMipCount;
+  cam->totalChunks = count;
+  cam->waterFog = g_entityOverlayParams[2];
+
+  id<MTLCommandBuffer> cmdBuf = [g_queue commandBuffer];
+  id<MTLComputeCommandEncoder> encoder = cmdBuf ? [cmdBuf computeCommandEncoder] : nil;
+  if (!encoder) {
+    return -1;
   }
-  *(uint32_t *)[g_cullDrawCountBuffer contents] = count;
-  updateGpuCullVisibleHandles(count);
-  if (g_frameCount < 5 || (g_frameCount % 300 == 0)) {
-    dbg("GPU Cull [cpu-passthrough]: all %u chunks marked visible\n", count);
+  [encoder setComputePipelineState:g_resetCullPipeline];
+  [encoder setBuffer:g_cullDrawCountBuffer offset:0 atIndex:0];
+  [encoder setBuffer:g_cullStatsBuffer offset:0 atIndex:1];
+  [encoder dispatchThreads:MTLSizeMake(1, 1, 1)
+      threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
+  [encoder setComputePipelineState:g_cullEncodePipeline];
+  [encoder setBuffer:g_subChunkBuffer offset:0 atIndex:0];
+  [encoder setBuffer:g_visibleIndicesBuffer offset:0 atIndex:1];
+  [encoder setBuffer:g_cullDrawCountBuffer offset:0 atIndex:2];
+  [encoder setBuffer:g_cullStatsBuffer offset:0 atIndex:3];
+  [encoder setBuffer:cameraBuf offset:0 atIndex:4];
+  [encoder setBuffer:g_cullDrawArgsBuffer offset:0 atIndex:5];
+  [encoder setTexture:g_hizPyramid atIndex:0];
+  NSUInteger threadCount = (NSUInteger)count;
+  if (g_cullMaxTG == 0) {
+    g_cullMaxTG = (NSUInteger)g_cullEncodePipeline.maxTotalThreadsPerThreadgroup;
   }
+  NSUInteger tgSize = std::min(threadCount, std::min(g_cullMaxTG, (NSUInteger)256));
+  [encoder dispatchThreads:MTLSizeMake(threadCount, 1, 1)
+      threadsPerThreadgroup:MTLSizeMake(tgSize, 1, 1)];
+  [encoder endEncoding];
+  [cmdBuf commit];
+  g_gpuCullFilterEnabled = false;
+  s_lastCullVisible.store(0, std::memory_order_release);
   return (jint)count;
-}
 }
 extern "C" JNIEXPORT jint JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetGPUVisibleCount(
@@ -5614,27 +5579,39 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetGPUVisibleCount
   uint32_t *count = (uint32_t *)[g_cullDrawCountBuffer contents];
   return (jint)(*count);
 }
-extern "C" JNIEXPORT void JNICALL
-Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nExecuteIndirectDraws(
-    JNIEnv *, jclass, jlong frameContext, jlong vertexBuffer,
-    jlong indexBuffer) {
+extern "C" JNIEXPORT jint JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nExecuteGpuCulledDraws(
+    JNIEnv *, jclass, jlong frameContext, jlong indexBuffer) {
   (void)frameContext;
-  (void)vertexBuffer;
-  if (!g_currentEncoder || !g_visibleIndicesBuffer || !g_cullDrawCountBuffer ||
-      !g_subChunkBuffer)
-    return;
-  uint32_t visibleCount = *(uint32_t *)[g_cullDrawCountBuffer contents];
-  if (visibleCount == 0)
-    return;
-  visibleCount = std::min(visibleCount, g_maxGPUDrawCalls);
-  if (!g_currentPipeline && g_pipelineInhouse) {
-    [g_currentEncoder setRenderPipelineState:g_pipelineInhouse];
-    g_currentPipeline = g_pipelineInhouse;
-    if (g_depthState)
-      [g_currentEncoder setDepthStencilState:g_depthState];
+  if (!g_currentEncoder || !g_subChunkBuffer || !g_cullDrawArgsBuffer ||
+      g_gpuSubChunkCount == 0) {
+    return 0;
   }
-  if (!g_currentPipeline)
-    return;
+
+  id<MTLRenderPipelineState> pipeline =
+      g_pipelineInhouseOpaque ? g_pipelineInhouseOpaque : g_pipelineInhouse;
+  if (!pipeline) {
+    return 0;
+  }
+  [g_currentEncoder setRenderPipelineState:pipeline];
+  g_currentPipeline = pipeline;
+  if (g_depthState) {
+    [g_currentEncoder setDepthStencilState:g_depthState];
+  }
+  if (g_blockAtlas) {
+    [g_currentEncoder setFragmentTexture:g_blockAtlas atIndex:0];
+  }
+  if (g_lightmap || g_lightmapFallback) {
+    [g_currentEncoder setFragmentTexture:(g_lightmap ?: g_lightmapFallback) atIndex:1];
+  }
+  [g_currentEncoder setVertexBytes:g_projMatrix length:64 atIndex:1];
+  [g_currentEncoder setVertexBytes:g_mvMatrix length:64 atIndex:2];
+  float cameraData[4] = {0.0f, 0.0f, 0.0f, g_skyBrightness};
+  [g_currentEncoder setVertexBytes:cameraData length:16 atIndex:3];
+  [g_currentEncoder setFragmentBytes:g_entityOverlayParams
+                              length:sizeof(g_entityOverlayParams)
+                             atIndex:5];
+
   struct SubChunkCPU {
     float aabbMin[4];
     float aabbMax[4];
@@ -5643,53 +5620,56 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nExecuteIndirectDra
     uint32_t indexCount;
     uint32_t flags;
   };
-  const uint32_t *visibleIndices =
-      (const uint32_t *)[g_visibleIndicesBuffer contents];
   const SubChunkCPU *chunks = (const SubChunkCPU *)[g_subChunkBuffer contents];
-  const float *chunkUniforms =
-      g_chunkUniformsBuffer ? (const float *)[g_chunkUniformsBuffer contents]
-                            : nullptr;
+  const float *chunkUniforms = g_chunkUniformsBuffer
+      ? (const float *)[g_chunkUniformsBuffer contents] : nullptr;
   ResolvedBuf ibRes = resolve_buffer((uint64_t)indexBuffer);
-  id<MTLBuffer> lastVB = nil;
-  size_t lastVBOffset = 0;
-  for (uint32_t i = 0; i < visibleCount; i++) {
-    uint32_t chunkIdx = visibleIndices[i];
-    if (chunkIdx >= g_gpuSubChunkCount)
+  if (!ibRes.buf) {
+    return 0;
+  }
+
+  int drawCount = 0;
+  ResolvedBuf lastVb = {nil, 0};
+  float lastUniform[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+  bool haveLastUniform = false;
+  for (uint32_t i = 0; i < g_gpuSubChunkCount; i++) {
+    const SubChunkCPU &entry = chunks[i];
+    uint32_t idxCount = entry.flags != 0 ? entry.flags : entry.indexCount;
+    if (idxCount == 0) {
       continue;
-    const SubChunkCPU &entry = chunks[chunkIdx];
-    uint64_t bufHandle =
-        ((uint64_t)entry.bufHandleHi << 32) | (uint64_t)entry.bufHandleLo;
-    uint32_t idxCount = entry.indexCount;
-    if (idxCount == 0)
-      continue;
-    ResolvedBuf vbRes = resolve_buffer(bufHandle);
-    if (!vbRes.buf)
-      continue;
-    if (chunkUniforms) {
-      [g_currentEncoder setVertexBytes:&chunkUniforms[chunkIdx * 4]
-                                length:16
-                               atIndex:4];
     }
-    if (vbRes.buf != lastVB || vbRes.offset != lastVBOffset) {
+    uint64_t bufferHandle = ((uint64_t)entry.bufHandleHi << 32) |
+        (uint64_t)entry.bufHandleLo;
+    ResolvedBuf vbRes = resolve_buffer(bufferHandle);
+    if (!vbRes.buf) {
+      continue;
+    }
+    if (lastVb.buf != vbRes.buf || lastVb.offset != vbRes.offset) {
       [g_currentEncoder setVertexBuffer:vbRes.buf
                                  offset:(NSUInteger)vbRes.offset
                                 atIndex:0];
-      lastVB = vbRes.buf;
-      lastVBOffset = vbRes.offset;
+      lastVb = vbRes;
     }
-    if (ibRes.buf) {
-      [g_currentEncoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
-                                   indexCount:(NSUInteger)idxCount
-                                    indexType:MTLIndexTypeUInt32
-                                  indexBuffer:ibRes.buf
-                            indexBufferOffset:(NSUInteger)ibRes.offset];
-    } else {
-      [g_currentEncoder drawPrimitives:MTLPrimitiveTypeTriangle
-                           vertexStart:0
-                           vertexCount:(NSUInteger)idxCount];
+    if (chunkUniforms) {
+      const float *u = &chunkUniforms[i * 4];
+      if (!haveLastUniform || memcmp(u, lastUniform, 16) != 0) {
+        [g_currentEncoder setVertexBytes:u length:16 atIndex:4];
+        memcpy(lastUniform, u, 16);
+        haveLastUniform = true;
+      }
     }
-    g_drawCallCount++;
+    NSUInteger indirectOffset = (NSUInteger)i *
+        sizeof(MTLDrawIndexedPrimitivesIndirectArguments);
+    [g_currentEncoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
+                                 indexType:MTLIndexTypeUInt32
+                               indexBuffer:ibRes.buf
+                         indexBufferOffset:(NSUInteger)ibRes.offset
+                            indirectBuffer:g_cullDrawArgsBuffer
+                      indirectBufferOffset:indirectOffset];
+    drawCount++;
   }
+  g_drawCallCount += (uint32_t)drawCount;
+  return drawCount;
 }
 extern "C" JNIEXPORT jint JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetThermalState(
