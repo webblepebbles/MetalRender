@@ -24,13 +24,16 @@ public class MetalTextureManager {
   private int lightmapWidth;
   private int lightmapHeight;
   private byte[] atlasUploadData = null;
+  private byte[] atlasReadbackScratch = null;
   private byte[] lightmapUploadData = null;
   private ByteBuffer atlasPixelBuffer = null;
   private ByteBuffer lightmapPixelBuffer = null;
   public static volatile boolean atlasDirty = true;
 
-  private static final int ATLAS_MIN_UPLOAD_INTERVAL = 2;
-  private static final int ATLAS_HEARTBEAT_FRAMES = 300;
+  private static final int ATLAS_MIN_UPLOAD_INTERVAL = 1;
+  private static final int ATLAS_HEARTBEAT_FRAMES = 1800;
+  private static final int ATLAS_DIFF_TILE = 16;
+  private static final int ATLAS_MAX_REGION_TILES = 256;
   private static final int LIGHTMAP_MIN_UPLOAD_INTERVAL = 2;
   private static final long LIGHTMAP_MIN_GAME_TIME_DELTA = 4L;
   private int atlasFramesSinceUpload = 0;
@@ -165,14 +168,86 @@ public class MetalTextureManager {
       GL11.glGetTexImage(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA,
           GL11.GL_UNSIGNED_BYTE, atlasPixelBuffer);
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTex);
+      if (atlasReadbackScratch == null || atlasReadbackScratch.length < dataSize) {
+        atlasReadbackScratch = new byte[dataSize];
+      }
+      atlasPixelBuffer.get(atlasReadbackScratch, 0, dataSize);
+      uploadAtlasDiff(width, height, dataSize);
+    } catch (Exception e) {
+    }
+  }
+
+  private void uploadAtlasDiff(int width, int height, int dataSize) {
+    byte[] fresh = atlasReadbackScratch;
+    if (atlasUploadData == null || atlasUploadData.length != dataSize) {
+      NativeBridge.nUpdateTexture2D(blockAtlasTexture, width, height, fresh);
       if (atlasUploadData == null || atlasUploadData.length < dataSize) {
         atlasUploadData = new byte[dataSize];
       }
-      atlasPixelBuffer.get(atlasUploadData, 0, dataSize);
-      NativeBridge.nUpdateTexture2D(blockAtlasTexture, width, height,
-          atlasUploadData);
-    } catch (Exception e) {
+      System.arraycopy(fresh, 0, atlasUploadData, 0, dataSize);
+      return;
     }
+    byte[] mirror = atlasUploadData;
+    int tile = ATLAS_DIFF_TILE;
+    int tilesX = (width + tile - 1) / tile;
+    int tilesY = (height + tile - 1) / tile;
+    if (tilesX <= 0 || tilesY <= 0) {
+      NativeBridge.nUpdateTexture2D(blockAtlasTexture, width, height, fresh);
+      System.arraycopy(fresh, 0, mirror, 0, dataSize);
+      return;
+    }
+    java.util.ArrayList<int[]> dirtyBands = new java.util.ArrayList<>();
+    int dirtyTiles = 0;
+    for (int ty = 0; ty < tilesY; ty++) {
+      int bandMinX = Integer.MAX_VALUE;
+      int bandMaxX = -1;
+      for (int tx = 0; tx < tilesX; tx++) {
+        int tileX = tx * tile;
+        int tileY = ty * tile;
+        int tileWidth = Math.min(tile, width - tileX);
+        int tileHeight = Math.min(tile, height - tileY);
+        boolean changed = false;
+        for (int row = 0; row < tileHeight; row++) {
+          int off = ((tileY + row) * width + tileX) * 4;
+          int rowBytes = tileWidth * 4;
+          if (!java.util.Arrays.equals(mirror, off, off + rowBytes, fresh, off,
+              off + rowBytes)) {
+            changed = true;
+            break;
+          }
+        }
+        if (changed) {
+          dirtyTiles++;
+          if (tx < bandMinX) {
+            bandMinX = tx;
+          }
+          if (tx > bandMaxX) {
+            bandMaxX = tx;
+          }
+        }
+      }
+      if (bandMaxX >= 0) {
+        dirtyBands.add(new int[] { ty, bandMinX, bandMaxX });
+        if (dirtyTiles > ATLAS_MAX_REGION_TILES) {
+          break;
+        }
+      }
+    }
+    if (dirtyTiles == 0) {
+      return;
+    }
+    if (dirtyTiles <= ATLAS_MAX_REGION_TILES) {
+      for (int[] band : dirtyBands) {
+        int y0 = band[0] * tile;
+        int x0 = band[1] * tile;
+        int x1 = Math.min(width, (band[2] + 1) * tile);
+        NativeBridge.nUpdateTexture2DRegion(blockAtlasTexture, width, x0, y0,
+            x1 - x0, tile, fresh);
+      }
+    } else {
+      NativeBridge.nUpdateTexture2D(blockAtlasTexture, width, height, fresh);
+    }
+    System.arraycopy(fresh, 0, mirror, 0, dataSize);
   }
 
   public void updateLightmap() {
@@ -319,6 +394,7 @@ public class MetalTextureManager {
     lastLightmapObservedGameTime = Long.MIN_VALUE;
     lastUploadedLightmapGameTime = Long.MIN_VALUE;
     atlasUploadData = null;
+    atlasReadbackScratch = null;
     lightmapUploadData = null;
     atlasPixelBuffer = null;
     lightmapPixelBuffer = null;
