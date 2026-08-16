@@ -48,24 +48,19 @@ import org.joml.Vector3f;
 public class CustomChunkMesher {
   private static final int VERTEX_STRIDE = 16;
   private static final int SECTION_SIZE = 16;
-  private static final int PADDED_SIZE = 18;
+  private static final int BIOME_TINT_SLOTS = 4;
+  private static final int PADDED_RADIUS = 2;
+  private static final int PADDED_SIZE = SECTION_SIZE + PADDED_RADIUS * 2;
   private static final int PADDED_VOLUME = PADDED_SIZE * PADDED_SIZE * PADDED_SIZE;
   private static final int MAX_QUADS = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE * 6;
   private static final int VERTEX_BUF_SIZE = MAX_QUADS * 4 * VERTEX_STRIDE;
   private static final byte WATER_ALPHA = (byte) 168;
+  private static final float FLUID_EPSILON = 0.001f;
+  private static final float GRASS_OVERLAY_OFFSET = 1.0f / 256.0f;
   private static final int UPLOAD_PARALLELISM = Math.min(4,
       Math.max(2, Runtime.getRuntime().availableProcessors() / 2));
   private static final java.util.concurrent.Semaphore UPLOAD_SEMAPHORE = new java.util.concurrent.Semaphore(
       UPLOAD_PARALLELISM);
-
-  private static final float[] FACE_SHADE = { 0.5f, 1.0f, 0.8f, 0.8f, 0.6f, 0.6f };
-
-  private static float getFaceShade(byte normalIndex) {
-    if (normalIndex < 0 || normalIndex >= FACE_SHADE.length) {
-      return 1.0f;
-    }
-    return FACE_SHADE[normalIndex];
-  }
 
   private static final ThreadLocal<ByteBuffer> VERTEX_BUF_POOL = ThreadLocal
       .withInitial(() -> ByteBuffer.allocateDirect(VERTEX_BUF_SIZE)
@@ -190,8 +185,8 @@ public class CustomChunkMesher {
     this.snapshotCacheGen.defaultReturnValue(Long.MIN_VALUE);
 
     int processors = Runtime.getRuntime().availableProcessors();
-    this.immediateThreadCount = Math.max(2, Math.min(6, processors / 4 + 1));
-    this.backgroundThreadCount = Math.max(2, Math.min(14, processors - immediateThreadCount - 1));
+    this.immediateThreadCount = Math.max(1, Math.min(2, processors / 6 + 1));
+    this.backgroundThreadCount = Math.max(1, Math.min(4, processors / 3));
 
     final java.util.concurrent.ThreadFactory immediateFactory = r -> {
       Thread t = new Thread(r, "MetalRender-MeshBuilder-Immediate");
@@ -680,7 +675,7 @@ public class CustomChunkMesher {
     }
     BuildBudgetEstimator estimator = PerformanceController.getBudgetEstimator();
     int immediateCap = estimator != null ? estimator.recommendedInFlightFor(0) : 64;
-    if (isImmediate && priority != 0 && getImmediateInFlight() >= immediateCap) {
+    if (isImmediate && getImmediateInFlight() >= immediateCap) {
       isImmediate = false;
     }
     int backgroundCap = estimator != null ? estimator.recommendedInFlightFor(1) : 256;
@@ -771,14 +766,21 @@ public class CustomChunkMesher {
     final boolean empty;
     final int[] paddedBlockStates;
     final byte[] paddedLight;
+    final byte[] paddedOcclusion;
+    final byte[] paddedShade;
+    final byte[] paddedEmission;
     final int[] biomeTints;
 
     SectionSnapshot(boolean valid, boolean empty,
-        int[] paddedBlockStates, byte[] paddedLight, int[] biomeTints) {
+        int[] paddedBlockStates, byte[] paddedLight, byte[] paddedOcclusion,
+        byte[] paddedShade, byte[] paddedEmission, int[] biomeTints) {
       this.valid = valid;
       this.empty = empty;
       this.paddedBlockStates = paddedBlockStates;
       this.paddedLight = paddedLight;
+      this.paddedOcclusion = paddedOcclusion;
+      this.paddedShade = paddedShade;
+      this.paddedEmission = paddedEmission;
       this.biomeTints = biomeTints;
     }
 
@@ -786,6 +788,9 @@ public class CustomChunkMesher {
       return new SectionSnapshot(valid, empty,
           paddedBlockStates != null ? Arrays.copyOf(paddedBlockStates, paddedBlockStates.length) : null,
           paddedLight != null ? Arrays.copyOf(paddedLight, paddedLight.length) : null,
+          paddedOcclusion != null ? Arrays.copyOf(paddedOcclusion, paddedOcclusion.length) : null,
+          paddedShade != null ? Arrays.copyOf(paddedShade, paddedShade.length) : null,
+          paddedEmission != null ? Arrays.copyOf(paddedEmission, paddedEmission.length) : null,
           biomeTints != null ? Arrays.copyOf(biomeTints, biomeTints.length) : null);
     }
   }
@@ -793,7 +798,10 @@ public class CustomChunkMesher {
   private static final class SnapshotData {
     final int[] paddedBlockStates = new int[PADDED_VOLUME];
     final byte[] paddedLight = new byte[PADDED_VOLUME];
-    final int[] biomeTints = new int[SECTION_SIZE * SECTION_SIZE * SECTION_SIZE];
+    final byte[] paddedOcclusion = new byte[PADDED_VOLUME];
+    final byte[] paddedShade = new byte[PADDED_VOLUME];
+    final byte[] paddedEmission = new byte[PADDED_VOLUME];
+    final int[] biomeTints = new int[SECTION_SIZE * SECTION_SIZE * SECTION_SIZE * BIOME_TINT_SLOTS];
   }
 
   private static final ThreadLocal<SnapshotData> SNAPSHOT_POOL = ThreadLocal.withInitial(SnapshotData::new);
@@ -834,10 +842,16 @@ public class CustomChunkMesher {
     final TextureAtlasSprite waterFlowingSprite;
     final TextureAtlasSprite lavaStillSprite;
     final TextureAtlasSprite lavaFlowingSprite;
+    final TextureAtlasSprite grassSideOverlaySprite;
+    final ClientLevel world;
+    final boolean smoothLighting;
+    final float[] faceShade;
 
     MeshBuildContext(BlockStateModelSet blockModels, int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ,
         TextureAtlasSprite waterStillSprite, TextureAtlasSprite waterFlowingSprite,
-        TextureAtlasSprite lavaStillSprite, TextureAtlasSprite lavaFlowingSprite) {
+        TextureAtlasSprite lavaStillSprite, TextureAtlasSprite lavaFlowingSprite,
+        TextureAtlasSprite grassSideOverlaySprite, ClientLevel world,
+        boolean smoothLighting, float[] faceShade) {
       this.blockModels = blockModels;
       this.buildPlayerCX = buildPlayerCX;
       this.buildPlayerCY = buildPlayerCY;
@@ -846,6 +860,10 @@ public class CustomChunkMesher {
       this.waterFlowingSprite = waterFlowingSprite;
       this.lavaStillSprite = lavaStillSprite;
       this.lavaFlowingSprite = lavaFlowingSprite;
+      this.grassSideOverlaySprite = grassSideOverlaySprite;
+      this.world = world;
+      this.smoothLighting = smoothLighting;
+      this.faceShade = faceShade;
     }
   }
 
@@ -857,6 +875,7 @@ public class CustomChunkMesher {
     TextureAtlasSprite waterFlow = null;
     TextureAtlasSprite lavaStill = null;
     TextureAtlasSprite lavaFlow = null;
+    TextureAtlasSprite grassSideOverlay = null;
     if (mc != null) {
       if (mc.getModelManager() != null) {
         blockModels = mc.getModelManager().getBlockStateModelSet();
@@ -870,9 +889,40 @@ public class CustomChunkMesher {
       waterFlow = getFluidSprite(mc, net.minecraft.world.level.material.Fluids.WATER, true);
       lavaStill = getFluidSprite(mc, net.minecraft.world.level.material.Fluids.LAVA, false);
       lavaFlow = getFluidSprite(mc, net.minecraft.world.level.material.Fluids.LAVA, true);
+      grassSideOverlay = getAtlasSprite(mc,
+          Identifier.fromNamespaceAndPath("minecraft", "block/grass_block_side_overlay"));
+    }
+    MetalRenderConfig config = MetalRenderClient.getConfig();
+    boolean smoothLighting = config == null || config.enableSimpleLighting;
+    float[] faceShade = new float[6];
+    for (Direction direction : ALL_DIRECTIONS) {
+      int index = direction.get3DDataValue();
+      if (index < faceShade.length) {
+        faceShade[index] = world.cardinalLighting().byFace(direction);
+      }
     }
     return new MeshBuildContext(blockModels, buildPCX, buildPCY, buildPCZ,
-        waterStill, waterFlow, lavaStill, lavaFlow);
+        waterStill, waterFlow, lavaStill, lavaFlow, grassSideOverlay, world,
+        smoothLighting, faceShade);
+  }
+
+  private static int getGrassTint(ClientLevel world, BlockPos pos) {
+    if (world == null) {
+      return net.minecraft.world.level.GrassColor.getDefaultColor();
+    }
+    try {
+      return net.minecraft.client.renderer.BiomeColors.getAverageGrassColor(world, pos);
+    } catch (RuntimeException ignored) {
+      return net.minecraft.world.level.GrassColor.getDefaultColor();
+    }
+  }
+
+  private static TextureAtlasSprite getAtlasSprite(Minecraft mc, Identifier id) {
+    if (mc == null || mc.getTextureManager() == null) {
+      return null;
+    }
+    AbstractTexture atlasTexture = mc.getTextureManager().getTexture(TextureAtlas.LOCATION_BLOCKS);
+    return atlasTexture instanceof TextureAtlas atlas ? atlas.getSprite(id) : null;
   }
 
   private static TextureAtlasSprite getFluidSprite(Minecraft mc, net.minecraft.world.level.material.Fluid fluid,
@@ -915,25 +965,28 @@ public class CustomChunkMesher {
   private SectionSnapshot captureSectionSnapshot(ClientLevel world, int chunkX, int chunkY, int chunkZ,
       boolean useApproximateLight) {
     if (world == null) {
-      return new SectionSnapshot(false, false, null, null, null);
+      return new SectionSnapshot(false, false, null, null, null, null, null, null);
     }
     LevelChunk chunk = world.getChunkSource().getChunkNow(chunkX, chunkZ);
     if (chunk == null) {
-      return new SectionSnapshot(false, false, null, null, null);
+      return new SectionSnapshot(false, false, null, null, null, null, null, null);
     }
     int sectionIdx = chunk.getSectionIndexFromSectionY(chunkY);
     LevelChunkSection[] chunkSections = chunk.getSections();
     if (sectionIdx < 0 || sectionIdx >= chunkSections.length) {
-      return new SectionSnapshot(false, false, null, null, null);
+      return new SectionSnapshot(false, false, null, null, null, null, null, null);
     }
     LevelChunkSection section = chunkSections[sectionIdx];
     if (section == null || section.hasOnlyAir()) {
-      return new SectionSnapshot(true, true, null, null, null);
+      return new SectionSnapshot(true, true, null, null, null, null, null, null);
     }
 
     SnapshotData data = SNAPSHOT_POOL.get();
     int[] paddedBlockStates = data.paddedBlockStates;
     byte[] paddedLight = data.paddedLight;
+    byte[] paddedOcclusion = data.paddedOcclusion;
+    byte[] paddedShade = data.paddedShade;
+    byte[] paddedEmission = data.paddedEmission;
     int[] biomeTints = data.biomeTints;
     boolean hasAnyBlock = false;
 
@@ -973,9 +1026,9 @@ public class CustomChunkMesher {
       for (int gy = 0; gy < 5; gy++) {
         for (int gz = 0; gz < 5; gz++) {
           for (int gx = 0; gx < 5; gx++) {
-            int sampleX = baseX + gx * 4 - 1;
-            int sampleY = baseY + gy * 4 - 1;
-            int sampleZ = baseZ + gz * 4 - 1;
+            int sampleX = baseX + gx * 4 - PADDED_RADIUS;
+            int sampleY = baseY + gy * 4 - PADDED_RADIUS;
+            int sampleZ = baseZ + gz * 4 - PADDED_RADIUS;
             int sectionX = sampleX >> 4;
             int sectionY = sampleY >> 4;
             int sectionZ = sampleZ >> 4;
@@ -1004,18 +1057,20 @@ public class CustomChunkMesher {
     for (int py = 0; py < PADDED_SIZE; py++) {
       for (int pz = 0; pz < PADDED_SIZE; pz++) {
         for (int px = 0; px < PADDED_SIZE; px++) {
-          int wx = baseX + px - 1;
-          int wy = baseY + py - 1;
-          int wz = baseZ + pz - 1;
+          int wx = baseX + px - PADDED_RADIUS;
+          int wy = baseY + py - PADDED_RADIUS;
+          int wz = baseZ + pz - PADDED_RADIUS;
           int pIdx = (py * PADDED_SIZE + pz) * PADDED_SIZE + px;
 
           mutablePos.set(wx, wy, wz);
           BlockState state;
-          boolean inner = px >= 1 && px <= SECTION_SIZE && py >= 1 && py <= SECTION_SIZE && pz >= 1
-              && pz <= SECTION_SIZE;
+          boolean inner = px >= PADDED_RADIUS && px < PADDED_RADIUS + SECTION_SIZE
+              && py >= PADDED_RADIUS && py < PADDED_RADIUS + SECTION_SIZE
+              && pz >= PADDED_RADIUS && pz < PADDED_RADIUS + SECTION_SIZE;
           if (inner) {
             try {
-              state = localStates.get(px - 1, py - 1, pz - 1);
+              state = localStates.get(px - PADDED_RADIUS, py - PADDED_RADIUS,
+                  pz - PADDED_RADIUS);
             } catch (Exception e) {
               state = world.getBlockState(mutablePos);
             }
@@ -1037,11 +1092,23 @@ public class CustomChunkMesher {
             }
           }
           paddedBlockStates[pIdx] = stateId;
+          if (stateId == 0) {
+            paddedOcclusion[pIdx] = 0;
+            paddedShade[pIdx] = (byte) 255;
+            paddedEmission[pIdx] = 0;
+          } else {
+            paddedOcclusion[pIdx] = (byte) (state.isViewBlocking(world, mutablePos)
+                && state.getLightDampening() != 0 ? 1 : 0);
+            float shade = Math.max(0.0f, Math.min(1.0f,
+                state.getShadeBrightness(world, mutablePos)));
+            paddedShade[pIdx] = (byte) Math.round(shade * 255.0f);
+            paddedEmission[pIdx] = (byte) (state.emissiveRendering(world, mutablePos) ? 1 : 0);
+          }
 
           if (useApproximateLight) {
-            int lightX = Math.min(4, (px + 2) >> 2);
-            int lightY = Math.min(4, (py + 2) >> 2);
-            int lightZ = Math.min(4, (pz + 2) >> 2);
+            int lightX = Math.min(4, px >> 2);
+            int lightY = Math.min(4, py >> 2);
+            int lightZ = Math.min(4, pz >> 2);
             paddedLight[pIdx] = approximateLightGrid[(lightY * 25) + (lightZ * 5) + lightX];
           } else {
             int sectionX = wx >> 4;
@@ -1066,38 +1133,49 @@ public class CustomChunkMesher {
           }
 
           if (inner) {
-            int x = px - 1;
-            int y = py - 1;
-            int z = pz - 1;
-            int tIdx = y * 256 + z * 16 + x;
+            int x = px - PADDED_RADIUS;
+            int y = py - PADDED_RADIUS;
+            int z = pz - PADDED_RADIUS;
+            int tintBase = (y * 256 + z * 16 + x) * BIOME_TINT_SLOTS;
             if (stateId == 0) {
-              biomeTints[tIdx] = 0xFFFFFF;
+              for (int tintIndex = 0; tintIndex < BIOME_TINT_SLOTS; tintIndex++) {
+                biomeTints[tintBase + tintIndex] = 0xFFFFFF;
+              }
             } else {
               mutablePos.set(baseX + x, baseY + y, baseZ + z);
-              int tint = 0xFFFFFF;
-              try {
-                FluidState fluid = state.getFluidState();
-                if (!fluid.isEmpty() &&
-                    (fluid.getType() == net.minecraft.world.level.material.Fluids.WATER ||
-                        fluid.getType() == net.minecraft.world.level.material.Fluids.FLOWING_WATER)) {
-                  tint = net.minecraft.client.renderer.BiomeColors.getAverageWaterColor(world, mutablePos);
-                } else if (!fluid.isEmpty() &&
-                    (fluid.getType() == net.minecraft.world.level.material.Fluids.LAVA ||
-                        fluid.getType() == net.minecraft.world.level.material.Fluids.FLOWING_LAVA)) {
-                  tint = 0xFF4500;
-                } else {
-                  net.minecraft.client.color.block.BlockTintSource source = getCachedTintSource(
-                      blockColors, state);
-                  if (source != null) {
-                    tint = source.colorInWorld(state, world, mutablePos);
+              FluidState fluid = state.getFluidState();
+              boolean water = !fluid.isEmpty() &&
+                  (fluid.getType() == net.minecraft.world.level.material.Fluids.WATER ||
+                      fluid.getType() == net.minecraft.world.level.material.Fluids.FLOWING_WATER);
+              boolean lava = !fluid.isEmpty() &&
+                  (fluid.getType() == net.minecraft.world.level.material.Fluids.LAVA ||
+                      fluid.getType() == net.minecraft.world.level.material.Fluids.FLOWING_LAVA);
+              for (int tintIndex = 0; tintIndex < BIOME_TINT_SLOTS; tintIndex++) {
+                int tint = 0xFFFFFF;
+                try {
+                  if (state.getBlock() == Blocks.GRASS_BLOCK) {
+                    net.minecraft.client.color.block.BlockTintSource source = getCachedTintSource(
+                        blockColors, state, tintIndex);
+                    if (source != null) {
+                      tint = source.colorInWorld(state, world, mutablePos);
+                    } else {
+                      tint = getGrassTint(world, mutablePos);
+                    }
+                  } else if (water) {
+                    tint = net.minecraft.client.renderer.BiomeColors.getAverageWaterColor(world, mutablePos);
+                  } else if (lava) {
+                    tint = 0xFFFFFF;
+                  } else {
+                    net.minecraft.client.color.block.BlockTintSource source = getCachedTintSource(
+                        blockColors, state, tintIndex);
+                    if (source != null) {
+                      tint = source.colorInWorld(state, world, mutablePos);
+                    }
                   }
+                } catch (Exception ignored) {
                 }
-              } catch (Exception ignored) {
+                biomeTints[tintBase + tintIndex] = tint == -1 ? 0xFFFFFF : tint;
               }
-              if (tint == -1) {
-                tint = 0xFFFFFF;
-              }
-              biomeTints[tIdx] = tint;
             }
           }
         }
@@ -1105,10 +1183,11 @@ public class CustomChunkMesher {
     }
 
     if (!hasAnyBlock) {
-      return new SectionSnapshot(true, true, null, null, null);
+      return new SectionSnapshot(true, true, null, null, null, null, null, null);
     }
 
-    return new SectionSnapshot(true, false, paddedBlockStates, paddedLight, biomeTints);
+    return new SectionSnapshot(true, false, paddedBlockStates, paddedLight,
+        paddedOcclusion, paddedShade, paddedEmission, biomeTints);
   }
 
   private static final ThreadLocal<Object2IntOpenHashMap<BlockState>> BS_ID_CACHE = ThreadLocal.withInitial(() -> {
@@ -1127,7 +1206,7 @@ public class CustomChunkMesher {
   private static final ThreadLocal<IdentityHashMap<BlockState, BlockStateModel>> MODEL_CACHE = ThreadLocal
       .withInitial(IdentityHashMap::new);
   private static final int MODEL_CACHE_CAP = 32768;
-  private static final ThreadLocal<IdentityHashMap<BlockState, net.minecraft.client.color.block.BlockTintSource>> TINT_SOURCE_CACHE = ThreadLocal
+  private static final ThreadLocal<IdentityHashMap<BlockState, net.minecraft.client.color.block.BlockTintSource[]>> TINT_SOURCE_CACHE = ThreadLocal
       .withInitial(IdentityHashMap::new);
   private static final ThreadLocal<java.util.ArrayList<BlockStateModelPart>> PARTS_POOL = ThreadLocal
       .withInitial(java.util.ArrayList::new);
@@ -1152,15 +1231,23 @@ public class CustomChunkMesher {
   }
 
   private static net.minecraft.client.color.block.BlockTintSource getCachedTintSource(
-      net.minecraft.client.color.block.BlockColors blockColors, BlockState state) {
-    IdentityHashMap<BlockState, net.minecraft.client.color.block.BlockTintSource> cache = TINT_SOURCE_CACHE
+      net.minecraft.client.color.block.BlockColors blockColors, BlockState state, int tintIndex) {
+    if (tintIndex < 0 || tintIndex >= BIOME_TINT_SLOTS) {
+      return null;
+    }
+    IdentityHashMap<BlockState, net.minecraft.client.color.block.BlockTintSource[]> cache = TINT_SOURCE_CACHE
         .get();
-    net.minecraft.client.color.block.BlockTintSource source = cache.get(state);
-    if (source == null) {
-      source = blockColors.getTintSource(state, 0);
-      if (source != null && cache.size() < 65536) {
-        cache.put(state, source);
+    net.minecraft.client.color.block.BlockTintSource[] sources = cache.get(state);
+    if (sources == null) {
+      sources = new net.minecraft.client.color.block.BlockTintSource[BIOME_TINT_SLOTS];
+      if (cache.size() < 65536) {
+        cache.put(state, sources);
       }
+    }
+    net.minecraft.client.color.block.BlockTintSource source = sources[tintIndex];
+    if (source == null) {
+      source = blockColors.getTintSource(state, tintIndex);
+      sources[tintIndex] = source;
     }
     return source;
   }
@@ -1320,6 +1407,7 @@ public class CustomChunkMesher {
     private final MeshBuildContext context;
     private final int chunkX, chunkY, chunkZ;
     private final int lodTier;
+    private final boolean smoothLighting;
 
     int opaqueQuadCount = 0;
     int waterQuadCount = 0;
@@ -1333,6 +1421,7 @@ public class CustomChunkMesher {
       this.blockModels = blockModels;
       this.snapshot = snapshot;
       this.context = context;
+      this.smoothLighting = context.smoothLighting;
       this.chunkX = chunkX;
       this.chunkY = chunkY;
       this.chunkZ = chunkZ;
@@ -1375,9 +1464,9 @@ public class CustomChunkMesher {
     }
 
     private int getPaddedBlockStateId(int x, int y, int z) {
-      int px = x + 1;
-      int py = y + 1;
-      int pz = z + 1;
+      int px = x + PADDED_RADIUS;
+      int py = y + PADDED_RADIUS;
+      int pz = z + PADDED_RADIUS;
       return snapshot.paddedBlockStates[(py * PADDED_SIZE + pz) * PADDED_SIZE + px];
     }
 
@@ -1414,14 +1503,48 @@ public class CustomChunkMesher {
     }
 
     private byte getPaddedLight(int x, int y, int z) {
-      int px = x + 1;
-      int py = y + 1;
-      int pz = z + 1;
+      int px = x + PADDED_RADIUS;
+      int py = y + PADDED_RADIUS;
+      int pz = z + PADDED_RADIUS;
       return snapshot.paddedLight[(py * PADDED_SIZE + pz) * PADDED_SIZE + px];
     }
 
     private int getBiomeTint(int x, int y, int z) {
-      return snapshot.biomeTints[y * 256 + z * 16 + x];
+      return getBiomeTint(x, y, z, 0);
+    }
+
+    private int getBiomeTint(int x, int y, int z, int tintIndex) {
+      int slot = tintIndex >= 0 && tintIndex < BIOME_TINT_SLOTS ? tintIndex : 0;
+      return snapshot.biomeTints[(y * 256 + z * 16 + x) * BIOME_TINT_SLOTS + slot];
+    }
+
+    private boolean isGrassSideOverlay(TextureAtlasSprite sprite) {
+      TextureAtlasSprite overlay = context.grassSideOverlaySprite;
+      if (sprite == null) {
+        return false;
+      }
+      try {
+        Identifier spriteName = sprite.contents().name();
+        if (Identifier.fromNamespaceAndPath("minecraft", "block/grass_block_side_overlay")
+            .equals(spriteName)) {
+          return true;
+        }
+        if (overlay != null && spriteName.equals(overlay.contents().name())) {
+          return true;
+        }
+      } catch (RuntimeException ignored) {
+      }
+      if (overlay == null) {
+        return false;
+      }
+      if (sprite == overlay || sprite.contents() == overlay.contents()) {
+        return true;
+      }
+      return sprite.atlasLocation().equals(overlay.atlasLocation()) &&
+          Float.compare(sprite.getU0(), overlay.getU0()) == 0 &&
+          Float.compare(sprite.getU1(), overlay.getU1()) == 0 &&
+          Float.compare(sprite.getV0(), overlay.getV0()) == 0 &&
+          Float.compare(sprite.getV1(), overlay.getV1()) == 0;
     }
 
     private void renderBlockModel(BlockStateModel model, BlockState state, BlockPos pos,
@@ -1500,42 +1623,41 @@ public class CustomChunkMesher {
       boolean downVisible = below == null || below.getFluidState().isEmpty();
 
       float[] cornerHeights = this.cornerHeights;
-      if (lodTier >= 2) {
-        float flatHeight = sampleFluidHeight(lx, ly, lz);
-        if (flatHeight <= 0.0f) {
-          flatHeight = fluid.getOwnHeight();
+      float fluidHeight = sampleFluidHeight(lx, ly, lz, isLava);
+      if (lodTier >= 2 || fluidHeight >= 1.0f) {
+        if (fluidHeight <= 0.0f) {
+          fluidHeight = fluid.getOwnHeight();
         }
-        cornerHeights[0] = flatHeight;
-        cornerHeights[1] = flatHeight;
-        cornerHeights[2] = flatHeight;
-        cornerHeights[3] = flatHeight;
+        cornerHeights[0] = fluidHeight;
+        cornerHeights[1] = fluidHeight;
+        cornerHeights[2] = fluidHeight;
+        cornerHeights[3] = fluidHeight;
       } else {
-        cornerHeights[0] = sampleFluidCornerHeight(lx, ly, lz, 0, 0);
-        cornerHeights[1] = sampleFluidCornerHeight(lx, ly, lz, 1, 0);
-        cornerHeights[2] = sampleFluidCornerHeight(lx, ly, lz, 1, 1);
-        cornerHeights[3] = sampleFluidCornerHeight(lx, ly, lz, 0, 1);
+        cornerHeights[0] = sampleFluidCornerHeight(lx, ly, lz, 0, 0, isLava);
+        cornerHeights[1] = sampleFluidCornerHeight(lx, ly, lz, 1, 0, isLava);
+        cornerHeights[2] = sampleFluidCornerHeight(lx, ly, lz, 1, 1, isLava);
+        cornerHeights[3] = sampleFluidCornerHeight(lx, ly, lz, 0, 1, isLava);
       }
 
-      byte light = getPaddedLight(lx, ly, lz);
-      int fluidColor = getBiomeTint(lx, ly, lz);
+      byte light = computeFluidLight(lx, ly, lz);
+      int fluidColor = isLava ? 0xFFFFFF : getBiomeTint(lx, ly, lz);
       byte r = (byte) ((fluidColor >> 16) & 0xFF);
       byte g = (byte) ((fluidColor >> 8) & 0xFF);
       byte b = (byte) (fluidColor & 0xFF);
       byte a = isLava ? (byte) 0xFF : WATER_ALPHA;
 
       if (upVisible) {
-        float flowAngle = lodTier >= 2 ? Float.NaN : computeFluidFlowAngle(lx, ly, lz);
-        renderFluidTop(lx, ly, lz, cornerHeights, r, g, b, a, light, flowAngle, isLava,
-            fluid.isSource());
+        float flowAngle = computeFluidFlowAngle(fluid, pos);
+        renderFluidTop(lx, ly, lz, cornerHeights, r, g, b, a, light, flowAngle, isLava);
       }
 
       for (Direction dir : ALL_DIRECTIONS) {
         if (dir.getAxis() == Direction.Axis.Y)
           continue;
         BlockState neighbor = getPaddedBlockState(lx + dir.getStepX(), ly, lz + dir.getStepZ());
-        if (neighbor == null || !neighbor.getFluidState().isEmpty())
+        if (neighbor != null && !neighbor.getFluidState().isEmpty())
           continue;
-        if (neighbor.isSolidRender())
+        if (neighbor != null && neighbor.isSolidRender())
           continue;
         renderFluidSide(lx, ly, lz, dir, cornerHeights, r, g, b, a, light, isLava);
       }
@@ -1548,9 +1670,22 @@ public class CustomChunkMesher {
       }
     }
 
+    private byte computeFluidLight(int lx, int ly, int lz) {
+      byte self = getPaddedLight(lx, ly, lz);
+      byte above = getPaddedLight(lx, ly + 1, lz);
+      int block = Math.max(self & 0xF, above & 0xF);
+      int sky = Math.max((self >> 4) & 0xF, (above >> 4) & 0xF);
+      return (byte) (block | (sky << 4));
+    }
+
     private boolean isWaterFluid(FluidState fs) {
       return fs.getType() == net.minecraft.world.level.material.Fluids.WATER ||
           fs.getType() == net.minecraft.world.level.material.Fluids.FLOWING_WATER;
+    }
+
+    private boolean isLavaFluid(FluidState fs) {
+      return fs.getType() == net.minecraft.world.level.material.Fluids.LAVA ||
+          fs.getType() == net.minecraft.world.level.material.Fluids.FLOWING_LAVA;
     }
 
     private short mapFluidU(TextureAtlasSprite sprite, float u) {
@@ -1569,57 +1704,61 @@ public class CustomChunkMesher {
       return (short) (t * 65535f);
     }
 
-    private float sampleFluidHeight(int x, int y, int z) {
+    private float sampleFluidHeight(int x, int y, int z, boolean lava) {
       BlockState state = getPaddedBlockState(x, y, z);
       if (state == null)
         return 0.0f;
       FluidState fs = state.getFluidState();
-      if (fs.isEmpty() || !isWaterFluid(fs))
-        return 0.0f;
-      BlockState above = getPaddedBlockState(x, y + 1, z);
-      if (above != null) {
-        FluidState aboveFs = above.getFluidState();
-        if (!aboveFs.isEmpty() && isWaterFluid(aboveFs)) {
-          return 1.0f;
+      boolean matchingFluid = lava ? isLavaFluid(fs) : isWaterFluid(fs);
+      if (matchingFluid) {
+        BlockState above = getPaddedBlockState(x, y + 1, z);
+        if (above != null) {
+          FluidState aboveFs = above.getFluidState();
+          if (lava ? isLavaFluid(aboveFs) : isWaterFluid(aboveFs)) {
+            return 1.0f;
+          }
         }
+        return fs.getOwnHeight();
       }
-      return fs.getOwnHeight();
+      return state.isSolid() ? -1.0f : 0.0f;
     }
 
-    private float sampleFluidCornerHeight(int lx, int ly, int lz, int dx, int dz) {
-      float sum = 0.0f;
-      int count = 0;
+    private float sampleFluidCornerHeight(int lx, int ly, int lz, int dx, int dz,
+        boolean lava) {
+      float weightedHeight = 0.0f;
+      int weight = 0;
       for (int sx = 0; sx <= 1; sx++) {
         for (int sz = 0; sz <= 1; sz++) {
           int nx = lx + dx + sx - 1;
           int nz = lz + dz + sz - 1;
-          float h = sampleFluidHeight(nx, ly, nz);
-          if (h > 0.0f) {
-            sum += h;
-            count++;
+          float height = sampleFluidHeight(nx, ly, nz, lava);
+          if (height >= 1.0f) {
+            return 1.0f;
+          }
+          if (height >= 0.8f) {
+            weightedHeight += height * 10.0f;
+            weight += 10;
+          } else if (height >= 0.0f) {
+            weightedHeight += height;
+            weight++;
           }
         }
       }
-      return count > 0 ? sum / count : 0.0f;
+      return weight > 0 ? weightedHeight / weight : 0.0f;
     }
 
-    private float computeFluidFlowAngle(int lx, int ly, int lz) {
-      float hEast = sampleFluidHeight(lx + 1, ly, lz);
-      float hWest = sampleFluidHeight(lx - 1, ly, lz);
-      float hSouth = sampleFluidHeight(lx, ly, lz + 1);
-      float hNorth = sampleFluidHeight(lx, ly, lz - 1);
-
-      float dx = hWest - hEast;
-      float dz = hNorth - hSouth;
-
-      if (Math.abs(dx) < 1e-6f && Math.abs(dz) < 1e-6f) {
+    private float computeFluidFlowAngle(FluidState fluid, BlockPos pos) {
+      Vec3 flow = context.world != null
+          ? fluid.getFlow(context.world, pos)
+          : Vec3.ZERO;
+      if (flow.x == 0.0 && flow.z == 0.0) {
         return Float.NaN;
       }
-      return (float) Math.atan2(dz, dx);
+      return (float) Math.atan2(flow.z, flow.x);
     }
 
     private void renderFluidTop(int lx, int ly, int lz, float[] heights, byte r, byte g, byte b, byte a, byte light,
-        float flowAngle, boolean lava, boolean isSource) {
+        float flowAngle, boolean lava) {
       float h0 = heights[0];
       float h1 = heights[1];
       float h2 = heights[2];
@@ -1628,11 +1767,10 @@ public class CustomChunkMesher {
       if (minH <= 0.0f)
         return;
 
-      float baseY = ly + 0.875f;
-      float y0 = baseY - (1.0f - h0) * 0.875f;
-      float y1 = baseY - (1.0f - h1) * 0.875f;
-      float y2 = baseY - (1.0f - h2) * 0.875f;
-      float y3 = baseY - (1.0f - h3) * 0.875f;
+      float y0 = ly + h0;
+      float y1 = ly + h1;
+      float y2 = ly + h2;
+      float y3 = ly + h3;
 
       short px0 = (short) (lx * 256.0f);
       short pz0 = (short) (lz * 256.0f);
@@ -1668,7 +1806,10 @@ public class CustomChunkMesher {
         fv3 = 0.5f + (-cos - sin);
       }
 
-      TextureAtlasSprite topSprite = lava ? context.lavaStillSprite : context.waterStillSprite;
+      boolean flowing = !Float.isNaN(flowAngle);
+      TextureAtlasSprite topSprite = lava
+          ? (flowing ? context.lavaFlowingSprite : context.lavaStillSprite)
+          : (flowing ? context.waterFlowingSprite : context.waterStillSprite);
       short u0 = mapFluidU(topSprite, fu0);
       short v0 = mapFluidV(topSprite, fv0);
       short u1 = mapFluidU(topSprite, fu1);
@@ -1691,61 +1832,59 @@ public class CustomChunkMesher {
       float h0, h1;
       short x0, z0, x1, z1;
       TextureAtlasSprite sideSprite = lava ? context.lavaFlowingSprite : context.waterFlowingSprite;
-      short u0 = mapFluidU(sideSprite, 0.0f);
-      short u1 = mapFluidU(sideSprite, 1.0f);
-      short v0 = mapFluidV(sideSprite, 0.0f);
-      short v1 = mapFluidV(sideSprite, 1.0f);
 
       switch (dir) {
         case NORTH:
           h0 = heights[0];
           h1 = heights[1];
           x0 = (short) (lx * 256.0f);
-          z0 = (short) (lz * 256.0f);
+          z0 = (short) ((lz + FLUID_EPSILON) * 256.0f);
           x1 = (short) ((lx + 1) * 256.0f);
-          z1 = (short) (lz * 256.0f);
+          z1 = (short) ((lz + FLUID_EPSILON) * 256.0f);
           break;
         case SOUTH:
           h0 = heights[3];
           h1 = heights[2];
           x0 = (short) (lx * 256.0f);
-          z0 = (short) ((lz + 1) * 256.0f);
+          z0 = (short) ((lz + 1 - FLUID_EPSILON) * 256.0f);
           x1 = (short) ((lx + 1) * 256.0f);
-          z1 = (short) ((lz + 1) * 256.0f);
+          z1 = (short) ((lz + 1 - FLUID_EPSILON) * 256.0f);
           break;
         case WEST:
           h0 = heights[0];
           h1 = heights[3];
-          x0 = (short) (lx * 256.0f);
+          x0 = (short) ((lx + FLUID_EPSILON) * 256.0f);
           z0 = (short) (lz * 256.0f);
-          x1 = (short) (lx * 256.0f);
-          z1 = (short) ((lz + 1) * 256.0f);
+          x1 = (short) ((lx + FLUID_EPSILON) * 256.0f);
+          z1 = (short) ((lz + 1 - FLUID_EPSILON) * 256.0f);
           break;
         case EAST:
           h0 = heights[1];
           h1 = heights[2];
-          x0 = (short) ((lx + 1) * 256.0f);
+          x0 = (short) ((lx + 1 - FLUID_EPSILON) * 256.0f);
           z0 = (short) (lz * 256.0f);
-          x1 = (short) ((lx + 1) * 256.0f);
-          z1 = (short) ((lz + 1) * 256.0f);
+          x1 = (short) ((lx + 1 - FLUID_EPSILON) * 256.0f);
+          z1 = (short) ((lz + 1 - FLUID_EPSILON) * 256.0f);
           break;
         default:
           return;
       }
 
-      float baseY = ly + 0.875f;
-      float y0 = baseY - (1.0f - h0) * 0.875f;
-      float y1 = baseY - (1.0f - h1) * 0.875f;
-      short py0 = (short) (y0 * 256.0f);
-      short py1 = (short) (y1 * 256.0f);
+      short py0 = (short) ((ly + h0) * 256.0f);
+      short py1 = (short) ((ly + h1) * 256.0f);
       short pyBase = (short) (ly * 256.0f);
+      short uLeft = mapFluidU(sideSprite, 0.5f);
+      short uRight = mapFluidU(sideSprite, 0.0f);
+      short vTop0 = mapFluidV(sideSprite, (1.0f - h0) * 0.5f);
+      short vTop1 = mapFluidV(sideSprite, (1.0f - h1) * 0.5f);
+      short vBottom = mapFluidV(sideSprite, 0.5f);
 
       byte normal = (byte) dir.get3DDataValue();
       ByteBuffer target = waterBuffer;
-      emitVertex(target, x0, py0, z0, u1, v0, r, g, b, a, light, normal);
-      emitVertex(target, x0, pyBase, z0, u1, v1, r, g, b, a, light, normal);
-      emitVertex(target, x1, pyBase, z1, u0, v1, r, g, b, a, light, normal);
-      emitVertex(target, x1, py1, z1, u0, v0, r, g, b, a, light, normal);
+      emitVertex(target, x0, py0, z0, uLeft, vTop0, r, g, b, a, light, normal);
+      emitVertex(target, x0, pyBase, z0, uLeft, vBottom, r, g, b, a, light, normal);
+      emitVertex(target, x1, pyBase, z1, uRight, vBottom, r, g, b, a, light, normal);
+      emitVertex(target, x1, py1, z1, uRight, vTop1, r, g, b, a, light, normal);
       waterQuadCount++;
     }
 
@@ -1775,14 +1914,26 @@ public class CustomChunkMesher {
       ByteBuffer target = water ? waterBuffer : solidBuffer;
       Direction face = quad.direction();
       byte normalIndex = (byte) (face != null ? face.get3DDataValue() : 6);
-      float shade = quad.materialInfo().shade() ? getFaceShade(normalIndex) : 1.0f;
+      float shade = quad.materialInfo().shade() && normalIndex >= 0
+          && normalIndex < context.faceShade.length
+          ? context.faceShade[normalIndex]
+          : 1.0f;
 
       boolean isLeaves = state.getBlock() instanceof LeavesBlock;
       MetalRenderConfig cfg = MetalRenderClient.getConfig();
       boolean fastLeaves = isLeaves && (lodTier >= 2 || (cfg != null && cfg.leafCullingMode == 0));
 
-      boolean tinted = quad.materialInfo().isTinted() || quad.materialInfo().tintIndex() >= 0;
-      int blockColor = tinted ? getBiomeTint(lx, ly, lz) : 0xFFFFFF;
+      TextureAtlasSprite quadSprite = quad.materialInfo().sprite();
+      boolean grassOverlay = state.getBlock() == Blocks.GRASS_BLOCK &&
+          isGrassSideOverlay(quadSprite);
+      boolean grassSideTint = grassOverlay ||
+          (state.getBlock() == Blocks.GRASS_BLOCK && face != null
+              && face.getAxis() != Direction.Axis.Y
+              && quad.materialInfo().tintIndex() == 0);
+      boolean tinted = grassSideTint || quad.materialInfo().isTinted()
+          || quad.materialInfo().tintIndex() >= 0;
+      int tintIndex = grassSideTint ? 0 : quad.materialInfo().tintIndex();
+      int blockColor = tinted ? getBiomeTint(lx, ly, lz, tintIndex) : 0xFFFFFF;
       byte tintR = (byte) ((blockColor >> 16) & 0xFF);
       byte tintG = (byte) ((blockColor >> 8) & 0xFF);
       byte tintB = (byte) (blockColor & 0xFF);
@@ -1793,6 +1944,11 @@ public class CustomChunkMesher {
         float x = pos.x() + lx;
         float y = pos.y() + ly;
         float z = pos.z() + lz;
+        if (grassSideTint && face != null && face.getAxis() != Direction.Axis.Y) {
+          x += face.getStepX() * GRASS_OVERLAY_OFFSET;
+          y += face.getStepY() * GRASS_OVERLAY_OFFSET;
+          z += face.getStepZ() * GRASS_OVERLAY_OFFSET;
+        }
         float u = Float.intBitsToFloat((int) (packedUV >> 32));
         float v = Float.intBitsToFloat((int) packedUV);
 
@@ -1808,8 +1964,10 @@ public class CustomChunkMesher {
           light = computeFaceLightFast(lx, ly, lz, face, quad.materialInfo().lightEmission());
           ao = 1.0f;
         } else {
-          light = computeVertexLight(lx, ly, lz, face, x, y, z, quad.materialInfo().lightEmission());
-          ao = (lodTier >= 1 || face == null) ? 1.0f : computeVertexAo(lx, ly, lz, face, x, y, z);
+          computeVertexLighting(lx, ly, lz, face, x, y, z,
+              quad.materialInfo().lightEmission());
+          light = (byte) ((computedBlock & 0xF) | ((computedSky & 0xF) << 4));
+          ao = (lodTier >= 1 || face == null || !smoothLighting) ? 1.0f : computedAo;
         }
 
         float fr, fg, fb;
@@ -1836,14 +1994,29 @@ public class CustomChunkMesher {
       }
     }
 
+    private final int[] sampleBlock = new int[9];
+    private final int[] sampleSky = new int[9];
+    private final float[] sampleAo = new float[9];
+    private final boolean[] sampleEmissive = new boolean[9];
+    private final boolean[] sampleOpaque = new boolean[9];
+    private final float[] weightsScratch = new float[4];
+    private static final Direction[][] EDGE_DIRECTIONS = {
+        { Direction.WEST, Direction.EAST, Direction.NORTH, Direction.SOUTH },
+        { Direction.EAST, Direction.WEST, Direction.NORTH, Direction.SOUTH },
+        { Direction.UP, Direction.DOWN, Direction.EAST, Direction.WEST },
+        { Direction.WEST, Direction.EAST, Direction.DOWN, Direction.UP },
+        { Direction.UP, Direction.DOWN, Direction.NORTH, Direction.SOUTH },
+        { Direction.DOWN, Direction.UP, Direction.NORTH, Direction.SOUTH }
+    };
+
     private byte computeFaceLightFast(int lx, int ly, int lz, Direction face, int emission) {
       int sx = lx;
       int sy = ly;
       int sz = lz;
       if (face != null) {
-        sx = Math.max(-1, Math.min(16, lx + face.getStepX()));
-        sy = Math.max(-1, Math.min(16, ly + face.getStepY()));
-        sz = Math.max(-1, Math.min(16, lz + face.getStepZ()));
+        sx = clampLocal(lx + face.getStepX());
+        sy = clampLocal(ly + face.getStepY());
+        sz = clampLocal(lz + face.getStepZ());
       }
       byte light = getPaddedLight(sx, sy, sz);
       int bl = light & 0xF;
@@ -1854,117 +2027,153 @@ public class CustomChunkMesher {
       return (byte) ((bl & 0xF) | ((sl & 0xF) << 4));
     }
 
-    private byte computeVertexLight(int lx, int ly, int lz, Direction face,
+    private int computedBlock;
+    private int computedSky;
+    private float computedAo;
+
+    private void computeVertexLighting(int lx, int ly, int lz, Direction face,
         float vx, float vy, float vz, int emission) {
       if (face == null) {
-        face = Direction.UP;
+        byte light = getPaddedLight(lx, ly, lz);
+        computedBlock = light & 0xF;
+        computedSky = (light >> 4) & 0xF;
+        computedAo = 1.0f;
+        return;
+      }
+      if (!smoothLighting) {
+        byte light = computeFaceLightFast(lx, ly, lz, face, emission);
+        computedBlock = light & 0xF;
+        computedSky = (light >> 4) & 0xF;
+        computedAo = 1.0f;
+        return;
       }
 
-      int baseX = Math.max(-1, Math.min(16, (int) Math.floor(vx + 0.5f * face.getStepX())));
-      int baseY = Math.max(-1, Math.min(16, (int) Math.floor(vy + 0.5f * face.getStepY())));
-      int baseZ = Math.max(-1, Math.min(16, (int) Math.floor(vz + 0.5f * face.getStepZ())));
+      int index = face.get3DDataValue();
+      Direction[] edges = EDGE_DIRECTIONS[index];
+      float depth = faceDepth(face, vx, vy, vz);
+      boolean offset = depth <= 0.5f;
+      int baseX = clampLocal(lx + (offset ? face.getStepX() : 0));
+      int baseY = clampLocal(ly + (offset ? face.getStepY() : 0));
+      int baseZ = clampLocal(lz + (offset ? face.getStepZ() : 0));
 
-      int blSum = 0;
-      int slSum = 0;
-      for (int i = 0; i < 4; i++) {
-        int sx, sy, sz;
-        switch (face) {
-          case UP:
-          case DOWN:
-            sx = baseX + ((i & 1) == 0 ? 0 : -1);
-            sy = baseY;
-            sz = baseZ + ((i & 2) == 0 ? 0 : -1);
-            break;
-          case NORTH:
-          case SOUTH:
-            sx = baseX + ((i & 1) == 0 ? 0 : -1);
-            sy = baseY + ((i & 2) == 0 ? 0 : -1);
-            sz = baseZ;
-            break;
-          case WEST:
-          case EAST:
-            sx = baseX;
-            sy = baseY + ((i & 1) == 0 ? 0 : -1);
-            sz = baseZ + ((i & 2) == 0 ? 0 : -1);
-            break;
-          default:
-            sx = baseX;
-            sy = baseY;
-            sz = baseZ;
-        }
-        sx = Math.max(-1, Math.min(16, sx));
-        sy = Math.max(-1, Math.min(16, sy));
-        sz = Math.max(-1, Math.min(16, sz));
-        byte light = getPaddedLight(sx, sy, sz);
-        blSum += light & 0xF;
-        slSum += (light >> 4) & 0xF;
-      }
-      int bl = (blSum + 2) >> 2;
-      int sl = (slSum + 2) >> 2;
+      readSample(0, baseX, baseY, baseZ);
+      readSample(1, baseX + edges[0].getStepX(), baseY + edges[0].getStepY(), baseZ + edges[0].getStepZ());
+      readSample(2, baseX + edges[1].getStepX(), baseY + edges[1].getStepY(), baseZ + edges[1].getStepZ());
+      readSample(3, baseX + edges[2].getStepX(), baseY + edges[2].getStepY(), baseZ + edges[2].getStepZ());
+      readSample(4, baseX + edges[3].getStepX(), baseY + edges[3].getStepY(), baseZ + edges[3].getStepZ());
+      readSample(5, baseX + edges[0].getStepX() + edges[2].getStepX(),
+          baseY + edges[0].getStepY() + edges[2].getStepY(),
+          baseZ + edges[0].getStepZ() + edges[2].getStepZ());
+      readSample(6, baseX + edges[0].getStepX() + edges[3].getStepX(),
+          baseY + edges[0].getStepY() + edges[3].getStepY(),
+          baseZ + edges[0].getStepZ() + edges[3].getStepZ());
+      readSample(7, baseX + edges[1].getStepX() + edges[2].getStepX(),
+          baseY + edges[1].getStepY() + edges[2].getStepY(),
+          baseZ + edges[1].getStepZ() + edges[2].getStepZ());
+      readSample(8, baseX + edges[1].getStepX() + edges[3].getStepX(),
+          baseY + edges[1].getStepY() + edges[3].getStepY(),
+          baseZ + edges[1].getStepZ() + edges[3].getStepZ());
 
+      if (sampleOccluded(3) && sampleOccluded(1)) copySample(5, 1);
+      if (sampleOccluded(4) && sampleOccluded(1)) copySample(6, 1);
+      if (sampleOccluded(3) && sampleOccluded(2)) copySample(7, 2);
+      if (sampleOccluded(4) && sampleOccluded(2)) copySample(8, 2);
+
+      float[] weights = vertexWeights(face, vx - lx, vy - ly, vz - lz);
+      int c0Block = blendLight(4, 1, 6, 0, true);
+      int c1Block = blendLight(3, 1, 5, 0, true);
+      int c2Block = blendLight(3, 2, 7, 0, true);
+      int c3Block = blendLight(4, 2, 8, 0, true);
+      int c0Sky = blendLight(4, 1, 6, 0, false);
+      int c1Sky = blendLight(3, 1, 5, 0, false);
+      int c2Sky = blendLight(3, 2, 7, 0, false);
+      int c3Sky = blendLight(4, 2, 8, 0, false);
+      float c0Ao = blendAo(4, 1, 6, 0);
+      float c1Ao = blendAo(3, 1, 5, 0);
+      float c2Ao = blendAo(3, 2, 7, 0);
+      float c3Ao = blendAo(4, 2, 8, 0);
+      computedBlock = Math.min(15, Math.round(c0Block * weights[0] + c1Block * weights[1]
+          + c2Block * weights[2] + c3Block * weights[3]));
+      computedSky = Math.min(15, Math.round(c0Sky * weights[0] + c1Sky * weights[1]
+          + c2Sky * weights[2] + c3Sky * weights[3]));
+      computedAo = c0Ao * weights[0] + c1Ao * weights[1]
+          + c2Ao * weights[2] + c3Ao * weights[3];
       if (emission > 0) {
-        bl = Math.max(bl, Math.min(15, emission));
+        computedBlock = Math.max(computedBlock, Math.min(15, emission));
       }
-      return (byte) ((bl & 0xF) | ((sl & 0xF) << 4));
     }
 
-    private static final int[][] AO_AXIS_A = {
-        { 1, 0, 0 },
-        { 1, 0, 0 },
-        { 1, 0, 0 },
-        { 1, 0, 0 },
-        { 0, 1, 0 },
-        { 0, 1, 0 }
-    };
-    private static final int[][] AO_AXIS_B = {
-        { 0, 0, 1 },
-        { 0, 0, 1 },
-        { 0, 1, 0 },
-        { 0, 1, 0 },
-        { 0, 0, 1 },
-        { 0, 0, 1 }
-    };
-
-    private float computeVertexAo(int lx, int ly, int lz, Direction face,
-        float vx, float vy, float vz) {
-      int[] axisA = AO_AXIS_A[face.get3DDataValue()];
-      int[] axisB = AO_AXIS_B[face.get3DDataValue()];
-
-      float centerX = lx + 0.5f;
-      float centerY = ly + 0.5f;
-      float centerZ = lz + 0.5f;
-
-      float dotA = (vx - centerX) * axisA[0] + (vy - centerY) * axisA[1] + (vz - centerZ) * axisA[2];
-      float dotB = (vx - centerX) * axisB[0] + (vy - centerY) * axisB[1] + (vz - centerZ) * axisB[2];
-      int signA = dotA > 0 ? 1 : -1;
-      int signB = dotB > 0 ? 1 : -1;
-
-      int bx = Math.max(-1, Math.min(16, (int) Math.floor(vx + 0.5f * face.getStepX())));
-      int by = Math.max(-1, Math.min(16, (int) Math.floor(vy + 0.5f * face.getStepY())));
-      int bz = Math.max(-1, Math.min(16, (int) Math.floor(vz + 0.5f * face.getStepZ())));
-
-      boolean a = isOccluder(bx + signA * axisA[0], by + signA * axisA[1], bz + signA * axisA[2]);
-      boolean b = isOccluder(bx + signB * axisB[0], by + signB * axisB[1], bz + signB * axisB[2]);
-      boolean c = isOccluder(bx + signA * axisA[0] + signB * axisB[0],
-          by + signA * axisA[1] + signB * axisB[1],
-          bz + signA * axisA[2] + signB * axisB[2]);
-
-      if (a && b) {
-        c = true;
-      }
-
-      int ao = (a ? 1 : 0) + (b ? 1 : 0) + (c ? 1 : 0);
-      return AO_CURVE[ao];
+    private void readSample(int slot, int x, int y, int z) {
+      int px = clampLocal(x) + PADDED_RADIUS;
+      int py = clampLocal(y) + PADDED_RADIUS;
+      int pz = clampLocal(z) + PADDED_RADIUS;
+      int index = (py * PADDED_SIZE + pz) * PADDED_SIZE + px;
+      byte light = snapshot.paddedLight[index];
+      sampleBlock[slot] = light & 0xF;
+      sampleSky[slot] = (light >> 4) & 0xF;
+      sampleAo[slot] = 1.0f;
+      sampleEmissive[slot] = snapshot.paddedEmission[index] != 0;
+      sampleOpaque[slot] = snapshot.paddedOcclusion[index] != 0;
     }
 
-    private static final float[] AO_CURVE = { 1.0f, 0.96f, 0.86f, 0.72f };
+    private void copySample(int target, int source) {
+      sampleBlock[target] = sampleBlock[source];
+      sampleSky[target] = sampleSky[source];
+      sampleAo[target] = sampleAo[source];
+      sampleEmissive[target] = sampleEmissive[source];
+      sampleOpaque[target] = sampleOpaque[source];
+    }
 
-    private boolean isOccluder(int x, int y, int z) {
-      x = Math.max(-1, Math.min(16, x));
-      y = Math.max(-1, Math.min(16, y));
-      z = Math.max(-1, Math.min(16, z));
-      BlockState state = getPaddedBlockState(x, y, z);
-      return state != null && state.isSolidRender();
+    private boolean sampleOccluded(int slot) {
+      return sampleOpaque[slot];
+    }
+
+    private int blendLight(int a, int b, int c, int d, boolean block) {
+      int[] values = block ? sampleBlock : sampleSky;
+      int v0 = sampleEmissive[a] ? 15 : values[a];
+      int v1 = sampleEmissive[b] ? 15 : values[b];
+      int v2 = sampleEmissive[c] ? 15 : values[c];
+      int v3 = sampleEmissive[d] ? 15 : values[d];
+      return (v0 + v1 + v2 + v3 + 2) >> 2;
+    }
+
+    private float blendAo(int a, int b, int c, int d) {
+      return (sampleAo[a] + sampleAo[b] + sampleAo[c] + sampleAo[d]) * 0.25f;
+    }
+
+    private float[] vertexWeights(Direction face, float x, float y, float z) {
+      float u;
+      float v;
+      switch (face) {
+        case DOWN -> { u = z; v = 1.0f - x; }
+        case UP -> { u = z; v = x; }
+        case NORTH -> { u = 1.0f - x; v = y; }
+        case SOUTH -> { u = y; v = 1.0f - x; }
+        case WEST -> { u = z; v = y; }
+        case EAST -> { u = z; v = 1.0f - y; }
+        default -> { u = 0.0f; v = 0.0f; }
+      }
+      weightsScratch[0] = v * u;
+      weightsScratch[1] = v * (1.0f - u);
+      weightsScratch[2] = (1.0f - v) * (1.0f - u);
+      weightsScratch[3] = (1.0f - v) * u;
+      return weightsScratch;
+    }
+
+    private float faceDepth(Direction face, float x, float y, float z) {
+      return switch (face) {
+        case DOWN -> y;
+        case UP -> 1.0f - y;
+        case NORTH -> z;
+        case SOUTH -> 1.0f - z;
+        case WEST -> x;
+        case EAST -> 1.0f - x;
+      };
+    }
+
+    private int clampLocal(int value) {
+      return Math.max(-PADDED_RADIUS,
+          Math.min(SECTION_SIZE + PADDED_RADIUS - 1, value));
     }
   }
 
@@ -2032,7 +2241,8 @@ public class CustomChunkMesher {
     for (int y = 0; y < SECTION_SIZE; y++) {
       for (int z = 0; z < SECTION_SIZE; z++) {
         for (int x = 0; x < SECTION_SIZE; x++) {
-          int pIdx = ((y + 1) * PADDED_SIZE + (z + 1)) * PADDED_SIZE + (x + 1);
+          int pIdx = ((y + PADDED_RADIUS) * PADDED_SIZE + (z + PADDED_RADIUS))
+              * PADDED_SIZE + (x + PADDED_RADIUS);
           if (paddedBlockStates[pIdx] != 0) {
             int bit = (y / 4) * 16 + (z / 4) * 4 + (x / 4);
             if (bit >= 0 && bit < 64) {
@@ -2071,7 +2281,8 @@ public class CustomChunkMesher {
     for (int y = startY; y < endY; y++) {
       for (int z = startZ; z < endZ; z++) {
         for (int x = startX; x < endX; x++) {
-          int pIdx = ((y + 1) * PADDED_SIZE + (z + 1)) * PADDED_SIZE + (x + 1);
+          int pIdx = ((y + PADDED_RADIUS) * PADDED_SIZE + (z + PADDED_RADIUS))
+              * PADDED_SIZE + (x + PADDED_RADIUS);
           int stateId = paddedBlockStates[pIdx];
           if (stateId == 0 || !isOpaqueState(stateId)) {
             return false;
@@ -2079,7 +2290,8 @@ public class CustomChunkMesher {
           int nx = x + stepX;
           int ny = y + stepY;
           int nz = z + stepZ;
-          int nIdx = ((ny + 1) * PADDED_SIZE + (nz + 1)) * PADDED_SIZE + (nx + 1);
+          int nIdx = ((ny + PADDED_RADIUS) * PADDED_SIZE + (nz + PADDED_RADIUS))
+              * PADDED_SIZE + (nx + PADDED_RADIUS);
           if (nIdx < 0 || nIdx >= paddedBlockStates.length) {
             return false;
           }
