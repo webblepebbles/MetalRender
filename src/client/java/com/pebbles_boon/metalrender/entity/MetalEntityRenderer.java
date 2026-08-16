@@ -950,9 +950,6 @@ public class MetalEntityRenderer {
         lastHurt = drawCommand.hurtFactor;
         lastFlash = drawCommand.whiteFlash;
       }
-      if (inWater) {
-        renderFlags |= 0x1;
-      }
       float waterFog = inWater ? 1.0f : 0.0f;
       if (waterFog != lastWaterFog) {
         NativeBridge.nSetWaterFog(ctx, waterFog);
