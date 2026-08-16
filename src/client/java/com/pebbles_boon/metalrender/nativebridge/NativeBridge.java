@@ -122,6 +122,9 @@ public final class NativeBridge {
   public static native void nUpdateTexture2D(long textureHandle, int width,
       int height, byte[] pixelData);
 
+  public static native void nUpdateTexture2DRegion(long textureHandle,
+      int srcWidth, int x, int y, int w, int h, byte[] pixelData);
+
   public static native long nGetDeviceHandle(long handle);
 
   public static native long nGetShaderLibraryHandle(long handle);
@@ -207,7 +210,7 @@ public final class NativeBridge {
 
   public static native int nRunGPUCulling(long handle, int chunkCount);
 
-  public static native void nExecuteIndirectDraws(long frameContext, long vertexBuffer, long indexBuffer);
+  public static native int nExecuteGpuCulledDraws(long frameContext, long indexBuffer);
 
   public static native int nGetGPUVisibleCount(long handle);
 
