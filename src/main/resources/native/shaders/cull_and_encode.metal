@@ -22,6 +22,13 @@ struct SubChunkEntry {
     uint     indexCount;
     uint     flags;
 };
+struct IndirectIndexedArgs {
+    uint indexCount;
+    uint instanceCount;
+    uint indexStart;
+    int baseVertex;
+    uint baseInstance;
+};
 struct CullStats {
     atomic_uint visibleCount;
     atomic_uint frustumCulled;
@@ -79,10 +86,16 @@ kernel void cull_and_encode(
     device CullStats*             stats        [[buffer(3)]],
     constant CameraUniforms&      camera       [[buffer(4)]],
     texture2d<float>              hiz          [[texture(0)]],
+    device IndirectIndexedArgs*   drawArgs     [[buffer(5)]],
     uint gid [[thread_position_in_grid]]
 ) {
     if (gid >= camera.totalChunks) return;
     atomic_fetch_add_explicit(&stats->totalProcessed, 1, memory_order_relaxed);
+    drawArgs[gid].indexCount = 0;
+    drawArgs[gid].instanceCount = 0;
+    drawArgs[gid].indexStart = 0;
+    drawArgs[gid].baseVertex = 0;
+    drawArgs[gid].baseInstance = gid;
     SubChunkEntry chunk = chunks[gid];
     if (!isInFrustum(chunk.aabbMin.xyz, chunk.aabbMax.xyz, camera.frustumPlanes)) {
         atomic_fetch_add_explicit(&stats->frustumCulled, 1, memory_order_relaxed);
@@ -101,7 +114,14 @@ kernel void cull_and_encode(
         }
     }
     uint slot = atomic_fetch_add_explicit(drawCount, 1, memory_order_relaxed);
-    visibleIdx[slot] = gid;
+    if (slot < camera.totalChunks) {
+        visibleIdx[slot] = gid;
+    }
+    drawArgs[gid].indexCount = chunk.flags != 0 ? chunk.flags : chunk.indexCount;
+    drawArgs[gid].instanceCount = 1;
+    drawArgs[gid].indexStart = 0;
+    drawArgs[gid].baseVertex = 0;
+    drawArgs[gid].baseInstance = gid;
     atomic_fetch_add_explicit(&stats->visibleCount, 1, memory_order_relaxed);
 }
 kernel void reset_cull_stats(
