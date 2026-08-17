@@ -233,7 +233,7 @@ public class MetalRenderSettingsScreen extends Screen {
         Component.literal("MetalRender Settings"),
         px + 16, py + (HDR_H - 9) / 2 + 1, C_TEXT_PRI, false);
     int vx = px + 16 + font.width("MetalRender Settings") + 8;
-    ctx.text(font, Component.literal("v0.1.7"),
+    ctx.text(font, Component.literal("v2.0.0"),
         vx, py + (HDR_H - 9) / 2 + 1, C_TEXT_SEC, false);
   }
 
@@ -507,10 +507,9 @@ public class MetalRenderSettingsScreen extends Screen {
 
     boolean biomeChanged = config.biomeTransitionDetail != initialBiomeDetail;
     boolean cameraFacingCullingChanged = config.enableCameraFacingCulling != initialCameraFacingCulling;
-    boolean cullingFeaturesChanged =
-        config.enableClusterFrustumCulling != initialClusterFrustumCulling
-            || config.enableHiZCull != initialHiZCull
-            || config.enableGpuTranslucencySort != initialGpuTranslucencySort;
+    boolean cullingFeaturesChanged = config.enableClusterFrustumCulling != initialClusterFrustumCulling
+        || config.enableHiZCull != initialHiZCull
+        || config.enableGpuTranslucencySort != initialGpuTranslucencySort;
     com.pebbles_boon.metalrender.util.MetalLogger.info(
         "settings close: rebuild=%b rd=%b bm=%b lf=%b lt=%b",
         needsRebuild,
