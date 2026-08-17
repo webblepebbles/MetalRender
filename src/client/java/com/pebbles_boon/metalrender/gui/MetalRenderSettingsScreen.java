@@ -694,7 +694,7 @@ public class MetalRenderSettingsScreen extends Screen {
         v -> config.lodMidChunks = (int) (float) v);
     tog("Thermal-Adaptive LOD", config.lodThermalAdaptive, v -> config.lodThermalAdaptive = v);
 
-    sec("Sodium Extras");
+    sec("Extras");
     tog("Hidden Fluid Culling", config.hiddenFluidCulling, v -> config.hiddenFluidCulling = v);
     tog("Improved Fluid Shaping", config.improvedFluidShaping, v -> config.improvedFluidShaping = v);
     tog("Closest Point Entity Sort", config.closestPointEntitySort, v -> config.closestPointEntitySort = v);
