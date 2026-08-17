@@ -1,6 +1,6 @@
 {
   "required": true,
-  "minVersion": "2.0.0",
+  "minVersion": "0.8.5",
   "package": "com.pebbles_boon.metalrender.sodium.mixins",
   "compatibilityLevel": "JAVA_21",
   "refmap": "metalrender.refmap.json",
