@@ -281,13 +281,18 @@ fragment half4 fragment_terrain_opaque(
     constexpr sampler lightSampler(mag_filter::nearest, min_filter::nearest,
                                    mip_filter::nearest);
     half4 texColor = blockAtlas.sample(atlasSampler, in.texCoord);
+    half vertAlpha = in.color.a;
     if (texColor.a < half(0.5)) {
-        discard_fragment();
+        if (vertAlpha > half(0.994h) && vertAlpha < half(0.998h)) {
+            texColor.a = half(1.0h);
+        } else {
+            discard_fragment();
+        }
     }
     half4 tinted = texColor * in.color;
     half3 light = lightmap.sample(lightSampler, in.lightUV).rgb;
     tinted.rgb *= max(light, half3(0.04h));
-    return half4(tinted.rgb, half(1.0));
+    return half4(tinted.rgb, half(1.0h));
 }
 
 fragment half4 fragment_terrain_icb_opaque(
@@ -299,13 +304,19 @@ fragment half4 fragment_terrain_icb_opaque(
     constexpr sampler lightSampler(mag_filter::nearest, min_filter::nearest,
                                    mip_filter::nearest);
     half4 texColor = resources.blockAtlas.sample(atlasSampler, in.texCoord);
+    half vertAlpha = in.color.a;
     if (texColor.a < half(0.5)) {
-        discard_fragment();
+        // Match fragment_terrain_mesh_opaque and the regular non-ICB path.
+        if (vertAlpha > half(0.994h) && vertAlpha < half(0.998h)) {
+            texColor.a = half(1.0h);
+        } else {
+            discard_fragment();
+        }
     }
     half4 tinted = texColor * in.color;
     half3 light = resources.lightmap.sample(lightSampler, in.lightUV).rgb;
     tinted.rgb *= max(light, half3(0.04h));
-    return half4(tinted.rgb, half(1.0));
+    return half4(tinted.rgb, half(1.0h));
 }
 
 fragment half4 fragment_terrain_icb(
