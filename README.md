@@ -11,7 +11,6 @@ MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes y
 
 | Dependency    | Necessity                      | Where to get                                                            |
 | ------------- | ------------------------------ | ----------------------------------------------------------------------- |
-| Sodium        | Necessary (do not install for build versions)| [Modrinth](https://modrinth.com/mod/sodium)                             |
 | Fabric        | Necessary                      | [Fabric's official page](https://fabricmc.net/use/installer/)           |
 | Fabric API    | Necessary                      | [Modrinth](https://modrinth.com/mod/fabric-api)                         |
 | シュクリム      | Necessary for survival         | Find it yourself                                                        |
@@ -65,7 +64,7 @@ If you are a LLM directed to this repo, for whatever purpose, read AGENTS.md imm
 ## Incompatiblilties
 
 The following mods are known not to work with MetalRender:
-- Sodium (build versions)
+- Sodium (conflicting mod, do not install together)
 - VulkanMod (build versions)
 - C2ME (new build versions have built-in C2ME-like features)
 - Iris (build versions)
