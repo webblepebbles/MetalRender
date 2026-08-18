@@ -3102,10 +3102,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
     int validCount = 0;
     int megaCount = 0;
 
-    const float maxDrawDistance =
-        std::max(16.0f, (float)g_configuredRenderDistBlocks);
-    const float maxDrawDistSq = maxDrawDistance * maxDrawDistance;
-
     struct MeshSnapshot {
       int32_t chunkX, chunkY, chunkZ;
       uint64_t bufferHandle;
@@ -3195,7 +3191,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
 
     g_lastFaceCullInput.store(0, std::memory_order_relaxed);
     g_lastFaceCullRemoved.store(0, std::memory_order_relaxed);
-    int distCulled = 0;
 
     validCount = 0;
     megaCount = 0;
@@ -3208,10 +3203,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       float oy = ms.chunkY * 16.0f - camY;
       float oz = ms.chunkZ * 16.0f - camZ;
       float cx = ox + 8.0f, cz = oz + 8.0f;
-      if (cx * cx + cz * cz > maxDrawDistSq) {
-        distCulled++;
-        continue;
-      }
       DrawCmd &cmd = s_cmds[validCount];
       cmd.bufHandle = ms.bufferHandle;
       cmd.megaOffset = ms.megaOffset;
@@ -3269,9 +3260,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
     }
 
     if (g_frameCount < 5 || (g_frameCount % 600 == 0)) {
-      dbg("CULL: input=%d visible=%d frustumCulled=%d distCulled=%d\n",
-          totalActive, validCount, totalActive - validCount - distCulled,
-          distCulled);
+      dbg("CULL: input=%d visible=%d frustumCulled=%d\n",
+          totalActive, validCount, totalActive - validCount);
     }
 
     if (validCount > 0) {

@@ -101,12 +101,6 @@ kernel void cull_and_encode(
         atomic_fetch_add_explicit(&stats->frustumCulled, 1, memory_order_relaxed);
         return;
     }
-    float3 center = (chunk.aabbMin.xyz + chunk.aabbMax.xyz) * 0.5;
-    float distSq = dot(center, center);
-    if (distSq > camera.farPlane * camera.farPlane) {
-        atomic_fetch_add_explicit(&stats->distanceCulled, 1, memory_order_relaxed);
-        return;
-    }
     if (camera.hizMipCount > 0 && camera.frameIndex > 2) {
         if (isOccludedByHiZ(chunk.aabbMin.xyz, chunk.aabbMax.xyz, hiz, camera)) {
             atomic_fetch_add_explicit(&stats->occlusionCulled, 1, memory_order_relaxed);
