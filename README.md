@@ -70,6 +70,19 @@ The following mods are known not to work with MetalRender:
 - Iris (build versions)
 - Sulkan (DO NOT USE IT)
 
+## Compatible devices:
+
+Following is a list of all supported devices:
+MacBook air M1 2020 or later 
+MacBook Pro M1 2020 or Later
+Mac Studio March 2022 or Later 
+Mac Pro June 2023 or later(Discontinued production)
+Mac Mini 2020 or later
+MacBook Neo 2026 or later 
+iPad Pro 2021 or later(M) or 2017(A) or later 
+iPad 6th generation(2018) or later 
+iPad Air 2022 or later(M) or A12 Bionic(2019) or later
+iPad Mini A12(2019) or later
 ---
 
 # MetalRender Commands
