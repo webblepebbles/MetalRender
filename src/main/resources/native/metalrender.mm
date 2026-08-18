@@ -4438,9 +4438,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
         }
 
         if (g_mfxAlphaPipeline) {
-          // Preserve the low-res scene alpha through the upscaler: the GL
-          // compositor uses alpha as a coverage mask so the vanilla sky
-          // (alpha == 0) shows through. MetalFX scalers output opaque alpha.
           id<MTLComputeCommandEncoder> mfxOutEnc =
               [g_currentCmdBuffer computeCommandEncoder];
           if (mfxOutEnc) {

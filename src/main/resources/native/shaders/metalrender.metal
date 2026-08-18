@@ -306,7 +306,6 @@ fragment half4 fragment_terrain_icb_opaque(
     half4 texColor = resources.blockAtlas.sample(atlasSampler, in.texCoord);
     half vertAlpha = in.color.a;
     if (texColor.a < half(0.5)) {
-        // Match fragment_terrain_mesh_opaque and the regular non-ICB path.
         if (vertAlpha > half(0.994h) && vertAlpha < half(0.998h)) {
             texColor.a = half(1.0h);
         } else {
