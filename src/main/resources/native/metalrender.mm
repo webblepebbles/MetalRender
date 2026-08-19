@@ -219,7 +219,6 @@ static void megaFree(uint64_t handle) {
     return;
   g_megaFreeList.push_back(it->second);
   g_megaAllocs.erase(it);
-  // remember to test config settings monday night
   size_t freeBytes = 0;
   for (const MegaSubAlloc &freeBlock : g_megaFreeList) {
     freeBytes += freeBlock.size;
@@ -468,7 +467,7 @@ static int g_staleCapacity = 0;
 static float *g_staleOffsetData = nullptr;
 static int g_staleOffsetCapacity = 0;
 static bool g_hasStaleDrawList = false;
-static float g_staleCamX = 0, g_staleCamY = 0, g_staleCamZ = 0;
+static double g_staleCamX = 0, g_staleCamY = 0, g_staleCamZ = 0;
 
 static float g_targetFrameTimeMs = 16.67f;
 static float g_avgFrameTimeMs = 0.0f;
@@ -601,7 +600,6 @@ static std::vector<int> g_activeMeshIndices;
 static std::shared_mutex g_meshRegMutex;
 static int g_activeMeshCount = 0;
 static std::atomic<int> g_meshRegGeneration{0};
-// remember to test config settings monday night
 static std::atomic<int> g_meshRemovalGeneration{0};
 static bool g_cpuFrustumCullEnabled = true;
 static int64_t packMeshKey(int cx, int cy, int cz) {
@@ -616,7 +614,7 @@ static inline bool frustumTestAABB(const float p[24], float x0, float y0,
   float32x4_t vy0 = vdupq_n_f32(y0), vy1 = vdupq_n_f32(y1);
   float32x4_t vz0 = vdupq_n_f32(z0), vz1 = vdupq_n_f32(z1);
   float32x4_t zero =
-      vdupq_n_f32(0.0f); // remember to test config settings monday night
+      vdupq_n_f32(0.0f);
   for (int i = 0; i < 4; i += 2) {
     float32x4_t plane0 = vld1q_f32(&p[i * 4]);
 
@@ -1896,8 +1894,6 @@ static void ensure_offscreen() {
         scalerDesc.depthTextureFormat = MTLPixelFormatDepth32Float;
         scalerDesc.motionTextureFormat = MTLPixelFormatRG16Float;
         scalerDesc.outputTextureFormat = MTLPixelFormatBGRA8Unorm;
-        // LDR (BGRA8Unorm) input: auto-exposure is meant for HDR and would
-        // pump the exposure on dark scenes, washing everything out.
         scalerDesc.autoExposureEnabled = NO;
         g_mfxTemporalScaler = [scalerDesc newTemporalScalerWithDevice:g_device];
       } else if (useSpatial) {
@@ -3199,9 +3195,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       if (!isClusterVisible(ms.chunkX, ms.chunkZ) ||
           !isGpuCullVisible(ms.bufferHandle))
         continue;
-      float ox = ms.chunkX * 16.0f - camX;
-      float oy = ms.chunkY * 16.0f - camY;
-      float oz = ms.chunkZ * 16.0f - camZ;
+      float ox = (float) ((double) ms.chunkX * 16.0 - g_camX);
+      float oy = (float) ((double) ms.chunkY * 16.0 - g_camY);
+      float oz = (float) ((double) ms.chunkZ * 16.0 - g_camZ);
       float cx = ox + 8.0f, cz = oz + 8.0f;
       DrawCmd &cmd = s_cmds[validCount];
       cmd.bufHandle = ms.bufferHandle;
@@ -3209,7 +3205,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       cmd.resolvedBuf = ms.resolvedBuf;
       cmd.idxCount = ms.quadCount * 6;
       cmd.opaqueIdxCount = ms.opaqueQuadCount *
-                           6; // remember to test config settings monday night
+                           6;
       memcpy(cmd.opaqueFaceCounts, ms.opaqueFaceCounts,
              sizeof(cmd.opaqueFaceCounts));
       cmd.lodTier = ms.lodTier;
@@ -3238,7 +3234,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           dbg("CULL_FAILSAFE: kept=%d input=%d, fallback distance-only\n", kept,
               validCount);
         }
-        // remember to test config settings monday night
       } else {
         int write = 0;
         for (int si = 0; si < validCount; si++) {
@@ -3299,16 +3294,16 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       }
       g_staleDrawCount = validCount;
       g_staleMegaCount = megaCount;
-      g_staleCamX = camX;
-      g_staleCamY = camY;
-      g_staleCamZ = camZ;
+      g_staleCamX = g_camX;
+      g_staleCamY = g_camY;
+      g_staleCamZ = g_camZ;
       g_hasStaleDrawList = true;
     } else if (g_hasStaleDrawList && g_staleDrawCount > 0) {
 
       dbg("use stale draw list (%d cmds)\n", g_staleDrawCount);
-      float dcx = camX - g_staleCamX;
-      float dcy = camY - g_staleCamY;
-      float dcz = camZ - g_staleCamZ;
+      double dcx = g_camX - g_staleCamX;
+      double dcy = g_camY - g_staleCamY;
+      double dcz = g_camZ - g_staleCamZ;
       validCount = g_staleDrawCount;
       megaCount = g_staleMegaCount;
       if (s_cmdsCapacity < validCount) {
@@ -3335,9 +3330,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         cmd.facingMask =
             visibleFacingMaskForAabb(sc.ox - dcx, sc.oy - dcy, sc.oz - dcz);
         cmd.distSq = 0.0f;
-        cmd.ox = sc.ox - dcx;
-        cmd.oy = sc.oy - dcy;
-        cmd.oz = sc.oz - dcz;
+        cmd.ox = (float) ((double) sc.ox - dcx);
+        cmd.oy = (float) ((double) sc.oy - dcy);
+        cmd.oz = (float) ((double) sc.oz - dcz);
         cmd.isMega = sc.isMega;
         if (sc.isMega)
           reusedMegaCount++;
@@ -4041,7 +4036,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawLineBuffer(
   }
 }
 extern "C" JNIEXPORT void
-    JNICALL // remember to test config settings monday night
+    JNICALL
     Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawTriangleBuffer(
         JNIEnv *, jclass, jlong frameContext, jlong vertexBuffer,
         jint vertexCount) {
@@ -4472,7 +4467,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
         [g_depthCmdBuffer release];
         g_depthCmdBuffer = nil;
       }
-      // remember to test config settings monday night
       g_depthCmdBuffer = [g_currentCmdBuffer retain];
 
       int completedSlot = g_renderSlot;
@@ -4885,7 +4879,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateTexture2D(
       dbg("nCreateTexture2D: failed to create %dx%d texture\n", width, height);
     }
   }
-  // remember to test config settings monday night
   env->ReleaseByteArrayElements(pixelData, data, JNI_ABORT);
   return tex ? (jlong)(uintptr_t)(__bridge_retained void *)tex : 0;
 }
@@ -5117,7 +5110,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nReadbackDepth(
   if (capacity < (jlong)bufLen)
     return JNI_FALSE;
 
-  // remember to test config settings monday night
   if (!g_currentFrameReady) {
     int spins = 0;
     while (!g_currentFrameReady && spins < 10000) {
@@ -6200,7 +6192,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateResidencySet
 #if defined(__aarch64__) && (__MAC_OS_X_VERSION_MAX_ALLOWED >= 140000)
   if (@available(macOS 14.0, *)) {
     id<MTLDevice> dev = (__bridge id<MTLDevice>)(void *)
-        device; // remember to test config settings monday night
+        device;
     if (dev != nil && [dev respondsToSelector:@selector(newResidencySet:
                                                                   error:)]) {
       MTLResidencySetDescriptor *desc =
@@ -6352,7 +6344,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDestroyIndirectCom
   }
   auto cit = g_javaICBEncodedCount.find((uint64_t)icbHandle);
   if (cit != g_javaICBEncodedCount.end()) {
-    // remember to test config settings monday night
     g_javaICBEncodedCount.erase(cit);
   }
 }

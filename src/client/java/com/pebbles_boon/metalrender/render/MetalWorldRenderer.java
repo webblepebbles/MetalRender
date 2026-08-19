@@ -166,6 +166,9 @@ public class MetalWorldRenderer {
   private final TranslucencySorter translucencySorter = new TranslucencySorter();
   private final TerrainIndirectDraw terrainIndirectDraw = new TerrainIndirectDraw();
   private final float[] gpuFrustumPlanes = new float[24];
+  private double frameCameraX;
+  private double frameCameraY;
+  private double frameCameraZ;
   private float[] outlineVerts = new float[72 * 3];
   private byte[] outlineDataBuf = new byte[72 * 3 * 4];
   private final java.util.ArrayList<float[]> outlineEdges = new java.util.ArrayList<>(32);
@@ -410,7 +413,8 @@ public class MetalWorldRenderer {
     }
   }
 
-  private int prepareGpuCullData(Vector3f cameraPosition, boolean frustumStable) {
+  private int prepareGpuCullData(double cameraX, double cameraY, double cameraZ,
+      boolean frustumStable) {
     if (subChunkUploadBuffer == null || chunkUniformsBuffer == null) {
       return 0;
     }
@@ -421,9 +425,9 @@ public class MetalWorldRenderer {
       return 0;
     }
     int meshGen = chunkMesher.getMeshUpdateGeneration();
-    float camDX = cameraPosition.x - lastCullCamX;
-    float camDY = cameraPosition.y - lastCullCamY;
-    float camDZ = cameraPosition.z - lastCullCamZ;
+    float camDX = (float) (cameraX - lastCullCamX);
+    float camDY = (float) (cameraY - lastCullCamY);
+    float camDZ = (float) (cameraZ - lastCullCamZ);
     if (meshGen == lastCullMeshGen && lastCullCount > 0 && frustumStable &&
         camDX * camDX + camDY * camDY + camDZ * camDZ < 1.0e-4f) {
       return lastCullCount;
@@ -445,9 +449,9 @@ public class MetalWorldRenderer {
               !cullingOrcreator.isClusterVisible(mesh.chunkX, mesh.chunkZ))) {
         continue;
       }
-      float minX = mesh.chunkX * 16.0f - cameraPosition.x;
-      float minY = mesh.chunkY * 16.0f - cameraPosition.y;
-      float minZ = mesh.chunkZ * 16.0f - cameraPosition.z;
+      float minX = (float) ((double) mesh.chunkX * 16.0 - cameraX);
+      float minY = (float) ((double) mesh.chunkY * 16.0 - cameraY);
+      float minZ = (float) ((double) mesh.chunkZ * 16.0 - cameraZ);
       subChunkUploadBuffer.putFloat(minX);
       subChunkUploadBuffer.putFloat(minY);
       subChunkUploadBuffer.putFloat(minZ);
@@ -477,26 +481,29 @@ public class MetalWorldRenderer {
     NativeBridge.nUploadSubChunkData(0, subChunkUploadBuffer, count);
     NativeBridge.nUploadChunkUniforms(0, chunkUniformsBuffer, count);
     lastCullMeshGen = meshGen;
-    lastCullCamX = cameraPosition.x;
-    lastCullCamY = cameraPosition.y;
-    lastCullCamZ = cameraPosition.z;
+    lastCullCamX = (float) cameraX;
+    lastCullCamY = (float) cameraY;
+    lastCullCamZ = (float) cameraZ;
     lastCullCount = count;
     System.arraycopy(gpuFrustumPlanes, 0, lastCullFrustum, 0, 24);
     return count;
   }
 
   public void beginFrame(Camera camera, float tickDelta, Matrix4f projection,
-      Matrix4f modelView) {
+      Matrix4f modelView, double cameraX, double cameraY, double cameraZ) {
     MetalRenderer renderer = MetalRenderClient.getRenderer();
     if (renderer == null || !renderer.isAvailable())
       return;
+    frameCameraX = cameraX;
+    frameCameraY = cameraY;
+    frameCameraZ = cameraZ;
     if (chunkMesher != null) {
       chunkMesher.flushMeshRegistrations();
     }
     projectionMatrix.set(projection);
     modelViewMatrix.set(modelView);
-    Vector3f camPos = new Vector3f((float) camera.position().x, (float) camera.position().y,
-        (float) camera.position().z);
+    Vector3f camPos = new Vector3f((float) cameraX, (float) cameraY,
+        (float) cameraZ);
 
     long cullStart = System.nanoTime();
     FrustumCuller latest = AsyncCullTask.getCurrentCull();
@@ -539,8 +546,7 @@ public class MetalWorldRenderer {
     metalProj.m32(0.5f * metalProj.m32() + 0.5f * metalProj.m33());
     renderer.setProjectionMatrix(metalProj);
     renderer.setModelViewMatrix(modelViewMatrix);
-    renderer.setCameraPosition(camera.position().x, camera.position().y,
-        camera.position().z);
+    renderer.setCameraPosition(cameraX, cameraY, cameraZ);
     Vector3f cameraDirection = camera.rotation().transform(new Vector3f(0.0f, 0.0f, 1.0f)).normalize();
     if (NativeBridge.isLibLoaded()) {
       NativeBridge.nSetCameraDirection(renderer.getHandle(), cameraDirection.x,
@@ -589,7 +595,8 @@ public class MetalWorldRenderer {
           if (ibHandle != 0) {
             boolean gpuCullDrawn = false;
             if (hiZController.isReady()) {
-              int cullCount = prepareGpuCullData(camPos, frustumStable);
+              int cullCount = prepareGpuCullData(cameraX, cameraY, cameraZ,
+                  frustumStable);
               if (cullCount > 0) {
                 int submitted = NativeBridge.nRunGPUCulling(renderer.getHandle(), cullCount);
                 if (submitted >= 0) {
@@ -729,10 +736,9 @@ public class MetalWorldRenderer {
         return;
       }
 
-      Camera cam = mc.gameRenderer.getMainCamera();
-      float bx = (float) (pos.getX() - cam.position().x);
-      float by = (float) (pos.getY() - cam.position().y);
-      float bz = (float) (pos.getZ() - cam.position().z);
+      float bx = (float) (pos.getX() - frameCameraX);
+      float by = (float) (pos.getY() - frameCameraY);
+      float bz = (float) (pos.getZ() - frameCameraZ);
       final float expansion = 0.0015f;
       outlineEdges.clear();
       shape.forAllEdges((x0, y0, z0, x1, y1, z1) -> outlineEdges.add(new float[] {

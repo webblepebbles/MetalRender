@@ -79,7 +79,7 @@ public class WorldRendererBlitMixin {
       CapturedMatrices.capture(metalrender$projection, metalrender$modelView,
           camPos.x, camPos.y, camPos.z);
       worldRenderer.beginFrame(camera, tickDelta, metalrender$projection,
-          metalrender$modelView);
+          metalrender$modelView, camPos.x, camPos.y, camPos.z);
       com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance().startRender();
       metalrender$frameActive = true;
       metalrender$beginFrameCount++;

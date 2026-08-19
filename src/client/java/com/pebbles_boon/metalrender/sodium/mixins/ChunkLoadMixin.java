@@ -34,7 +34,6 @@ public class ChunkLoadMixin {
     if (chunk != null) {
       wr.onChunkLoaded(x, z, chunk);
     } else {
-      // remember to test config settings monday night
       MetalLogger.warn("chunk [%d,%d] null", x, z);
     }
   }

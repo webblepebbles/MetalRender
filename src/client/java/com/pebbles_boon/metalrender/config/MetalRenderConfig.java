@@ -19,7 +19,6 @@ public final class MetalRenderConfig {
   public boolean enableHiZCull = true;
   public boolean enableGpuTranslucencySort = false;
 
-  //REMEMBER TO TEST THOSE SETTINGS ON MONDAY NIGHT!!!!!
   public boolean hiddenFluidCulling = true;
   public boolean improvedFluidShaping = false;
   public boolean closestPointEntitySort = false;

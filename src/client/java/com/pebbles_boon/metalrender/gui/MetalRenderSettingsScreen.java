@@ -46,7 +46,6 @@ public class MetalRenderSettingsScreen extends Screen {
   private static final int C_SCROLLTHUMB_HOVER = 0xFF007AFF;
 
   private static final int PANEL_W = 720;
-  // remember to test config settings monday night
   private static final int PANEL_H = 500;
   private static final int HDR_H = 44;
   private static final int TAB_H = 34;
