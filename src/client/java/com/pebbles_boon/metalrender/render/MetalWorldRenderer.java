@@ -731,7 +731,14 @@ public class MetalWorldRenderer {
       BlockHitResult hit = (BlockHitResult) mc.hitResult;
       BlockPos pos = hit.getBlockPos();
       BlockState state = mc.level.getBlockState(pos);
-      VoxelShape shape = state.getShape(mc.level, pos, CollisionContext.empty());
+      if (state.isAir() || !mc.level.getWorldBorder().isWithinBounds(pos)) {
+        return;
+      }
+
+      CollisionContext context = mc.getCameraEntity() != null
+          ? CollisionContext.of(mc.getCameraEntity())
+          : CollisionContext.empty();
+      VoxelShape shape = state.getShape(mc.level, pos, context);
       if (shape.isEmpty()) {
         return;
       }
@@ -739,31 +746,29 @@ public class MetalWorldRenderer {
       float bx = (float) (pos.getX() - frameCameraX);
       float by = (float) (pos.getY() - frameCameraY);
       float bz = (float) (pos.getZ() - frameCameraZ);
-      final float expansion = 0.0015f;
       outlineEdges.clear();
       shape.forAllEdges((x0, y0, z0, x1, y1, z1) -> outlineEdges.add(new float[] {
-          expandOutlineCoordinate(x0, expansion),
-          expandOutlineCoordinate(y0, expansion),
-          expandOutlineCoordinate(z0, expansion),
-          expandOutlineCoordinate(x1, expansion),
-          expandOutlineCoordinate(y1, expansion),
-          expandOutlineCoordinate(z1, expansion)
+          bx + (float) x0, by + (float) y0, bz + (float) z0,
+          bx + (float) x1, by + (float) y1, bz + (float) z1
       }));
       if (outlineEdges.isEmpty()) {
         return;
       }
 
-      final float halfWidth = 0.0043f;
-      int vertexCount = outlineEdges.size() * 6;
-      int scalarCount = vertexCount * 3;
+      int lineVertexCount = outlineEdges.size() * 2;
+      int drawVertexCount = outlineEdges.size() * 6;
+      int scalarCount = lineVertexCount * 3;
       if (outlineVerts.length < scalarCount) {
         outlineVerts = new float[Math.max(scalarCount, outlineVerts.length * 2)];
       }
-      int vi = 0;
+      int vertexIndex = 0;
       for (float[] edge : outlineEdges) {
-        vi = addOutlineRibbon(outlineVerts, vi,
-            bx + edge[0], by + edge[1], bz + edge[2],
-            bx + edge[3], by + edge[4], bz + edge[5], halfWidth);
+        for (int point = 0; point < 2; point++) {
+          int edgeOffset = point * 3;
+          outlineVerts[vertexIndex++] = edge[edgeOffset];
+          outlineVerts[vertexIndex++] = edge[edgeOffset + 1];
+          outlineVerts[vertexIndex++] = edge[edgeOffset + 2];
+        }
       }
 
       int dataLen = scalarCount * Float.BYTES;
@@ -771,13 +776,13 @@ public class MetalWorldRenderer {
         outlineDataBuf = new byte[dataLen];
       }
       byte[] data = outlineDataBuf;
-      int di = 0;
-      for (int i = 0; i < scalarCount; i++) {
-        int bits = Float.floatToRawIntBits(outlineVerts[i]);
-        data[di++] = (byte) bits;
-        data[di++] = (byte) (bits >>> 8);
-        data[di++] = (byte) (bits >>> 16);
-        data[di++] = (byte) (bits >>> 24);
+      int dataIndex = 0;
+      for (int index = 0; index < scalarCount; index++) {
+        int bits = Float.floatToRawIntBits(outlineVerts[index]);
+        data[dataIndex++] = (byte) bits;
+        data[dataIndex++] = (byte) (bits >>> 8);
+        data[dataIndex++] = (byte) (bits >>> 16);
+        data[dataIndex++] = (byte) (bits >>> 24);
       }
       MetalRenderer renderer = MetalRenderClient.getRenderer();
       if (renderer == null) {
@@ -793,99 +798,11 @@ public class MetalWorldRenderer {
         outlineBufferSize = dataLen;
       }
       NativeBridge.nUploadBufferData(outlineBufferHandle, data, 0, dataLen);
-      NativeBridge.nSetDebugColor(frameCtx, 0.0f, 0.0f, 0.0f, 0.85f);
-      NativeBridge.nDrawTriangleBuffer(frameCtx, outlineBufferHandle, vertexCount);
+      NativeBridge.nSetDebugColor(frameCtx, 0.0f, 0.0f, 0.0f, 0.4f);
+      NativeBridge.nDrawTriangleBuffer(frameCtx, outlineBufferHandle, drawVertexCount);
     } catch (Exception e) {
       MetalLogger.error("[blockoutline] eww: %s", e.getMessage());
     }
-  }
-
-  private static float expandOutlineCoordinate(double coordinate, float expansion) {
-    float value = (float) coordinate;
-    if (value < 0.5f) {
-      return value - expansion;
-    }
-    if (value > 0.5f) {
-      return value + expansion;
-    }
-    return value;
-  }
-
-  private static int addOutlineRibbon(float[] vertices, int index,
-      float ax, float ay, float az, float bx, float by, float bz,
-      float halfWidth) {
-    float dx = bx - ax;
-    float dy = by - ay;
-    float dz = bz - az;
-    float length = (float) Math.sqrt(dx * dx + dy * dy + dz * dz);
-    if (length < 1.0e-6f) {
-      return index;
-    }
-    dx /= length;
-    dy /= length;
-    dz /= length;
-
-    float mx = (ax + bx) * 0.5f;
-    float my = (ay + by) * 0.5f;
-    float mz = (az + bz) * 0.5f;
-    float viewX = -mx;
-    float viewY = -my;
-    float viewZ = -mz;
-    float viewLength = (float) Math.sqrt(viewX * viewX + viewY * viewY + viewZ * viewZ);
-    if (viewLength > 1.0e-6f) {
-      viewX /= viewLength;
-      viewY /= viewLength;
-      viewZ /= viewLength;
-    } else {
-      viewX = 0.0f;
-      viewY = 1.0f;
-      viewZ = 0.0f;
-    }
-
-    float sx = dy * viewZ - dz * viewY;
-    float sy = dz * viewX - dx * viewZ;
-    float sz = dx * viewY - dy * viewX;
-    float sideLength = (float) Math.sqrt(sx * sx + sy * sy + sz * sz);
-    if (sideLength < 1.0e-6f) {
-      float upX = 0.0f, upY = 1.0f, upZ = 0.0f;
-      sx = dy * upZ - dz * upY;
-      sy = dz * upX - dx * upZ;
-      sz = dx * upY - dy * upX;
-      sideLength = (float) Math.sqrt(sx * sx + sy * sy + sz * sz);
-      if (sideLength < 1.0e-6f) {
-        upX = 1.0f;
-        upY = 0.0f;
-        upZ = 0.0f;
-        sx = dy * upZ - dz * upY;
-        sy = dz * upX - dx * upZ;
-        sz = dx * upY - dy * upX;
-        sideLength = (float) Math.sqrt(sx * sx + sy * sy + sz * sz);
-      }
-    }
-    float scale = halfWidth / sideLength;
-    sx *= scale;
-    sy *= scale;
-    sz *= scale;
-
-    float p0x = ax - sx, p0y = ay - sy, p0z = az - sz;
-    float p1x = ax + sx, p1y = ay + sy, p1z = az + sz;
-    float p2x = bx + sx, p2y = by + sy, p2z = bz + sz;
-    float p3x = bx - sx, p3y = by - sy, p3z = bz - sz;
-    index = putOutlineVertex(vertices, index, p0x, p0y, p0z);
-    index = putOutlineVertex(vertices, index, p1x, p1y, p1z);
-    index = putOutlineVertex(vertices, index, p2x, p2y, p2z);
-    index = putOutlineVertex(vertices, index, p0x, p0y, p0z);
-    index = putOutlineVertex(vertices, index, p2x, p2y, p2z);
-    index = putOutlineVertex(vertices, index, p3x, p3y, p3z);
-    return index;
-  }
-
-  private static int putOutlineVertex(float[] vertices, int index,
-      float x, float y, float z) {
-    vertices[index++] = x;
-    vertices[index++] = y;
-    vertices[index++] = z;
-    return index;
   }
 
   private int outlineBufferSize = 0;
