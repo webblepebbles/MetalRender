@@ -18,6 +18,9 @@ public class ClientWorldMixin {
   private void metalrender$onHandleBlockUpdate(BlockPos pos, BlockState state,
       BlockState oldState, int flags,
       CallbackInfo ci) {
+    if (state == oldState || (state != null && state.equals(oldState))) {
+      return;
+    }
     metalrender$triggerRebuild(pos);
   }
 
