@@ -397,6 +397,38 @@ vertex DebugVertexOut vertex_debug(
     return out;
 }
 
+vertex DebugVertexOut vertex_debug_thick_line(
+    device const packed_float3* positions [[buffer(0)]],
+    constant float4x4& projectionMatrix [[buffer(1)]],
+    constant float4x4& modelViewMatrix [[buffer(2)]],
+    constant float4& debugColor [[buffer(5)]],
+    constant float4& lineParams [[buffer(6)]],
+    uint vid [[vertex_id]]
+) {
+    uint edge = vid / 6u;
+    uint corner = vid % 6u;
+    float4 p0 = projectionMatrix * (modelViewMatrix * float4(float3(positions[edge * 2u]), 1.0));
+    float4 p1 = projectionMatrix * (modelViewMatrix * float4(float3(positions[edge * 2u + 1u]), 1.0));
+    float2 n0 = p0.xy / max(abs(p0.w), 1.0e-6);
+    float2 n1 = p1.xy / max(abs(p1.w), 1.0e-6);
+    float2 direction = n1 - n0;
+    float directionLength = length(direction);
+    float2 normal = directionLength > 1.0e-6
+        ? float2(-direction.y, direction.x) / directionLength
+        : float2(0.0, 1.0);
+    float2 halfWidthNdc = normal * (lineParams.x / lineParams.zw);
+    float2 offset = (corner == 0u || corner == 3u || corner == 5u)
+        ? -halfWidthNdc : halfWidthNdc;
+    bool first = corner < 2u || corner == 3u;
+    float4 position = first ? p0 : p1;
+    position.xy += offset * position.w;
+
+    DebugVertexOut out;
+    out.position = position;
+    out.color = debugColor;
+    return out;
+}
+
 fragment float4 fragment_debug(DebugVertexOut in [[stage_in]]) {
     return in.color;
 }
