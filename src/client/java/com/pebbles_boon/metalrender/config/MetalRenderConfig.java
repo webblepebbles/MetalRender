@@ -7,16 +7,16 @@ public final class MetalRenderConfig {
   public boolean debugPinkBlockTint = false;
   public int leafCullingMode = 1;
   public int biomeTransitionDetail = 2;
-  public int targetFrameRate = 60;
+  public int targetFrameRate = 300;
   public boolean prioritizeFpsOverTps = false;
   public int maxMemoryMB = 2048;
   public boolean enableTripleBuffering = true;
   public boolean enableMemoryPressureFallback = true;
-  public boolean enableBurstThreadMode = false;
+  public boolean enableBurstThreadMode = true;
   public boolean enableMeshShaders = true;
-  public boolean enableArgumentBuffers = false;
+  public boolean enableArgumentBuffers = true;
   public boolean enableClusterFrustumCulling = false;
-  public boolean enableHiZCull = false;
+  public boolean enableHiZCull = true;
   public boolean enableGpuTranslucencySort = false;
 
   //REMEMBER TO TEST THOSE SETTINGS ON MONDAY NIGHT!!!!!
@@ -24,15 +24,15 @@ public final class MetalRenderConfig {
   public boolean improvedFluidShaping = false;
   public boolean closestPointEntitySort = false;
 
-  public boolean enableDistanceLod = true;
+  public boolean enableDistanceLod = false;
   public int lodNearChunks = 8;
   public int lodMidChunks = 16;
   public boolean lodThermalAdaptive = true;
 
   public boolean enableProgrammableBlending = false;
-  public boolean enableIndirectCommandBuffers = false;
+  public boolean enableIndirectCommandBuffers = true;
   public boolean enableCameraFacingCulling = true;
-  private static volatile boolean mirrorUploads = false;
+  private static volatile boolean mirrorUploads = true;
   private static volatile boolean swapOpaque = false;
   private static volatile boolean swapCutout = false;
   private static volatile boolean swapTranslucent = false;
