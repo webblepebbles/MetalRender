@@ -260,6 +260,7 @@ static id<MTLRenderPipelineState> g_pipelineEntityOutline = nil;
 static id<MTLRenderPipelineState> g_pipelineEntityShadow = nil;
 static id<MTLRenderPipelineState> g_pipelineParticle = nil;
 static id<MTLRenderPipelineState> g_pipelineDebugLines = nil;
+static id<MTLRenderPipelineState> g_pipelineDebugThickLines = nil;
 id<MTLDepthStencilState> g_depthState = nil;
 static id<MTLDepthStencilState> g_depthStateNoWrite = nil;
 static id<MTLDepthStencilState> g_depthStateLessEqual = nil;
@@ -1466,6 +1467,22 @@ kernel void mfx_preserve_alpha(
             dbgErr ? [[dbgErr localizedDescription] UTF8String] : "unknown");
       } else {
         dbg("Debug line pipeline created OK\n");
+      }
+
+      id<MTLFunction> dbgThickVert =
+          [g_shaderLibrary newFunctionWithName:@"vertex_debug_thick_line"];
+      if (dbgThickVert && dbgFrag) {
+        MTLRenderPipelineDescriptor *thickDesc = [dbgDesc copy];
+        thickDesc.vertexFunction = dbgThickVert;
+        thickDesc.label = @"DebugThickLines";
+        NSError *thickErr = nil;
+        g_pipelineDebugThickLines = makePipeline(thickDesc, &thickErr);
+        if (!g_pipelineDebugThickLines) {
+          dbg("Thick debug line pipeline creation failed: %s\n",
+              thickErr ? [[thickErr localizedDescription] UTF8String] : "unknown");
+        } else {
+          dbg("Thick debug line pipeline created OK\n");
+        }
       }
     }
   }
@@ -4041,16 +4058,21 @@ extern "C" JNIEXPORT void
         JNIEnv *, jclass, jlong frameContext, jlong vertexBuffer,
         jint vertexCount) {
   (void)frameContext;
-  if (!g_currentEncoder || vertexCount <= 0 || !g_pipelineDebugLines)
+  if (!g_currentEncoder || vertexCount <= 0 || !g_pipelineDebugThickLines)
     return;
   ResolvedBuf vbRes = resolve_buffer((uint64_t)vertexBuffer);
   if (!vbRes.buf)
     return;
-  [g_currentEncoder setRenderPipelineState:g_pipelineDebugLines];
+  [g_currentEncoder setRenderPipelineState:g_pipelineDebugThickLines];
   if (g_depthStateLessEqual)
     [g_currentEncoder setDepthStencilState:g_depthStateLessEqual];
   [g_currentEncoder setVertexBytes:g_projMatrix length:64 atIndex:1];
   [g_currentEncoder setVertexBytes:g_mvMatrix length:64 atIndex:2];
+  float lineParams[4] = {
+      std::max(3.0f, (float)g_rtWidth / 1920.0f * 3.0f), 0.0f,
+      (float)(g_sceneColor ? g_sceneColor.width : g_rtWidth),
+      (float)(g_sceneColor ? g_sceneColor.height : g_rtHeight)};
+  [g_currentEncoder setVertexBytes:lineParams length:sizeof(lineParams) atIndex:6];
   [g_currentEncoder setVertexBuffer:vbRes.buf
                              offset:(NSUInteger)vbRes.offset
                             atIndex:0];
