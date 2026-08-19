@@ -4,7 +4,6 @@
 It uses **Apple Metal** to provide a custom rendering backend on Mac.
 MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes your game speedy) by Cortex.
 
-**DISCLAIMER:** MetalRender is not affiliated with, endorsed by, or associated with Apple Inc. "Metal" refers to the Apple Metal graphics API, used under standard developer terms. The MetalRender logo is an original design inspired by Metal and is not intended to resemble or imply association with any Apple Inc. branding.
 ---
 
 ## Dependencies
@@ -73,16 +72,16 @@ The following mods are known not to work with MetalRender:
 ## Compatible devices:
 
 Following is a list of all supported devices:
-MacBook air M1 2020 or later 
-MacBook Pro M1 2020 or Later
-Mac Studio March 2022 or Later 
-Mac Pro June 2023 or later(Discontinued production)
-Mac Mini 2020 or later
-MacBook Neo 2026 or later 
-iPad Pro 2021 or later(M) or 2017(A) or later 
-iPad 6th generation(2018) or later 
-iPad Air 2022 or later(M) or A12 Bionic(2019) or later
-iPad Mini A12(2019) or later
+- MacBook air M1 2020 or later 
+- MacBook Pro M1 2020 or Later
+- Mac Studio March 2022 or Later 
+- Mac Pro June 2023 or later(Discontinued production)
+- Mac Mini 2020 or later
+- MacBook Neo 2026 or later 
+- iPad Pro 2021 or later(M) or 2017(A) or later 
+- iPad 6th generation(2018) or later 
+- iPad Air 2022 or later(M) or A12 Bionic(2019) or later
+- iPad Mini A12(2019) or later
 ---
 
 # MetalRender Commands
@@ -384,3 +383,5 @@ git clone https://github.com/webblepebbles/metalrender.git
 cd metalrender
 ./gradlew build
 ```
+
+## MetalRender is not affiliated with, endorsed by, or associated with Apple Inc. "Metal" refers to the Apple Metal graphics API, used under standard developer terms. The MetalRender logo is an original design inspired by Metal and is not intended to resemble or imply association with any Apple Inc. branding.
