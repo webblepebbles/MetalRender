@@ -76,7 +76,10 @@ public class CustomChunkMesher {
 
   private static final int BATCH_REG_CAPACITY = 2048;
   private static final int BATCH_REG_STRIDE = 9;
-  private static final int SNAPSHOT_CACHE_CAPACITY = 512;
+  public static final int NEIGHBOR_MISSING_MINUS_X = 1;
+  public static final int NEIGHBOR_MISSING_PLUS_X = 2;
+  public static final int NEIGHBOR_MISSING_MINUS_Z = 4;
+  public static final int NEIGHBOR_MISSING_PLUS_Z = 8;
 
   public static class ChunkMeshData {
     public final long bufferHandle;
@@ -88,16 +91,17 @@ public class CustomChunkMesher {
     public final int[] facingQuadCounts;
     public final int buildPlayerCX, buildPlayerCY, buildPlayerCZ;
     public final int lodTier;
+    public final byte missingNeighborMask;
 
     public ChunkMeshData(long bufferHandle, int quadCount, int chunkX, int chunkY, int chunkZ,
         int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ) {
       this(bufferHandle, quadCount, chunkX, chunkY, chunkZ, buildPlayerCX, buildPlayerCY, buildPlayerCZ, 0L,
-          new int[7], 0);
+          new int[7], 0, (byte) 0);
     }
 
     public ChunkMeshData(long bufferHandle, int quadCount, int chunkX, int chunkY, int chunkZ,
         int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ, long visibilityMask, int[] facingQuadCounts,
-        int lodTier) {
+        int lodTier, byte missingNeighborMask) {
       this.bufferHandle = bufferHandle;
       this.quadCount = quadCount;
       this.chunkX = chunkX;
@@ -109,6 +113,7 @@ public class CustomChunkMesher {
       this.visibilityMask = visibilityMask;
       this.facingQuadCounts = facingQuadCounts != null ? Arrays.copyOf(facingQuadCounts, 14) : new int[14];
       this.lodTier = lodTier;
+      this.missingNeighborMask = missingNeighborMask;
     }
   }
 
@@ -141,8 +146,6 @@ public class CustomChunkMesher {
   private final LongOpenHashSet pendingKeys = new LongOpenHashSet();
   private final LongOpenHashSet dirtyKeys = new LongOpenHashSet();
   private final LongOpenHashSet emptyKeys = new LongOpenHashSet();
-  private final Long2ObjectOpenHashMap<SectionSnapshot> snapshotCache = new Long2ObjectOpenHashMap<>();
-  private final Long2LongOpenHashMap snapshotCacheGen = new Long2LongOpenHashMap();
   private final long[] batchRegData = new long[BATCH_REG_CAPACITY * BATCH_REG_STRIDE];
   private int batchRegCount = 0;
 
@@ -182,7 +185,6 @@ public class CustomChunkMesher {
     this.dirtyGeneration.defaultReturnValue(0L);
     this.pendingVisibleSectionNanos.defaultReturnValue(0L);
     this.pendingBlockUpdateNanos.defaultReturnValue(0L);
-    this.snapshotCacheGen.defaultReturnValue(Long.MIN_VALUE);
 
     int processors = Runtime.getRuntime().availableProcessors();
     this.immediateThreadCount = Math.max(1, Math.min(2, processors / 6 + 1));
@@ -284,15 +286,7 @@ public class CustomChunkMesher {
             Math.abs(chunkX - context.buildPlayerCX),
             Math.abs(chunkZ - context.buildPlayerCZ)));
         boolean useApproximateLight = lodTier >= 1;
-        long snapshotToken = snapshotCacheToken(genAtSubmit, useApproximateLight);
-        SectionSnapshot snapshot = useApproximateLight ? null : getCachedSnapshot(key, snapshotToken);
-        if (snapshot == null) {
-          snapshot = captureSectionSnapshot(world, chunkX, chunkY, chunkZ, useApproximateLight);
-          if (!useApproximateLight && snapshot.valid && !snapshot.empty &&
-              !isTaskCancelled(key, genAtSubmit, globalGenAtSubmit)) {
-            cacheSnapshot(key, snapshotToken, snapshot);
-          }
-        }
+        SectionSnapshot snapshot = captureSectionSnapshot(world, chunkX, chunkY, chunkZ, useApproximateLight);
         if (!snapshot.valid) {
           return;
         }
@@ -363,23 +357,54 @@ public class CustomChunkMesher {
     }
   }
 
+  public boolean wasHorizontalNeighborMissingAtBuild(int cx, int cy, int cz,
+      int missingBit) {
+    long key = packChunkKey(cx, cy, cz);
+    synchronized (meshCache) {
+      ChunkMeshData mesh = meshCache.get(key);
+      return mesh != null && (mesh.missingNeighborMask & missingBit) != 0;
+    }
+  }
+
+  private static byte computeMissingNeighborMask(ClientLevel world, int chunkX,
+      int chunkZ) {
+    if (world == null) {
+      return 0;
+    }
+    var source = world.getChunkSource();
+    byte mask = 0;
+    if (source.getChunkNow(chunkX - 1, chunkZ) == null) {
+      mask |= NEIGHBOR_MISSING_MINUS_X;
+    }
+    if (source.getChunkNow(chunkX + 1, chunkZ) == null) {
+      mask |= NEIGHBOR_MISSING_PLUS_X;
+    }
+    if (source.getChunkNow(chunkX, chunkZ - 1) == null) {
+      mask |= NEIGHBOR_MISSING_MINUS_Z;
+    }
+    if (source.getChunkNow(chunkX, chunkZ + 1) == null) {
+      mask |= NEIGHBOR_MISSING_PLUS_Z;
+    }
+    return mask;
+  }
+
   public void markDirty(int cx, int cy, int cz) {
     long key = packChunkKey(cx, cy, cz);
+    boolean newlyDirty;
+    synchronized (dirtyKeys) {
+      newlyDirty = dirtyKeys.add(key);
+    }
+    if (!newlyDirty) {
+      return;
+    }
     synchronized (emptyKeys) {
       emptyKeys.remove(key);
-    }
-    synchronized (dirtyKeys) {
-      dirtyKeys.add(key);
     }
     synchronized (pendingKeys) {
       pendingKeys.remove(key);
     }
     synchronized (dirtyGeneration) {
       dirtyGeneration.put(key, dirtyGeneration.get(key) + 1L);
-    }
-    synchronized (snapshotCache) {
-      snapshotCache.remove(key);
-      snapshotCacheGen.remove(key);
     }
   }
 
@@ -407,10 +432,6 @@ public class CustomChunkMesher {
       for (long k : emptyArr)
         dirtyGeneration.put(k, dirtyGeneration.get(k) + 1L);
     }
-    synchronized (snapshotCache) {
-      snapshotCache.clear();
-      snapshotCacheGen.clear();
-    }
   }
 
   public void removeMesh(int cx, int cy, int cz) {
@@ -433,10 +454,6 @@ public class CustomChunkMesher {
     }
     synchronized (dirtyKeys) {
       dirtyKeys.remove(key);
-    }
-    synchronized (snapshotCache) {
-      snapshotCache.remove(key);
-      snapshotCacheGen.remove(key);
     }
     meshUpdateGeneration.incrementAndGet();
   }
@@ -468,10 +485,6 @@ public class CustomChunkMesher {
       emptyKeys.clear();
     }
     globalBuildGeneration.incrementAndGet();
-    synchronized (snapshotCache) {
-      snapshotCache.clear();
-      snapshotCacheGen.clear();
-    }
     synchronized (batchRegData) {
       batchRegCount = 0;
     }
@@ -783,16 +796,6 @@ public class CustomChunkMesher {
       this.paddedEmission = paddedEmission;
       this.biomeTints = biomeTints;
     }
-
-    SectionSnapshot copy() {
-      return new SectionSnapshot(valid, empty,
-          paddedBlockStates != null ? Arrays.copyOf(paddedBlockStates, paddedBlockStates.length) : null,
-          paddedLight != null ? Arrays.copyOf(paddedLight, paddedLight.length) : null,
-          paddedOcclusion != null ? Arrays.copyOf(paddedOcclusion, paddedOcclusion.length) : null,
-          paddedShade != null ? Arrays.copyOf(paddedShade, paddedShade.length) : null,
-          paddedEmission != null ? Arrays.copyOf(paddedEmission, paddedEmission.length) : null,
-          biomeTints != null ? Arrays.copyOf(biomeTints, biomeTints.length) : null);
-    }
   }
 
   private static final class SnapshotData {
@@ -805,35 +808,6 @@ public class CustomChunkMesher {
   }
 
   private static final ThreadLocal<SnapshotData> SNAPSHOT_POOL = ThreadLocal.withInitial(SnapshotData::new);
-
-  private static long snapshotCacheToken(long generation, boolean useApproximateLight) {
-    return (generation << 1) | (useApproximateLight ? 1L : 0L);
-  }
-
-  private SectionSnapshot getCachedSnapshot(long key, long token) {
-    synchronized (snapshotCache) {
-      if (snapshotCacheGen.get(key) != token) {
-        snapshotCache.remove(key);
-        snapshotCacheGen.remove(key);
-        return null;
-      }
-      return snapshotCache.get(key);
-    }
-  }
-
-  private void cacheSnapshot(long key, long token, SectionSnapshot snapshot) {
-    synchronized (snapshotCache) {
-      if (!snapshotCache.containsKey(key) && snapshotCache.size() >= SNAPSHOT_CACHE_CAPACITY) {
-        long[] keys = snapshotCache.keySet().toLongArray();
-        if (keys.length > 0) {
-          snapshotCache.remove(keys[0]);
-          snapshotCacheGen.remove(keys[0]);
-        }
-      }
-      snapshotCache.put(key, snapshot.copy());
-      snapshotCacheGen.put(key, token);
-    }
-  }
 
   private static final class MeshBuildContext {
     final BlockStateModelSet blockModels;
@@ -1137,11 +1111,11 @@ public class CustomChunkMesher {
             int y = py - PADDED_RADIUS;
             int z = pz - PADDED_RADIUS;
             int tintBase = (y * 256 + z * 16 + x) * BIOME_TINT_SLOTS;
-            if (stateId == 0) {
-              for (int tintIndex = 0; tintIndex < BIOME_TINT_SLOTS; tintIndex++) {
-                biomeTints[tintBase + tintIndex] = 0xFFFFFF;
-              }
-            } else {
+            biomeTints[tintBase] = 0xFFFFFF;
+            biomeTints[tintBase + 1] = 0xFFFFFF;
+            biomeTints[tintBase + 2] = 0xFFFFFF;
+            biomeTints[tintBase + 3] = 0xFFFFFF;
+            if (stateId != 0) {
               mutablePos.set(baseX + x, baseY + y, baseZ + z);
               FluidState fluid = state.getFluidState();
               boolean water = !fluid.isEmpty() &&
@@ -1150,31 +1124,43 @@ public class CustomChunkMesher {
               boolean lava = !fluid.isEmpty() &&
                   (fluid.getType() == net.minecraft.world.level.material.Fluids.LAVA ||
                       fluid.getType() == net.minecraft.world.level.material.Fluids.FLOWING_LAVA);
-              for (int tintIndex = 0; tintIndex < BIOME_TINT_SLOTS; tintIndex++) {
+              if (water) {
                 int tint = 0xFFFFFF;
                 try {
-                  if (state.getBlock() == Blocks.GRASS_BLOCK) {
-                    net.minecraft.client.color.block.BlockTintSource source = getCachedTintSource(
-                        blockColors, state, tintIndex);
-                    if (source != null) {
-                      tint = source.colorInWorld(state, world, mutablePos);
-                    } else {
-                      tint = getGrassTint(world, mutablePos);
-                    }
-                  } else if (water) {
-                    tint = net.minecraft.client.renderer.BiomeColors.getAverageWaterColor(world, mutablePos);
-                  } else if (lava) {
-                    tint = 0xFFFFFF;
+                  tint = net.minecraft.client.renderer.BiomeColors.getAverageWaterColor(world, mutablePos);
+                } catch (Exception ignored) {
+                }
+                biomeTints[tintBase] = tint == -1 ? 0xFFFFFF : tint;
+              } else if (state.getBlock() == Blocks.GRASS_BLOCK) {
+                int tint = 0xFFFFFF;
+                try {
+                  net.minecraft.client.color.block.BlockTintSource source = getCachedTintSource(
+                      blockColors, state, 0);
+                  if (source != null) {
+                    tint = source.colorInWorld(state, world, mutablePos);
                   } else {
-                    net.minecraft.client.color.block.BlockTintSource source = getCachedTintSource(
-                        blockColors, state, tintIndex);
-                    if (source != null) {
-                      tint = source.colorInWorld(state, world, mutablePos);
-                    }
+                    tint = getGrassTint(world, mutablePos);
                   }
                 } catch (Exception ignored) {
                 }
-                biomeTints[tintBase + tintIndex] = tint == -1 ? 0xFFFFFF : tint;
+                biomeTints[tintBase] = tint == -1 ? 0xFFFFFF : tint;
+              } else if (!lava) {
+                byte mask = getTintSlotMask(state, blockColors);
+                int remaining = mask;
+                while (remaining != 0) {
+                  int tintIndex = Integer.numberOfTrailingZeros(remaining);
+                  remaining &= remaining - 1;
+                  int tint = 0xFFFFFF;
+                  try {
+                    net.minecraft.client.color.block.BlockTintSource source = getCachedTintSource(
+                        blockColors, state, tintIndex);
+                    if (source != null) {
+                      tint = source.colorInWorld(state, world, mutablePos);
+                    }
+                  } catch (Exception ignored) {
+                  }
+                  biomeTints[tintBase + tintIndex] = tint == -1 ? 0xFFFFFF : tint;
+                }
               }
             }
           }
@@ -1208,6 +1194,8 @@ public class CustomChunkMesher {
   private static final int MODEL_CACHE_CAP = 32768;
   private static final ThreadLocal<IdentityHashMap<BlockState, net.minecraft.client.color.block.BlockTintSource[]>> TINT_SOURCE_CACHE = ThreadLocal
       .withInitial(IdentityHashMap::new);
+  private static final ThreadLocal<IdentityHashMap<BlockState, Byte>> TINT_SLOT_MASK_CACHE = ThreadLocal
+      .withInitial(IdentityHashMap::new);
   private static final ThreadLocal<java.util.ArrayList<BlockStateModelPart>> PARTS_POOL = ThreadLocal
       .withInitial(java.util.ArrayList::new);
 
@@ -1224,6 +1212,7 @@ public class CustomChunkMesher {
       STATE_BY_ID_CACHE.remove();
       MODEL_CACHE.remove();
       TINT_SOURCE_CACHE.remove();
+      TINT_SLOT_MASK_CACHE.remove();
       PARTS_POOL.remove();
       BS_ID_CACHE.remove();
       THREAD_LOCAL_GEN.set(gen);
@@ -1250,6 +1239,28 @@ public class CustomChunkMesher {
       sources[tintIndex] = source;
     }
     return source;
+  }
+
+  private static byte getTintSlotMask(BlockState state,
+      net.minecraft.client.color.block.BlockColors blockColors) {
+    IdentityHashMap<BlockState, Byte> cache = TINT_SLOT_MASK_CACHE.get();
+    Byte cached = cache.get(state);
+    if (cached != null) {
+      return cached;
+    }
+    byte mask = 0;
+    for (int i = 0; i < BIOME_TINT_SLOTS; i++) {
+      try {
+        if (blockColors.getTintSource(state, i) != null) {
+          mask |= (byte) (1 << i);
+        }
+      } catch (Exception ignored) {
+      }
+    }
+    if (cache.size() < 65536) {
+      cache.put(state, mask);
+    }
+    return mask;
   }
 
   private void doMeshBuild(int chunkX, int chunkY, int chunkZ,
@@ -1327,7 +1338,8 @@ public class CustomChunkMesher {
 
       ChunkMeshData mesh = new ChunkMeshData(bufferHandle, quadCount, chunkX, chunkY, chunkZ,
           context.buildPlayerCX, context.buildPlayerCY, context.buildPlayerCZ,
-          visibilityMask, facingQuadCounts, lodTier);
+          visibilityMask, facingQuadCounts, lodTier,
+          computeMissingNeighborMask(context.world, chunkX, chunkZ));
       ChunkMeshData old;
       synchronized (dirtyGeneration) {
         if (isTaskCancelled(key, generation, globalGeneration)) {
