@@ -614,8 +614,7 @@ static inline bool frustumTestAABB(const float p[24], float x0, float y0,
   float32x4_t vx0 = vdupq_n_f32(x0), vx1 = vdupq_n_f32(x1);
   float32x4_t vy0 = vdupq_n_f32(y0), vy1 = vdupq_n_f32(y1);
   float32x4_t vz0 = vdupq_n_f32(z0), vz1 = vdupq_n_f32(z1);
-  float32x4_t zero =
-      vdupq_n_f32(0.0f);
+  float32x4_t zero = vdupq_n_f32(0.0f);
   for (int i = 0; i < 4; i += 2) {
     float32x4_t plane0 = vld1q_f32(&p[i * 4]);
 
@@ -1479,7 +1478,8 @@ kernel void mfx_preserve_alpha(
         g_pipelineDebugThickLines = makePipeline(thickDesc, &thickErr);
         if (!g_pipelineDebugThickLines) {
           dbg("Thick debug line pipeline creation failed: %s\n",
-              thickErr ? [[thickErr localizedDescription] UTF8String] : "unknown");
+              thickErr ? [[thickErr localizedDescription] UTF8String]
+                       : "unknown");
         } else {
           dbg("Thick debug line pipeline created OK\n");
         }
@@ -3212,17 +3212,16 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       if (!isClusterVisible(ms.chunkX, ms.chunkZ) ||
           !isGpuCullVisible(ms.bufferHandle))
         continue;
-      float ox = (float) ((double) ms.chunkX * 16.0 - g_camX);
-      float oy = (float) ((double) ms.chunkY * 16.0 - g_camY);
-      float oz = (float) ((double) ms.chunkZ * 16.0 - g_camZ);
+      float ox = (float)((double)ms.chunkX * 16.0 - g_camX);
+      float oy = (float)((double)ms.chunkY * 16.0 - g_camY);
+      float oz = (float)((double)ms.chunkZ * 16.0 - g_camZ);
       float cx = ox + 8.0f, cz = oz + 8.0f;
       DrawCmd &cmd = s_cmds[validCount];
       cmd.bufHandle = ms.bufferHandle;
       cmd.megaOffset = ms.megaOffset;
       cmd.resolvedBuf = ms.resolvedBuf;
       cmd.idxCount = ms.quadCount * 6;
-      cmd.opaqueIdxCount = ms.opaqueQuadCount *
-                           6;
+      cmd.opaqueIdxCount = ms.opaqueQuadCount * 6;
       memcpy(cmd.opaqueFaceCounts, ms.opaqueFaceCounts,
              sizeof(cmd.opaqueFaceCounts));
       cmd.lodTier = ms.lodTier;
@@ -3272,8 +3271,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
     }
 
     if (g_frameCount < 5 || (g_frameCount % 600 == 0)) {
-      dbg("CULL: input=%d visible=%d frustumCulled=%d\n",
-          totalActive, validCount, totalActive - validCount);
+      dbg("CULL: input=%d visible=%d frustumCulled=%d\n", totalActive,
+          validCount, totalActive - validCount);
     }
 
     if (validCount > 0) {
@@ -3347,9 +3346,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         cmd.facingMask =
             visibleFacingMaskForAabb(sc.ox - dcx, sc.oy - dcy, sc.oz - dcz);
         cmd.distSq = 0.0f;
-        cmd.ox = (float) ((double) sc.ox - dcx);
-        cmd.oy = (float) ((double) sc.oy - dcy);
-        cmd.oz = (float) ((double) sc.oz - dcz);
+        cmd.ox = (float)((double)sc.ox - dcx);
+        cmd.oy = (float)((double)sc.oy - dcy);
+        cmd.oz = (float)((double)sc.oz - dcz);
         cmd.isMega = sc.isMega;
         if (sc.isMega)
           reusedMegaCount++;
@@ -4052,11 +4051,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawLineBuffer(
       [g_currentEncoder setDepthStencilState:g_depthState];
   }
 }
-extern "C" JNIEXPORT void
-    JNICALL
-    Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawTriangleBuffer(
-        JNIEnv *, jclass, jlong frameContext, jlong vertexBuffer,
-        jint vertexCount) {
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawTriangleBuffer(
+    JNIEnv *, jclass, jlong frameContext, jlong vertexBuffer,
+    jint vertexCount) {
   (void)frameContext;
   if (!g_currentEncoder || vertexCount <= 0 || !g_pipelineDebugThickLines)
     return;
@@ -4069,10 +4067,12 @@ extern "C" JNIEXPORT void
   [g_currentEncoder setVertexBytes:g_projMatrix length:64 atIndex:1];
   [g_currentEncoder setVertexBytes:g_mvMatrix length:64 atIndex:2];
   float lineParams[4] = {
-      std::max(3.0f, (float)g_rtWidth / 1920.0f * 3.0f), 0.0f,
+      std::max(3.0f, (float)g_rtWidth / 1920.0f * 4.0f), 0.0f,
       (float)(g_sceneColor ? g_sceneColor.width : g_rtWidth),
       (float)(g_sceneColor ? g_sceneColor.height : g_rtHeight)};
-  [g_currentEncoder setVertexBytes:lineParams length:sizeof(lineParams) atIndex:6];
+  [g_currentEncoder setVertexBytes:lineParams
+                            length:sizeof(lineParams)
+                           atIndex:6];
   [g_currentEncoder setVertexBuffer:vbRes.buf
                              offset:(NSUInteger)vbRes.offset
                             atIndex:0];
@@ -6213,8 +6213,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateResidencySet
     JNIEnv *, jclass, jlong device) {
 #if defined(__aarch64__) && (__MAC_OS_X_VERSION_MAX_ALLOWED >= 140000)
   if (@available(macOS 14.0, *)) {
-    id<MTLDevice> dev = (__bridge id<MTLDevice>)(void *)
-        device;
+    id<MTLDevice> dev = (__bridge id<MTLDevice>)(void *)device;
     if (dev != nil && [dev respondsToSelector:@selector(newResidencySet:
                                                                   error:)]) {
       MTLResidencySetDescriptor *desc =
