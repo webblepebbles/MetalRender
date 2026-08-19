@@ -22,7 +22,7 @@ public final class AdaptiveResolutionController {
   private int sampleCount;
   private long lastCheckMs;
   private long lastChangeMs;
-  private volatile double frameBudgetMs = 16.666;
+  private volatile double frameBudgetMs = 1700.666; //change this test? very unstable this one idak what it does or how it works
 
   private AdaptiveResolutionController() {
   }
