@@ -17,8 +17,6 @@ import java.nio.ByteOrder;
 import java.util.Arrays;
 import java.util.IdentityHashMap;
 import java.util.List;
-import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.renderer.block.BlockStateModelSet;
@@ -29,7 +27,6 @@ import net.minecraft.client.renderer.texture.TextureAtlas;
 import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.resources.model.geometry.BakedQuad;
 import net.minecraft.resources.Identifier;
-import net.minecraft.tags.BlockTags;
 import net.minecraft.core.BlockPos;
 import net.minecraft.core.Direction;
 import net.minecraft.util.RandomSource;
@@ -1928,8 +1925,8 @@ public class CustomChunkMesher {
       byte normalIndex = (byte) (face != null ? face.get3DDataValue() : 6);
       float shade = quad.materialInfo().shade() && normalIndex >= 0
           && normalIndex < context.faceShade.length
-          ? context.faceShade[normalIndex]
-          : 1.0f;
+              ? context.faceShade[normalIndex]
+              : 1.0f;
 
       boolean isLeaves = state.getBlock() instanceof LeavesBlock;
       MetalRenderConfig cfg = MetalRenderClient.getConfig();
@@ -2086,10 +2083,14 @@ public class CustomChunkMesher {
           baseY + edges[1].getStepY() + edges[3].getStepY(),
           baseZ + edges[1].getStepZ() + edges[3].getStepZ());
 
-      if (sampleOccluded(3) && sampleOccluded(1)) copySample(5, 1);
-      if (sampleOccluded(4) && sampleOccluded(1)) copySample(6, 1);
-      if (sampleOccluded(3) && sampleOccluded(2)) copySample(7, 2);
-      if (sampleOccluded(4) && sampleOccluded(2)) copySample(8, 2);
+      if (sampleOccluded(3) && sampleOccluded(1))
+        copySample(5, 1);
+      if (sampleOccluded(4) && sampleOccluded(1))
+        copySample(6, 1);
+      if (sampleOccluded(3) && sampleOccluded(2))
+        copySample(7, 2);
+      if (sampleOccluded(4) && sampleOccluded(2))
+        copySample(8, 2);
 
       float[] weights = vertexWeights(face, vx - lx, vy - ly, vz - lz);
       int c0Block = blendLight(4, 1, 6, 0, true);
@@ -2157,13 +2158,34 @@ public class CustomChunkMesher {
       float u;
       float v;
       switch (face) {
-        case DOWN -> { u = z; v = 1.0f - x; }
-        case UP -> { u = z; v = x; }
-        case NORTH -> { u = 1.0f - x; v = y; }
-        case SOUTH -> { u = y; v = 1.0f - x; }
-        case WEST -> { u = z; v = y; }
-        case EAST -> { u = z; v = 1.0f - y; }
-        default -> { u = 0.0f; v = 0.0f; }
+        case DOWN -> {
+          u = z;
+          v = 1.0f - x;
+        }
+        case UP -> {
+          u = z;
+          v = x;
+        }
+        case NORTH -> {
+          u = 1.0f - x;
+          v = y;
+        }
+        case SOUTH -> {
+          u = y;
+          v = 1.0f - x;
+        }
+        case WEST -> {
+          u = z;
+          v = y;
+        }
+        case EAST -> {
+          u = z;
+          v = 1.0f - y;
+        }
+        default -> {
+          u = 0.0f;
+          v = 0.0f;
+        }
       }
       weightsScratch[0] = v * u;
       weightsScratch[1] = v * (1.0f - u);

@@ -2,12 +2,10 @@ package com.pebbles_boon.metalrender.backend;
 
 import com.pebbles_boon.metalrender.config.MetalRenderConfig;
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
-import java.nio.ByteBuffer;
 import org.joml.Matrix4f;
 
-public final class MetalRenderer implements RenderBackend {
+public final class MetalRenderer {
   private long handle;
-  private volatile boolean pipelinesReady;
   private boolean available;
   private final MetalRendererBackendHandle backend;
 
@@ -28,22 +26,6 @@ public final class MetalRenderer implements RenderBackend {
 
     public long getInhousePipelineHandle() {
       return NativeBridge.nGetInhousePipelineHandle(renderer.handle);
-    }
-
-    public long getDefaultPipelineHandle() {
-      return NativeBridge.nGetDefaultPipelineHandle(renderer.handle);
-    }
-
-    public long getEntityPipelineHandle() {
-      return NativeBridge.nGetEntityPipelineHandle(renderer.handle);
-    }
-
-    public long getEntityTranslucentPipelineHandle() {
-      return NativeBridge.nGetEntityTranslucentPipelineHandle(renderer.handle);
-    }
-
-    public long getEntityEmissivePipelineHandle() {
-      return NativeBridge.nGetEntityEmissivePipelineHandle(renderer.handle);
     }
   }
 
@@ -71,13 +53,6 @@ public final class MetalRenderer implements RenderBackend {
     if (handle != 0)
       NativeBridge.nResize(handle, width, height, MetalRenderConfig.resolutionScale(),
           MetalRenderConfig.isMetalFXTemporalEnabled());
-  }
-
-  public void beginFrame(float tickDelta) {
-  }
-
-  @Override
-  public void beginFrame(float[] viewProj) {
   }
 
   private final float[] reusableMatrixArr = new float[16];
@@ -114,61 +89,12 @@ public final class MetalRenderer implements RenderBackend {
     return getCurrentFrameContext();
   }
 
-  public int getGLTextureId() {
-    return handle != 0 ? NativeBridge.nGetGLTextureId(handle) : 0;
-  }
-
   public long getHandle() {
     return handle;
   }
 
-  @Override
-  public long createVertexBuffer(ByteBuffer data, int size, int stride) {
-    if (data == null || size <= 0)
-      return 0L;
-    byte[] bytes = new byte[size];
-    data.get(bytes);
-    long buf = NativeBridge.nCreateBuffer(getBackend().getDeviceHandle(), size, 0);
-    NativeBridge.nUploadBufferData(buf, bytes, 0, size);
-    return buf;
-  }
-
-  @Override
-  public long createIndexBuffer(ByteBuffer data, int size) {
-    if (data == null || size <= 0)
-      return 0L;
-    byte[] bytes = new byte[size];
-    data.get(bytes);
-    long buf = NativeBridge.nCreateBuffer(getBackend().getDeviceHandle(), size, 0);
-    NativeBridge.nUploadBufferData(buf, bytes, 0, size);
-    return buf;
-  }
-
-  @Override
-  public void destroyBuffer(long bufferHandle) {
-    NativeBridge.nDestroyBuffer(bufferHandle);
-  }
-
-  @Override
-  public void drawIndexed(long vbo, long ibo, int indexCount, int firstIndex,
-      int baseVertex) {
-    long ctx = getCurrentFrameContext();
-    if (ctx != 0) {
-      NativeBridge.nDrawIndexedBuffer(ctx, vbo, ibo, indexCount, firstIndex);
-    }
-  }
-
-  @Override
   public void endFrame() {
     if (handle != 0)
       NativeBridge.nEndFrame(handle);
-  }
-
-  public boolean isPassReady(int pass) {
-    return available;
-  }
-
-  public boolean isOpaqueReady() {
-    return isPassReady(0);
   }
 }

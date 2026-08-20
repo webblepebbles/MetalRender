@@ -5,16 +5,12 @@ import com.pebbles_boon.metalrender.config.MetalRenderConfig;
 public final class PerformanceLogger {
   private static final long NORMAL_LOG_INTERVAL = 5000;
   private static final long DEBUG_LOG_INTERVAL = 1000;
-  private long frameCount = 0;
-  private long totalChunksProcessed = 0;
-  private long totalChunksDrawn = 0;
-  private long totalFrustumCulled = 0;
-  private long totalOcclusionCulled = 0;
-  private long frameStartTime = 0;
-  private long lastFrameStartTime = 0;
-  private double lastFrameTime = 0;
-  private double avgFrameTime = 0;
-  private double currentFPS = 0;
+  private long frameCount;
+  private long frameStartTime;
+  private long lastFrameStartTime;
+  private double lastFrameTime;
+  private double avgFrameTime;
+  private double currentFPS;
   private long lastLogTime = System.currentTimeMillis();
 
   public void startFrame() {
@@ -25,24 +21,18 @@ public final class PerformanceLogger {
     lastFrameStartTime = frameStartTime;
   }
 
-  public void endFrame(int chunksProcessed, int chunksDrawn, int frustumCulled,
-      int occlusionCulled) {
+  public void endFrame() {
     long frameEndTime = System.nanoTime();
-    double frameTime;
-    if (lastFrameTime > 0.0) {
-      frameTime = lastFrameTime;
-    } else {
-      frameTime = (frameEndTime - frameStartTime) / 1_000_000.0;
-    }
+    double frameTime = lastFrameTime > 0.0
+        ? lastFrameTime
+        : (frameEndTime - frameStartTime) / 1_000_000.0;
     frameCount++;
-    totalChunksProcessed += chunksProcessed;
-    totalChunksDrawn += chunksDrawn;
-    totalFrustumCulled += frustumCulled;
-    totalOcclusionCulled += occlusionCulled;
     avgFrameTime = avgFrameTime * 0.95 + frameTime * 0.05;
     currentFPS = 1000.0 / Math.max(avgFrameTime, 0.1);
+
     long currentTime = System.currentTimeMillis();
-    long interval = MetalRenderConfig.isDeepDebugActive() ? DEBUG_LOG_INTERVAL
+    long interval = MetalRenderConfig.isDeepDebugActive()
+        ? DEBUG_LOG_INTERVAL
         : NORMAL_LOG_INTERVAL;
     if (currentTime - lastLogTime >= interval) {
       logPerformanceStats();
@@ -54,17 +44,9 @@ public final class PerformanceLogger {
     if (!MetalRenderConfig.isDeepDebugActive()) {
       MetalLogger.info("[perf] fps %.1f ft %.2fms", currentFPS,
           avgFrameTime);
-      resetCounters();
       return;
     }
-    double cullingEfficiency = totalChunksProcessed > 0
-        ? (double) (totalFrustumCulled + totalOcclusionCulled) /
-            totalChunksProcessed * 100
-        : 0;
-    MetalLogger.info("[perf] fps %.1f ft %.2fms ch p=%d d=%d cl f=%d o=%d (%.1f%%)",
-        currentFPS, avgFrameTime, totalChunksProcessed,
-        totalChunksDrawn, totalFrustumCulled, totalOcclusionCulled,
-        cullingEfficiency);
+    MetalLogger.info("[perf] fps %.1f ft %.2fms", currentFPS, avgFrameTime);
     try {
       MetalLogger.info("[perf][dq] sc=%.2f",
           MetalRenderConfig.resolutionScale());
@@ -75,29 +57,5 @@ public final class PerformanceLogger {
     long maxMb = rt.maxMemory() / (1024 * 1024);
     MetalLogger.info("[perf][mem] h=%d/%dmb f=%d", usedMb, maxMb,
         frameCount);
-    resetCounters();
-  }
-
-  private void resetCounters() {
-    totalChunksProcessed = 0;
-    totalChunksDrawn = 0;
-    totalFrustumCulled = 0;
-    totalOcclusionCulled = 0;
-  }
-
-  public double getCurrentFPS() {
-    return currentFPS;
-  }
-
-  public double getAvgFrameTime() {
-    return avgFrameTime;
-  }
-
-  public double getLastFrameTime() {
-    return lastFrameTime > 0.0 ? lastFrameTime : avgFrameTime;
-  }
-
-  public long getFrameCount() {
-    return frameCount;
   }
 }

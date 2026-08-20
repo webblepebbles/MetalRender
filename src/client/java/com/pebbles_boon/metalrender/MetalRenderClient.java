@@ -9,9 +9,6 @@ import com.pebbles_boon.metalrender.gui.MetalRenderSettingsScreen;
 import com.pebbles_boon.metalrender.nativebridge.MetalHardwareChecker;
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
-import com.pebbles_boon.metalrender.render.unified.MetalRenderCoordinator;
-import com.pebbles_boon.metalrender.sodium.backend.MeshShaderBackend;
-import com.pebbles_boon.metalrender.sodium.backend.SodiumMetalInterface;
 import com.pebbles_boon.metalrender.util.MetalLogger;
 import net.fabricmc.api.ClientModInitializer;
 import net.fabricmc.fabric.api.client.event.lifecycle.v1.ClientTickEvents;
@@ -20,12 +17,8 @@ import net.minecraft.client.Minecraft;
 
 public class MetalRenderClient implements ClientModInitializer {
   private static final int FPS_PRIORITY_SIMULATION_DISTANCE = 5;
-  private static MetalRenderClient instance;
   private static MetalRenderer renderer;
   private static MetalRenderConfig config;
-  private static MetalRenderCoordinator coordinator;
-  private static MeshShaderBackend meshShaderBackend;
-  private static SodiumMetalInterface sodiumInterface;
   private static MetalWorldRenderer worldRenderer;
   private static boolean metalUp;
   private static boolean cfgWasOn;
@@ -40,7 +33,6 @@ public class MetalRenderClient implements ClientModInitializer {
     if (StartupBlocker.shouldBlockStartup()) {
       return;
     }
-    instance = this;
     MetalLogger.info("metalrender ready");
     config = MetalRenderConfig.load();
     cfgWasOn = config != null && config.enableMetalRendering;
@@ -133,11 +125,6 @@ public class MetalRenderClient implements ClientModInitializer {
         worldRenderer.onWorldUnload();
         worldRenderer = null;
       }
-      if (meshShaderBackend != null) {
-        meshShaderBackend.shutdown();
-        meshShaderBackend = null;
-      }
-      coordinator = null;
       if (renderer != null) {
         long handle = renderer.getHandle();
         if (handle != 0 && NativeBridge.isLibLoaded()) {
@@ -229,11 +216,7 @@ public class MetalRenderClient implements ClientModInitializer {
         return;
       }
 
-      coordinator = new MetalRenderCoordinator();
-      coordinator.initialize();
       worldRenderer = new MetalWorldRenderer();
-      meshShaderBackend = new MeshShaderBackend();
-      meshShaderBackend.initialize();
       logStartDiag(mc);
       MetalLogger.info("metal weady: " + MetalHardwareChecker.getDeviceName());
     } catch (Exception e) {
@@ -242,24 +225,12 @@ public class MetalRenderClient implements ClientModInitializer {
     }
   }
 
-  public static MetalRenderClient getInstance() {
-    return instance;
-  }
-
   public static MetalRenderer getRenderer() {
     return renderer;
   }
 
   public static MetalRenderConfig getConfig() {
     return config;
-  }
-
-  public static MetalRenderCoordinator getCoordinator() {
-    return coordinator;
-  }
-
-  public static MeshShaderBackend getMeshShaderBackend() {
-    return meshShaderBackend;
   }
 
   public static boolean isMetalAvailable() {
@@ -273,13 +244,6 @@ public class MetalRenderClient implements ClientModInitializer {
 
   public static MetalWorldRenderer getWorldRenderer() {
     return worldRenderer;
-  }
-
-  public static SodiumMetalInterface getSodiumInterface() {
-    if (sodiumInterface == null) {
-      sodiumInterface = new SodiumMetalInterface();
-    }
-    return sodiumInterface;
   }
 
   public static boolean isSodiumLoaded() {

@@ -814,10 +814,6 @@ public class MetalRenderSettingsScreen extends Screen {
     return Component.translatable("options.framerate", fpsLimit);
   }
 
-  @SuppressWarnings("unused")
-  private static String fmtPx(float value) {
-    return String.format(java.util.Locale.ROOT, "%.1f", value);
-  }
 
   private int totalH() {
     return totalContentHeight;

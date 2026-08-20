@@ -64,9 +64,8 @@ public final class MetalRenderProfiler {
   private long lastLogTimeMs;
   private long lastCsvEmitMs;
   private long lastSnapshotUpdateMs;
-  private static final String CSV_HEADER =
-      "epoch_ms,frame_ms,mesh_ms,upload_ms,cull_ms," +
-          "meshes_built,chunks_drawn,meshes,pending,vertex_count,builder_pool,queued";
+  private static final String CSV_HEADER = "epoch_ms,frame_ms,mesh_ms,upload_ms,cull_ms," +
+      "meshes_built,chunks_drawn,meshes,pending,vertex_count,builder_pool,queued";
 
   private MetalRenderProfiler() {
   }
@@ -266,9 +265,11 @@ public final class MetalRenderProfiler {
   }
 
   private void ensureCsvWorker() {
-    if (!csvEnabled || csvWorkerStarted) return;
+    if (!csvEnabled || csvWorkerStarted)
+      return;
     synchronized (this) {
-      if (!csvEnabled || csvWorkerStarted) return;
+      if (!csvEnabled || csvWorkerStarted)
+        return;
       csvWorkerStarted = true;
       Thread t = new Thread(() -> {
         StringBuilder batch = new StringBuilder(4096);
@@ -365,8 +366,7 @@ public final class MetalRenderProfiler {
 
     static CustomChunkMesherAccess of(MetalWorldRenderer wr) {
       try {
-        com.pebbles_boon.metalrender.render.chunk.CustomChunkMesher m =
-            wr.getChunkMesher();
+        com.pebbles_boon.metalrender.render.chunk.CustomChunkMesher m = wr.getChunkMesher();
         return new CustomChunkMesherAccess(m.getMeshCount(), m.getPendingCount(),
             m.getTotalVertexCount(), m.getBuilderActiveCount(),
             m.getBuilderQueueDepth());
@@ -504,8 +504,10 @@ public final class MetalRenderProfiler {
       for (int i = 0; i < sampleCount; i++) {
         double v = values[i];
         sum += v;
-        if (v < min) min = v;
-        if (v > max) max = v;
+        if (v < min)
+          min = v;
+        if (v > max)
+          max = v;
       }
       avg = sum / sampleCount;
     }

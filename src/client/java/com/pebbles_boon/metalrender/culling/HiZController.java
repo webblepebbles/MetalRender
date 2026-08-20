@@ -7,7 +7,6 @@ public class HiZController {
   private volatile int width;
   private volatile int height;
   private volatile boolean active;
-  private volatile long lastUpdateNs;
 
   public void ensureInitialized(int frameWidth, int frameHeight) {
     if (!active || !NativeBridge.isLibLoaded() || frameWidth <= 0 ||
@@ -17,18 +16,6 @@ public class HiZController {
     width = frameWidth;
     height = frameHeight;
     MetalLogger.info("hiz enabled: %dx%d", frameWidth, frameHeight);
-  }
-
-  public int getWidth() {
-    return width;
-  }
-
-  public int getHeight() {
-    return height;
-  }
-
-  public long getLastUpdateNs() {
-    return lastUpdateNs;
   }
 
   public boolean isReady() {
@@ -45,23 +32,15 @@ public class HiZController {
 
   public void setActive(boolean v) {
     active = v;
-    if (!v) {
-      lastUpdateNs = 0L;
-    }
     if (NativeBridge.isLibLoaded()) {
       NativeBridge.nSetHiZCullEnabled(v);
     }
-  }
-
-  public boolean isActive() {
-    return active;
   }
 
   public void shutdown() {
     active = false;
     width = 0;
     height = 0;
-    lastUpdateNs = 0L;
     if (NativeBridge.isLibLoaded()) {
       NativeBridge.nSetHiZCullEnabled(false);
     }

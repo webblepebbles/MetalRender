@@ -8,17 +8,11 @@
   "client": [
     "MinecraftClientMixin",
     "GameRendererMixin",
-    "DrawContextMixin",
-    "RenderSystemFlipMixin",
-    "WindowSwapMixin",
     "VanillaSectionCompileTaskMixin",
-    "accessor.SpriteAtlasTextureAccessor",
-    "accessor.GameRendererAccessor",
     "WorldRendererTerrainMixin",
     "EntityRenderMixin",
     "ParticleCaptureMixin",
     "WorldRendererBlitMixin",
-    "InGameHudMixin",
     "ClientWorldMixin",
     "OptionsScreenMixin",
     "ChunkLoadMixin",
@@ -26,10 +20,7 @@
     "WeatherRenderMixin",
     "accessor.BillboardParticleAccessor",
     "accessor.ParticleAccessor",
-    "accessor.ParticleManagerAccessor",
-    "accessor.LivingEntityRendererAccessor",
-    "accessor.ClientPlayerInteractionManagerAccessor",
-    "accessor.WorldRendererCrackAccessor"
+    "accessor.ParticleManagerAccessor"
   ],
   "injectors": {
     "defaultRequire": 0
