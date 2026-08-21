@@ -154,7 +154,7 @@ fragment half4 fragment_terrain(
     texture2d<half> lightmap    [[texture(1)]]
 ) {
     constexpr sampler atlasSampler(mag_filter::nearest, min_filter::linear,
-                                   mip_filter::linear, max_anisotropy(8));
+                                   mip_filter::linear, max_anisotropy(2));
     constexpr sampler lightSampler(mag_filter::nearest, min_filter::nearest,
                                    mip_filter::nearest);
     half4 texColor = blockAtlas.sample(atlasSampler, in.texCoord);
@@ -202,7 +202,7 @@ fragment half4 fragment_terrain_cutout(
     texture2d<half> lightmap    [[texture(1)]]
 ) {
     constexpr sampler atlasSampler(mag_filter::nearest, min_filter::linear,
-                                   mip_filter::linear, max_anisotropy(8));
+                                   mip_filter::linear, max_anisotropy(2));
     constexpr sampler lightSampler(mag_filter::nearest, min_filter::nearest,
                                    mip_filter::nearest);
     half4 texColor = blockAtlas.sample(atlasSampler, in.texCoord);
@@ -277,7 +277,7 @@ fragment half4 fragment_terrain_opaque(
     texture2d<half> lightmap    [[texture(1)]]
 ) {
     constexpr sampler atlasSampler(mag_filter::nearest, min_filter::linear,
-                                   mip_filter::linear, max_anisotropy(8));
+                                   mip_filter::linear, max_anisotropy(2));
     constexpr sampler lightSampler(mag_filter::nearest, min_filter::nearest,
                                    mip_filter::nearest);
     half4 texColor = blockAtlas.sample(atlasSampler, in.texCoord);
@@ -300,7 +300,7 @@ fragment half4 fragment_terrain_icb_opaque(
     constant TerrainFragArgs& resources [[buffer(0)]]
 ) {
     constexpr sampler atlasSampler(mag_filter::nearest, min_filter::linear,
-                                   mip_filter::linear, max_anisotropy(8));
+                                   mip_filter::linear, max_anisotropy(2));
     constexpr sampler lightSampler(mag_filter::nearest, min_filter::nearest,
                                    mip_filter::nearest);
     half4 texColor = resources.blockAtlas.sample(atlasSampler, in.texCoord);
@@ -324,7 +324,7 @@ fragment half4 fragment_terrain_icb(
     constant float4& overlayParams [[buffer(5)]]
 ) {
     constexpr sampler atlasSampler(mag_filter::nearest, min_filter::linear,
-                                   mip_filter::linear, max_anisotropy(8));
+                                   mip_filter::linear, max_anisotropy(2));
     constexpr sampler lightSampler(mag_filter::nearest, min_filter::nearest,
                                    mip_filter::nearest);
     half4 texColor = resources.blockAtlas.sample(atlasSampler, in.texCoord);
@@ -351,7 +351,7 @@ fragment half4 fragment_terrain_cutout_inhouse(
     texture2d<half> lightmap    [[texture(1)]]
 ) {
     constexpr sampler atlasSampler(mag_filter::nearest, min_filter::linear,
-                                   mip_filter::linear, max_anisotropy(8));
+                                   mip_filter::linear, max_anisotropy(2));
     constexpr sampler lightSampler(mag_filter::nearest, min_filter::nearest,
                                    mip_filter::nearest);
     half4 texColor = blockAtlas.sample(atlasSampler, in.texCoord);
@@ -367,7 +367,7 @@ fragment half4 fragment_terrain_icb_cutout(
     constant TerrainFragArgs& resources [[buffer(0)]]
 ) {
     constexpr sampler atlasSampler(mag_filter::nearest, min_filter::linear,
-                                   mip_filter::linear, max_anisotropy(8));
+                                   mip_filter::linear, max_anisotropy(2));
     constexpr sampler lightSampler(mag_filter::nearest, min_filter::nearest,
                                    mip_filter::nearest);
     half4 texColor = resources.blockAtlas.sample(atlasSampler, in.texCoord);

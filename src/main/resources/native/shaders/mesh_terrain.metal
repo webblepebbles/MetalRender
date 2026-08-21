@@ -16,6 +16,7 @@ struct CameraUniforms {
     uint     hizMipCount;
     uint     totalChunks;
     float    waterFog;
+    float    cameraSpeed;
 };
 
 
@@ -27,7 +28,9 @@ struct ChunkMeshlet {
     float worldZ;
     uint  visibleFaceMask;
     uint  lodTier;
-    uint  _pad2;
+    uint  visibleVertexCount;
+    uint  faceStart[7];
+    uint  _pad;
 };
 
 
@@ -47,8 +50,7 @@ struct MeshVertexOut {
     float2 texCoord;
     half2  lightUV;
     half4  color;
-    uint   normalIndex [[flat]];
-    float3 worldPos;
+    half   fogDist;
 };
 
 
@@ -76,7 +78,7 @@ void object_terrain(
         return;
     }
     ChunkMeshlet m = meshlets[tid];
-    if (m.vertexCount == 0u) {
+    if (m.visibleVertexCount == 0u) {
         grid.set_threadgroups_per_grid(uint3(0, 0, 0));
         return;
     }
@@ -95,7 +97,7 @@ void object_terrain(
         }
     }
     payload.chunkIndex = tid;
-    uint numGroups = (m.vertexCount + 255u) / 256u;
+    uint numGroups = (m.visibleVertexCount + 255u) / 256u;
     grid.set_threadgroups_per_grid(uint3(numGroups, 1, 1));
 }
 
@@ -122,70 +124,57 @@ void mesh_terrain(
     uint tgIdx [[threadgroup_position_in_grid]]
 ) {
     ChunkMeshlet m  = meshlets[payload.chunkIndex];
-    uint vertStart  = tgIdx * kMaxMeshVerts;
-    uint vertEnd    = min(vertStart + kMaxMeshVerts, m.vertexCount);
-    uint localVerts = vertEnd - vertStart;
+    uint vStart     = tgIdx * kMaxMeshVerts;
+    uint vEnd       = min(vStart + kMaxMeshVerts, m.visibleVertexCount);
+    uint localVerts = vEnd - vStart;
     uint localQuads = localVerts / 4u;
 
-    threadgroup uint quadVisible[kMaxMeshTris / 2u];
-    threadgroup uint quadCompact[kMaxMeshTris / 2u];
-
-    if (tid < localQuads) {
-        InhouseTerrainVertex first = vertices[m.baseVertexOffset + vertStart + tid * 4u];
-        uint normalIndex = uint(first.normalIndex & 0x7u);
-        quadVisible[tid] =
-            (normalIndex >= 6u || (m.visibleFaceMask & (1u << normalIndex)) != 0u) ? 1u : 0u;
-    }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
     if (tid == 0u) {
-        uint running = 0u;
-        for (uint q = 0u; q < localQuads; q++) {
-            quadCompact[q] = running;
-            running += quadVisible[q];
-        }
-        output.set_primitive_count(running * 2u);
+        output.set_primitive_count(localQuads * 2u);
     }
-    threadgroup_barrier(mem_flags::mem_threadgroup);
 
     float3 chunkOrig = float3(m.worldX, m.worldY, m.worldZ);
 
     if (tid < localVerts) {
-        uint sourceQuad = tid >> 2u;
-        if (quadVisible[sourceQuad] != 0u) {
-            uint vertexInQuad = tid & 3u;
-            uint gv = m.baseVertexOffset + vertStart + tid;
-            InhouseTerrainVertex v = vertices[gv];
-            uint normalIndex = uint(v.normalIndex & 0x7u);
-
-            float3 localPos = float3(short3(v.position)) / 256.0;
-            float3 worldPos = localPos + chunkOrig;
-            float4 viewPos  = camera.modelView * float4(worldPos, 1.0);
-
-            MeshVertexOut out;
-            out.position    = camera.projection * viewPos;
-            out.texCoord    = float2(v.texCoord) / 65535.0f;
-            out.color       = half4(float4(v.color) / 255.0f);
-
-            uint pl      = uint(v.packedLight);
-            out.lightUV  = half2((float((pl & 0xFu) * 16) + 8.0) / 256.0,
-                                 (float(((pl >> 4u) & 0xFu) * 16) + 8.0) /
-                                     256.0);
-            out.normalIndex = normalIndex;
-            out.worldPos    = worldPos;
-
-            output.set_vertex(quadCompact[sourceQuad] * 4u + vertexInQuad, out);
+        uint vi = vStart + tid;
+        uint srcVertex = 0u;
+        uint running = 0u;
+        for (uint f = 0u; f < 7u; f++) {
+            uint fs = m.faceStart[f];
+            uint fe = (f + 1u < 7u) ? m.faceStart[f + 1u] : m.vertexCount;
+            uint visLen = ((m.visibleFaceMask & (1u << f)) != 0u)
+                              ? (fe - fs)
+                              : 0u;
+            if (vi < running + visLen) {
+                srcVertex = fs + (vi - running);
+                break;
+            }
+            running += visLen;
         }
+        uint gv = m.baseVertexOffset + srcVertex;
+        InhouseTerrainVertex v = vertices[gv];
+        float3 localPos = float3(short3(v.position)) / 256.0;
+        float3 worldPos = localPos + chunkOrig;
+        float4 viewPos  = camera.modelView * float4(worldPos, 1.0);
+        MeshVertexOut out;
+        out.position = camera.projection * viewPos;
+        out.texCoord = float2(v.texCoord) / 65535.0f;
+        out.color    = half4(float4(v.color) / 255.0f);
+        uint pl      = uint(v.packedLight);
+        out.lightUV  = half2((float((pl & 0xFu) * 16) + 8.0) / 256.0,
+                             (float(((pl >> 4u) & 0xFu) * 16) + 8.0) / 256.0);
+        out.fogDist  = half(length(viewPos.xyz));
+        output.set_vertex(tid, out);
     }
 
-    if (tid < localQuads && quadVisible[tid] != 0u) {
-        uint compactQuad = quadCompact[tid];
-        uint b = compactQuad * 4u;
-        output.set_index(compactQuad * 6u + 0u, b + 0u);
-        output.set_index(compactQuad * 6u + 1u, b + 1u);
-        output.set_index(compactQuad * 6u + 2u, b + 2u);
-        output.set_index(compactQuad * 6u + 3u, b + 0u);
-        output.set_index(compactQuad * 6u + 4u, b + 2u);
-        output.set_index(compactQuad * 6u + 5u, b + 3u);
+    if (tid < localQuads) {
+        uint b = tid * 4u;
+        output.set_index(tid * 6u + 0u, b + 0u);
+        output.set_index(tid * 6u + 1u, b + 1u);
+        output.set_index(tid * 6u + 2u, b + 2u);
+        output.set_index(tid * 6u + 3u, b + 0u);
+        output.set_index(tid * 6u + 4u, b + 2u);
+        output.set_index(tid * 6u + 5u, b + 3u);
     }
 }
 
@@ -200,7 +189,7 @@ fragment half4 fragment_terrain_mesh_opaque(
     constant CameraUniforms& camera [[buffer(1)]]
 ) {
     constexpr sampler s(mag_filter::nearest, min_filter::linear,
-                        mip_filter::linear, max_anisotropy(8));
+                        mip_filter::linear, max_anisotropy(2));
     constexpr sampler lightSampler(mag_filter::nearest, min_filter::nearest,
                                    mip_filter::nearest);
     half4 tex = blockAtlas.sample(s, float2(in.texCoord));
@@ -221,9 +210,8 @@ fragment half4 fragment_terrain_mesh_opaque(
     col.rgb *= max(light, half3(0.04h));
 
     if (camera.waterFog > 0.0f) {
-        half dist = half(fast::length(in.worldPos));
-        half fog  = clamp(dist / half(32.0h), half(0.0h), half(0.85h));
-        col.rgb   = mix(col.rgb, half3(0.05h, 0.12h, 0.3h), fog);
+        half fog = clamp(in.fogDist / half(32.0h), half(0.0h), half(0.85h));
+        col.rgb  = mix(col.rgb, half3(0.05h, 0.12h, 0.3h), fog);
     }
     return half4(col.rgb, half(1.0h));
 }
@@ -235,7 +223,7 @@ fragment half4 fragment_terrain_mesh_cutout(
     constant CameraUniforms& camera [[buffer(1)]]
 ) {
     constexpr sampler s(mag_filter::nearest, min_filter::linear,
-                        mip_filter::linear, max_anisotropy(8));
+                        mip_filter::linear, max_anisotropy(2));
     constexpr sampler lightSampler(mag_filter::nearest, min_filter::nearest,
                                    mip_filter::nearest);
     half4 tex = blockAtlas.sample(s, float2(in.texCoord));
@@ -244,9 +232,8 @@ fragment half4 fragment_terrain_mesh_cutout(
     half3 light = lightmap.sample(lightSampler, float2(in.lightUV)).rgb;
     col.rgb *= max(light, half3(0.04h));
     if (camera.waterFog > 0.0f) {
-        half dist = half(fast::length(in.worldPos));
-        half fog  = clamp(dist / half(32.0h), half(0.0h), half(0.85h));
-        col.rgb   = mix(col.rgb, half3(0.05h, 0.12h, 0.3h), fog);
+        half fog = clamp(in.fogDist / half(32.0h), half(0.0h), half(0.85h));
+        col.rgb  = mix(col.rgb, half3(0.05h, 0.12h, 0.3h), fog);
     }
     return half4(col.rgb, half(1.0h));
 }
@@ -263,9 +250,8 @@ fragment half4 fragment_terrain_mesh_emissive(
     half4 col = tex * in.color;
 
     if (camera.waterFog > 0.0f) {
-        half dist = half(fast::length(in.worldPos));
-        half fog  = clamp(dist / half(32.0h), half(0.0h), half(0.85h));
-        col.rgb   = mix(col.rgb, half3(0.05h, 0.12h, 0.3h), fog);
+        half fog = clamp(in.fogDist / half(32.0h), half(0.0h), half(0.85h));
+        col.rgb  = mix(col.rgb, half3(0.05h, 0.12h, 0.3h), fog);
     }
     return col;
 }

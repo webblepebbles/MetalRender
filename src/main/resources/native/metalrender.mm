@@ -374,6 +374,10 @@ static inline void hizUpdateThreadgroupSize(id<MTLTexture> srcDepth) {
   }
 }
 static bool g_useMemorylessTargets = false;
+static double g_camX = 0.0, g_camY = 0.0, g_camZ = 0.0;
+static double g_hizCamX = 0.0;
+static double g_hizCamY = 0.0;
+static double g_hizCamZ = 0.0;
 struct HiZParamsCPU {
   uint32_t srcSize[2];
   uint32_t dstSize[2];
@@ -389,25 +393,50 @@ static void encodeHiZDownsample(id<MTLCommandBuffer> commandBuffer) {
   if (!encoder) {
     return;
   }
+  uint32_t hizW = (uint32_t)g_hizPyramid.width;
+  uint32_t hizH = (uint32_t)g_hizPyramid.height;
+  uint32_t mipCount = (uint32_t)g_hizMipCount;
   HiZParamsCPU params = {};
   params.srcSize[0] = (uint32_t)g_sceneDepth.width;
   params.srcSize[1] = (uint32_t)g_sceneDepth.height;
-  params.dstSize[0] = (uint32_t)g_hizPyramid.width;
-  params.dstSize[1] = (uint32_t)g_hizPyramid.height;
+  params.dstSize[0] = hizW;
+  params.dstSize[1] = hizH;
+  params.mipLevel = 0;
+  params.padding[0] = 0;
   [encoder setComputePipelineState:g_hizDownsamplePipeline];
   [encoder setTexture:g_sceneDepth atIndex:0];
   [encoder setTexture:g_hizPyramid atIndex:1];
   [encoder setBytes:&params length:sizeof(params) atIndex:0];
-  MTLSize groups = MTLSizeMake((params.dstSize[0] + 15) / 16,
-                               (params.dstSize[1] + 15) / 16, 1);
+  MTLSize groups = MTLSizeMake((hizW + 15) / 16, (hizH + 15) / 16, 1);
   [encoder dispatchThreadgroups:groups
           threadsPerThreadgroup:MTLSizeMake(16, 16, 1)];
-  [encoder endEncoding];
-  id<MTLBlitCommandEncoder> blit = [commandBuffer blitCommandEncoder];
-  if (blit) {
-    [blit generateMipmapsForTexture:g_hizPyramid];
-    [blit endEncoding];
+  uint32_t pw = hizW;
+  uint32_t ph = hizH;
+  for (uint32_t m = 1; m < mipCount; m++) {
+    uint32_t cw = std::max(1u, pw >> 1);
+    uint32_t ch = std::max(1u, ph >> 1);
+    HiZParamsCPU cp = {};
+    cp.srcSize[0] = pw;
+    cp.srcSize[1] = ph;
+    cp.dstSize[0] = cw;
+    cp.dstSize[1] = ch;
+    cp.mipLevel = m - 1;
+    cp.padding[0] = m;
+    [encoder memoryBarrierWithScope:MTLBarrierScopeTextures];
+    [encoder setBytes:&cp length:sizeof(cp) atIndex:0];
+    MTLSize cgroups = MTLSizeMake((cw + 15) / 16, (ch + 15) / 16, 1);
+    [encoder dispatchThreadgroups:cgroups
+            threadsPerThreadgroup:MTLSizeMake(16, 16, 1)];
+    pw = cw;
+    ph = ch;
+    if (pw == 1 && ph == 1) {
+      break;
+    }
   }
+  [encoder endEncoding];
+  g_hizCamX = g_camX;
+  g_hizCamY = g_camY;
+  g_hizCamZ = g_camZ;
   g_hizReady = true;
 }
 static int g_hizWidth = 0;
@@ -540,7 +569,19 @@ static inline int visibleOpaqueQuadCount(const int counts[7], uint32_t mask) {
 }
 
 static inline uint32_t visibleFacingMaskForAabb(float ox, float oy, float oz) {
-  return 0x7Fu;
+  if (!g_cameraFacingCullingEnabled.load(std::memory_order_relaxed)) {
+    return 0x7Fu;
+  }
+  uint32_t mask = (1u << 6u);
+  float x0 = ox, y0 = oy, z0 = oz;
+  float x1 = ox + 16.0f, y1 = oy + 16.0f, z1 = oz + 16.0f;
+  if (y1 > 0.0f) mask |= (1u << 0u);
+  if (y0 < 0.0f) mask |= (1u << 1u);
+  if (z1 > 0.0f) mask |= (1u << 2u);
+  if (z0 < 0.0f) mask |= (1u << 3u);
+  if (x1 > 0.0f) mask |= (1u << 4u);
+  if (x0 < 0.0f) mask |= (1u << 5u);
+  return mask;
 }
 
 static inline int opaqueBucketStartQuad(const int counts[7], int bucket) {
@@ -579,6 +620,7 @@ struct CameraUniformsCPU {
   uint32_t hizMipCount;
   uint32_t totalChunks;
   float waterFog;
+  float cameraSpeed;
 };
 
 struct ChunkMeshletNative {
@@ -589,10 +631,12 @@ struct ChunkMeshletNative {
   float worldZ;
   uint32_t visibleFaceMask;
   uint32_t lodTier;
-  uint32_t _pad2;
+  uint32_t visibleVertexCount;
+  uint32_t faceStart[7];
+  uint32_t _pad;
 };
-static_assert(sizeof(ChunkMeshletNative) == 32,
-              "ChunkMeshletNative must be 32 bytes");
+static_assert(sizeof(ChunkMeshletNative) == 64,
+              "ChunkMeshletNative must be 64 bytes");
 static std::vector<NativeMesh> g_nativeMeshes;
 static std::unordered_map<int64_t, size_t> g_meshKeyToIdx;
 static std::vector<size_t> g_meshFreeSlots;
@@ -2364,7 +2408,6 @@ static float g_chunkOffsetX = 0, g_chunkOffsetY = 0, g_chunkOffsetZ = 0;
 static float g_projMatrix[16] = {};
 static float g_mvMatrix[16] = {};
 static float g_mvpMatrix[16] = {};
-static double g_camX = 0, g_camY = 0, g_camZ = 0;
 id<MTLRenderCommandEncoder> g_currentEncoder = nil;
 extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetPipelineState(
@@ -3360,15 +3403,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
     if (validCount == 0)
       return 0;
 
-    bool hasTranslucentGeometry = false;
-    for (int i = 0; i < validCount; i++) {
-      if (s_cmds[i].idxCount > s_cmds[i].opaqueIdxCount) {
-        hasTranslucentGeometry = true;
-        break;
-      }
-    }
-
-    if (validCount > 1 && hasTranslucentGeometry) {
+    if (validCount > 1) {
       static DrawCmd *s_radixScratch = nullptr;
       static int s_radixScratchCap = 0;
       if (s_radixScratchCap < validCount) {
@@ -3440,13 +3475,14 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       cu->cameraPosition[2] = (float)g_camZ;
       cu->cameraPosition[3] = g_skyBrightness;
       memcpy(cu->frustumPlanes, frustumPlanes, sizeof(frustumPlanes));
-      cu->screenSize[0] = 0.0f;
-      cu->screenSize[1] = 0.0f;
+      cu->screenSize[0] = (float)g_rtWidth;
+      cu->screenSize[1] = (float)g_rtHeight;
       cu->nearPlane = 0.05f;
-      cu->farPlane = 1024.0f;
+      cu->farPlane = (float)g_configuredRenderDistBlocks;
       cu->frameIndex = (uint32_t)g_frameCount;
       cu->hizMipCount = 0;
       cu->totalChunks = 0;
+      cu->cameraSpeed = 0.0f;
 
       cu->waterFog = g_entityOverlayParams[2];
 
@@ -3473,16 +3509,26 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           int opaqueV = (s_cmds[i].opaqueIdxCount / 6) * 4;
           if (opaqueV <= 0)
             continue;
+          uint32_t fm = visibleFacingMaskForAabb(s_cmds[i].ox, s_cmds[i].oy,
+                                                 s_cmds[i].oz);
           meshlets[meshletCount].baseVertexOffset =
               (uint32_t)(s_cmds[i].megaOffset / VERTEX_STRIDE_MESH);
           meshlets[meshletCount].vertexCount = (uint32_t)opaqueV;
           meshlets[meshletCount].worldX = s_cmds[i].ox;
           meshlets[meshletCount].worldY = s_cmds[i].oy;
           meshlets[meshletCount].worldZ = s_cmds[i].oz;
-          meshlets[meshletCount].visibleFaceMask = visibleFacingMaskForAabb(
-              s_cmds[i].ox, s_cmds[i].oy, s_cmds[i].oz);
+          meshlets[meshletCount].visibleFaceMask = fm;
           meshlets[meshletCount].lodTier = (uint32_t)s_cmds[i].lodTier;
-          meshlets[meshletCount]._pad2 = 0;
+          uint32_t acc = 0;
+          uint32_t visibleV = 0;
+          for (int f = 0; f < 7; f++) {
+            meshlets[meshletCount].faceStart[f] = acc;
+            uint32_t faceV = (uint32_t)s_cmds[i].opaqueFaceCounts[f] * 4u;
+            acc += faceV;
+            if ((fm & (1u << f)) != 0u)
+              visibleV += faceV;
+          }
+          meshlets[meshletCount].visibleVertexCount = visibleV;
           meshletCount++;
         }
         cu->totalChunks = (uint32_t)meshletCount;
@@ -5551,6 +5597,12 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRunGPUCulling(
   cam->hizMipCount = g_hizMipCount;
   cam->totalChunks = count;
   cam->waterFog = g_entityOverlayParams[2];
+  {
+    double dcx = g_camX - g_hizCamX;
+    double dcy = g_camY - g_hizCamY;
+    double dcz = g_camZ - g_hizCamZ;
+    cam->cameraSpeed = (float)sqrt(dcx * dcx + dcy * dcy + dcz * dcz);
+  }
 
   id<MTLCommandBuffer> cmdBuf = [g_queue commandBuffer];
   id<MTLComputeCommandEncoder> encoder =
