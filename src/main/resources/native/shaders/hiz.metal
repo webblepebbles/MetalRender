@@ -16,12 +16,14 @@ kernel void hiz_downsample(
 ) {
     if (gid.x >= params.dstSize.x || gid.y >= params.dstSize.y) return;
     uint2 srcBase = gid * 2;
-    float d00 = srcDepth.read(min(srcBase + uint2(0, 0), params.srcSize - 1)).r;
-    float d10 = srcDepth.read(min(srcBase + uint2(1, 0), params.srcSize - 1)).r;
-    float d01 = srcDepth.read(min(srcBase + uint2(0, 1), params.srcSize - 1)).r;
-    float d11 = srcDepth.read(min(srcBase + uint2(1, 1), params.srcSize - 1)).r;
+    uint srcLevel = params.mipLevel;
+    uint dstLevel = params._pad0;
+    float d00 = srcDepth.read(min(srcBase + uint2(0, 0), params.srcSize - 1), srcLevel).r;
+    float d10 = srcDepth.read(min(srcBase + uint2(1, 0), params.srcSize - 1), srcLevel).r;
+    float d01 = srcDepth.read(min(srcBase + uint2(0, 1), params.srcSize - 1), srcLevel).r;
+    float d11 = srcDepth.read(min(srcBase + uint2(1, 1), params.srcSize - 1), srcLevel).r;
     float maxDepth = max(max(d00, d10), max(d01, d11));
-    dstDepth.write(float4(maxDepth), gid);
+    dstDepth.write(float4(maxDepth), gid, dstLevel);
 }
 kernel void hiz_downsample_multi(
     texture2d<float, access::read>  mip0    [[texture(0)]],

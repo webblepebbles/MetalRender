@@ -12,7 +12,8 @@ struct CameraUniforms {
     uint     frameIndex;
     uint     hizMipCount;
     uint     totalChunks;
-    uint     _pad;
+    float    waterFog;
+    float    cameraSpeed;
 };
 struct SubChunkEntry {
     float4   aabbMin;
