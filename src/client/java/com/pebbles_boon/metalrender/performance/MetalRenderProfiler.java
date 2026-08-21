@@ -65,7 +65,7 @@ public final class MetalRenderProfiler {
   private long lastCsvEmitMs;
   private long lastSnapshotUpdateMs;
   private static final String CSV_HEADER = "epoch_ms,frame_ms,mesh_ms,upload_ms,cull_ms," +
-      "meshes_built,chunks_drawn,meshes,pending,vertex_count,builder_pool,queued";
+      "meshes_built,chunks_drawn,meshes,pending,vertex_count,builder_pool,queued,gpu_ms";
 
   private MetalRenderProfiler() {
   }
@@ -235,13 +235,14 @@ public final class MetalRenderProfiler {
         nowMs - lastCsvEmitMs >= 1000L) {
       lastCsvEmitMs = nowMs;
       emitCsvSample(nowMs, frameMs, meshMs, uploadMs, cullMs,
-          meshesBuilt, chunksDrawn, wrForCsv);
+          meshesBuilt, chunksDrawn, wrForCsv, gpuMs);
     }
   }
 
   private void emitCsvSample(long tsMs, double frameMs, double meshMs,
       double uploadMs, double cullMs,
-      int meshesBuilt, int chunksDrawn, MetalWorldRenderer wr) {
+      int meshesBuilt, int chunksDrawn, MetalWorldRenderer wr,
+      double gpuMs) {
     ensureCsvWorker();
     CustomChunkMesherAccess access = CustomChunkMesherAccess.of(wr);
     StringBuilder sb = new StringBuilder(256);
@@ -256,7 +257,8 @@ public final class MetalRenderProfiler {
         .append(access.pendingCount).append(',')
         .append(access.vertexCount).append(',')
         .append(access.builderActive).append(',')
-        .append(access.builderQueued).append('\n');
+        .append(access.builderQueued).append(',')
+        .append(fmt(gpuMs)).append('\n');
     csvQueue.offer(sb.toString());
   }
 
