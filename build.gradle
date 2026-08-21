@@ -63,6 +63,7 @@ loom {
                 if (project.hasProperty("gl2metal.${category}")) {
                     vmArg "-Dmetalrender.gl2metal.${category}=true"
                 }
+                 programArgs "--quickPlaySingleplayer", "New World"
             }
         }
     }
