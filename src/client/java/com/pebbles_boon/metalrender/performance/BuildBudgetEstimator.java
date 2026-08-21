@@ -13,19 +13,19 @@ public class BuildBudgetEstimator {
   }
 
   public int recommendedInFlight() {
-    if (ewmaGpuMs < 4.1) return 192;
-    if (ewmaGpuMs < 8.1) return 128;
-    return 96;
+    if (ewmaGpuMs < 4.1) return 384;
+    if (ewmaGpuMs < 8.1) return 256;
+    return 192;
   }
 
   public int recommendedInFlightFor(int queueId) {
     if (queueId == 0) {
-      if (ewmaGpuMs < 4.1) return 64;
-      if (ewmaGpuMs < 8.1) return 48;
-      return 32;
+      if (ewmaGpuMs < 4.1) return 128;
+      if (ewmaGpuMs < 8.1) return 96;
+      return 64;
     }
     int budget = recommendedInFlight();
-    return Math.max(64, budget - 32);
+    return Math.max(128, budget - 64);
   }
 
   public double getEwmaMeshMs() {
