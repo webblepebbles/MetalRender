@@ -9,7 +9,6 @@ import com.pebbles_boon.metalrender.config.MetalRenderConfig;
 import com.pebbles_boon.metalrender.culling.AsyncCullTask;
 import com.pebbles_boon.metalrender.culling.CullingOrcreator;
 import com.pebbles_boon.metalrender.culling.FrustumCuller;
-import com.pebbles_boon.metalrender.culling.HiZController;
 import com.pebbles_boon.metalrender.entity.MetalEntityRenderer;
 import com.pebbles_boon.metalrender.nativebridge.MetalHardwareChecker;
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
@@ -63,10 +62,10 @@ public class MetalWorldRenderer {
   private static final int TURN_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 16;
   private static final int SATURATED_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 2;
   private static final int PRIORITIZED_BUILD_STREAK_LIMIT = 2;
-  private static final int MAX_IN_FLIGHT_BUILD_TASKS = 64;
-  private static final int RESERVED_PRIORITY_IN_FLIGHT_SLOTS = 16;
-  private static final int FPS_PRIORITY_MAX_IN_FLIGHT_BUILD_TASKS = 64;
-  private static final int FPS_PRIORITY_NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS = 96;
+  private static final int MAX_IN_FLIGHT_BUILD_TASKS = 256;
+  private static final int RESERVED_PRIORITY_IN_FLIGHT_SLOTS = 32;
+  private static final int FPS_PRIORITY_MAX_IN_FLIGHT_BUILD_TASKS = 256;
+  private static final int FPS_PRIORITY_NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS = 192;
   private static final int HIGH_PRIORITY_LOADED_VERTICAL_RANGE = 3;
   private static final int MID_DISTANCE_SCAN_VERTICAL_RANGE = 8;
   private static final int FAR_DISTANCE_SCAN_VERTICAL_RANGE = 5;
@@ -87,9 +86,9 @@ public class MetalWorldRenderer {
   private static final int INTERACTIVE_PRIORITY_CHUNK_RANGE = 6;
   private static final int INTERACTIVE_PRIORITY_SUBMISSIONS_PER_PASS = 8;
   private static final int MAX_INTERACTIVE_PRIORITY_QUEUE_DEPTH = 16;
-  private static final int LOADING_BACKGROUND_SUBMISSIONS_PER_PASS = 48;
-  private static final int TURN_PRIORITY_BACKGROUND_SUBMISSIONS_PER_PASS = 12;
-  private static final int NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS = 32;
+  private static final int LOADING_BACKGROUND_SUBMISSIONS_PER_PASS = 96;
+  private static final int TURN_PRIORITY_BACKGROUND_SUBMISSIONS_PER_PASS = 24;
+  private static final int NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS = 96;
   private static final int ACTIVE_CLOSE_RANGE_RESCAN_INTERVAL = 3;
   private static final int IDLE_CLOSE_RANGE_RESCAN_INTERVAL = 8;
   private static final int HOT_LOAD_REBUILD_RANGE = 12;
@@ -145,7 +144,6 @@ public class MetalWorldRenderer {
   private int lastCullCount = 0;
   private final float[] lastCullFrustum = new float[24];
   private final CullingOrcreator cullingOrcreator = new CullingOrcreator();
-  private final HiZController hiZController = new HiZController();
   private final TranslucencySorter translucencySorter = new TranslucencySorter();
   private final float[] gpuFrustumPlanes = new float[24];
   private double frameCameraX;
@@ -185,24 +183,12 @@ public class MetalWorldRenderer {
     worldLoaded = true;
     MetalRenderConfig gpuConfig = MetalRenderClient.getConfig();
     boolean clusterEnabled = gpuConfig != null && gpuConfig.enableClusterFrustumCulling;
-    boolean hiZEnabled = gpuConfig != null && gpuConfig.enableHiZCull;
     boolean sortEnabled = gpuConfig != null && gpuConfig.enableGpuTranslucencySort;
     cullingOrcreator.setActive(clusterEnabled);
     cullingOrcreator.setCpuFallbackEnabled(true);
-    hiZController.setActive(hiZEnabled);
     translucencySorter.setActive(sortEnabled);
-    if (hiZEnabled) {
-      Minecraft mc0 = Minecraft.getInstance();
-      if (mc0 != null && mc0.getWindow() != null) {
-        int w = mc0.getWindow().getWidth();
-        int h = mc0.getWindow().getHeight();
-        if (w > 0 && h > 0) {
-          hiZController.ensureInitialized(w, h);
-        }
-      }
-    }
-    MetalLogger.info("orchestrators: cluster=%s hiz=%s sort=%s",
-        clusterEnabled, hiZEnabled, sortEnabled);
+    MetalLogger.info("orchestrators: cluster=%s sort=%s",
+        clusterEnabled, sortEnabled);
     MetalRenderer renderer = MetalRenderClient.getRenderer();
     if (renderer != null && renderer.isAvailable()) {
       Minecraft mc = Minecraft.getInstance();
@@ -280,7 +266,6 @@ public class MetalWorldRenderer {
     }
     com.pebbles_boon.metalrender.nativebridge.ResidencySetManager.shutdown();
     cullingOrcreator.shutdown();
-    hiZController.shutdown();
     translucencySorter.shutdown();
   }
 
@@ -375,82 +360,6 @@ public class MetalWorldRenderer {
         jProfCount = 0;
       }
     }
-  }
-
-  private int prepareGpuCullData(double cameraX, double cameraY, double cameraZ,
-      boolean frustumStable) {
-    if (subChunkUploadBuffer == null || chunkUniformsBuffer == null) {
-      return 0;
-    }
-    int meshCount = chunkMesher.getMeshSnapshotSize();
-    if (meshCount <= 0) {
-      lastCullMeshGen = -1;
-      lastCullCount = 0;
-      return 0;
-    }
-    int meshGen = chunkMesher.getMeshUpdateGeneration();
-    float camDX = (float) (cameraX - lastCullCamX);
-    float camDY = (float) (cameraY - lastCullCamY);
-    float camDZ = (float) (cameraZ - lastCullCamZ);
-    if (meshGen == lastCullMeshGen && lastCullCount > 0 && frustumStable &&
-        camDX * camDX + camDY * camDY + camDZ * camDZ < 1.0e-4f) {
-      return lastCullCount;
-    }
-    if (meshCount > subChunkUploadCapacity) {
-      subChunkUploadCapacity = meshCount + (meshCount >> 2);
-      subChunkUploadBuffer = ByteBuffer.allocateDirect(subChunkUploadCapacity * 48)
-          .order(ByteOrder.nativeOrder());
-      chunkUniformsBuffer = ByteBuffer.allocateDirect(subChunkUploadCapacity * 16)
-          .order(ByteOrder.nativeOrder());
-    }
-    subChunkUploadBuffer.clear();
-    chunkUniformsBuffer.clear();
-    int count = 0;
-    for (int i = 0; i < meshCount; i++) {
-      CustomChunkMesher.ChunkMeshData mesh = chunkMesher.getMeshSnapshotAt(i);
-      if (mesh == null || mesh.bufferHandle == 0 || mesh.quadCount <= 0 ||
-          (cullingOrcreator.isActive() &&
-              !cullingOrcreator.isClusterVisible(mesh.chunkX, mesh.chunkZ))) {
-        continue;
-      }
-      float minX = (float) ((double) mesh.chunkX * 16.0 - cameraX);
-      float minY = (float) ((double) mesh.chunkY * 16.0 - cameraY);
-      float minZ = (float) ((double) mesh.chunkZ * 16.0 - cameraZ);
-      subChunkUploadBuffer.putFloat(minX);
-      subChunkUploadBuffer.putFloat(minY);
-      subChunkUploadBuffer.putFloat(minZ);
-      subChunkUploadBuffer.putFloat(0.0f);
-      subChunkUploadBuffer.putFloat(minX + 16.0f);
-      subChunkUploadBuffer.putFloat(minY + 16.0f);
-      subChunkUploadBuffer.putFloat(minZ + 16.0f);
-      subChunkUploadBuffer.putFloat(0.0f);
-      subChunkUploadBuffer.putInt((int) (mesh.bufferHandle >>> 32));
-      subChunkUploadBuffer.putInt((int) mesh.bufferHandle);
-      subChunkUploadBuffer.putInt(mesh.quadCount * 6);
-      subChunkUploadBuffer.putInt(mesh.quadCount > 0
-          ? Math.max(0, mesh.facingQuadCounts[0] + mesh.facingQuadCounts[1]
-              + mesh.facingQuadCounts[2] + mesh.facingQuadCounts[3]
-              + mesh.facingQuadCounts[4] + mesh.facingQuadCounts[5]
-              + mesh.facingQuadCounts[6]) * 6
-          : 0);
-      chunkUniformsBuffer.putFloat(minX);
-      chunkUniformsBuffer.putFloat(minY);
-      chunkUniformsBuffer.putFloat(minZ);
-      chunkUniformsBuffer.putFloat(0.0f);
-      count++;
-    }
-    if (count <= 0) {
-      return 0;
-    }
-    NativeBridge.nUploadSubChunkData(0, subChunkUploadBuffer, count);
-    NativeBridge.nUploadChunkUniforms(0, chunkUniformsBuffer, count);
-    lastCullMeshGen = meshGen;
-    lastCullCamX = (float) cameraX;
-    lastCullCamY = (float) cameraY;
-    lastCullCamZ = (float) cameraZ;
-    lastCullCount = count;
-    System.arraycopy(gpuFrustumPlanes, 0, lastCullFrustum, 0, 24);
-    return count;
   }
 
   public void beginFrame(Camera camera, float tickDelta, Matrix4f projection,
@@ -552,25 +461,9 @@ public class MetalWorldRenderer {
         }
         long ibHandle = chunkMesher.getGlobalIndexBuffer();
         if (ibHandle != 0) {
-          boolean gpuCullDrawn = false;
-          if (hiZController.isReady()) {
-            int cullCount = prepareGpuCullData(cameraX, cameraY, cameraZ,
-                frustumStable);
-            if (cullCount > 0) {
-              int submitted = NativeBridge.nRunGPUCulling(renderer.getHandle(), cullCount);
-              if (submitted >= 0) {
-                int drawn = NativeBridge.nExecuteGpuCulledDraws(frameCtx, ibHandle);
-                lastDrawnChunkCount = drawn;
-                MetalRenderProfiler.getInstance().incrementChunksDrawn(drawn);
-                gpuCullDrawn = true;
-              }
-            }
-          }
-          if (!gpuCullDrawn) {
-            int drawn = NativeBridge.nDrawAllVisibleChunks(frameCtx, ibHandle);
-            lastDrawnChunkCount = drawn;
-            MetalRenderProfiler.getInstance().incrementChunksDrawn(drawn);
-          }
+          int drawn = NativeBridge.nDrawAllVisibleChunks(frameCtx, ibHandle);
+          lastDrawnChunkCount = drawn;
+          MetalRenderProfiler.getInstance().incrementChunksDrawn(drawn);
           if (frameCount < 10 || frameCount % 1000 == 0) {
             MetalLogger.info("frame %d: drew %d chunks",
                 frameCount, lastDrawnChunkCount);
@@ -1138,9 +1031,12 @@ public class MetalWorldRenderer {
           continue;
         }
       }
+      long sectionKey = packChunkKey(chunkX, worldY, chunkZ);
+      if (pendingBuildSet.contains(sectionKey))
+        continue;
       if (!chunkMesher.hasMesh(chunkX, worldY, chunkZ)) {
         chunkMesher.noteSectionAvailable(chunkX, worldY, chunkZ);
-        if (pendingBuildSet.add(packChunkKey(chunkX, worldY, chunkZ))) {
+        if (pendingBuildSet.add(sectionKey)) {
           sortedListDirty = true;
           if (MetalRenderConfig.isDeepDebugActive()) {
             MetalLogger.debug(
@@ -1622,15 +1518,7 @@ public class MetalWorldRenderer {
     gpuDrivenEnabled = false;
     cullingOrcreator.setActive(config.enableClusterFrustumCulling);
     cullingOrcreator.setCpuFallbackEnabled(config.enableClusterFrustumCulling);
-    hiZController.setActive(config.enableHiZCull);
     translucencySorter.setActive(config.enableGpuTranslucencySort);
-    if (config.enableHiZCull) {
-      Minecraft mc = Minecraft.getInstance();
-      if (mc != null && mc.getWindow() != null) {
-        hiZController.ensureInitialized(mc.getWindow().getWidth(),
-            mc.getWindow().getHeight());
-      }
-    }
     boolean requestArgumentBuffers = config.enableArgumentBuffers || config.enableIndirectCommandBuffers;
     if (NativeBridge.isLibLoaded()) {
       NativeBridge.nSetFeatureFlags(
@@ -1816,9 +1704,8 @@ public class MetalWorldRenderer {
       readinessCache.put(pKey, false);
       return false;
     }
-    boolean ready = readyNeighborCheck(source, chunkX, chunkZ);
-    readinessCache.put(pKey, ready);
-    return ready;
+    readinessCache.put(pKey, true);
+    return true;
   }
 
   private static long readinessColumnKey(int chunkX, int chunkZ) {

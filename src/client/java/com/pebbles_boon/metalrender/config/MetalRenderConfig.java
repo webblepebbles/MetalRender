@@ -16,7 +16,6 @@ public final class MetalRenderConfig {
   public boolean enableMeshShaders = true;
   public boolean enableArgumentBuffers = true;
   public boolean enableClusterFrustumCulling = false;
-  public boolean enableHiZCull = true;
   public boolean enableGpuTranslucencySort = false;
 
   public boolean hiddenFluidCulling = true;
@@ -103,8 +102,6 @@ public final class MetalRenderConfig {
           cfg.enableArgumentBuffers = obj.get("enableArgumentBuffers").getAsBoolean();
         if (obj.has("enableClusterFrustumCulling"))
           cfg.enableClusterFrustumCulling = obj.get("enableClusterFrustumCulling").getAsBoolean();
-        if (obj.has("enableHiZCull"))
-          cfg.enableHiZCull = obj.get("enableHiZCull").getAsBoolean();
         if (obj.has("enableGpuTranslucencySort"))
           cfg.enableGpuTranslucencySort = obj.get("enableGpuTranslucencySort").getAsBoolean();
 
@@ -184,7 +181,6 @@ public final class MetalRenderConfig {
       obj.addProperty("enableMeshShaders", enableMeshShaders);
       obj.addProperty("enableArgumentBuffers", enableArgumentBuffers);
       obj.addProperty("enableClusterFrustumCulling", enableClusterFrustumCulling);
-      obj.addProperty("enableHiZCull", enableHiZCull);
       obj.addProperty("enableGpuTranslucencySort", enableGpuTranslucencySort);
       obj.addProperty("enableProgrammableBlending", enableProgrammableBlending);
       obj.addProperty("enableIndirectCommandBuffers", enableIndirectCommandBuffers);
