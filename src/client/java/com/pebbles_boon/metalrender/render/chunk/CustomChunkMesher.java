@@ -54,10 +54,20 @@ public class CustomChunkMesher {
   private static final byte WATER_ALPHA = (byte) 168;
   private static final float FLUID_EPSILON = 0.001f;
   private static final float GRASS_OVERLAY_OFFSET = 1.0f / 256.0f;
-  private static final int UPLOAD_PARALLELISM = Math.min(4,
-      Math.max(2, Runtime.getRuntime().availableProcessors() / 2));
+  private static final int UPLOAD_PARALLELISM = Math.min(6,
+      Math.max(3, Runtime.getRuntime().availableProcessors() / 2));
   private static final java.util.concurrent.Semaphore UPLOAD_SEMAPHORE = new java.util.concurrent.Semaphore(
       UPLOAD_PARALLELISM);
+  private static final java.util.concurrent.atomic.AtomicLong BUILD_WALL_ACC = new java.util.concurrent.atomic.AtomicLong(
+      0L);
+  private static final java.util.concurrent.atomic.AtomicInteger BUILD_WALL_CNT = new java.util.concurrent.atomic.AtomicInteger(
+      0);
+  private static final java.util.concurrent.atomic.AtomicInteger DIAG_INVALID = new java.util.concurrent.atomic.AtomicInteger(
+      0);
+  private static final java.util.concurrent.atomic.AtomicInteger DIAG_EMPTY = new java.util.concurrent.atomic.AtomicInteger(
+      0);
+  private static final java.util.concurrent.atomic.AtomicInteger DIAG_BUILT = new java.util.concurrent.atomic.AtomicInteger(
+      0);
 
   private static final ThreadLocal<ByteBuffer> VERTEX_BUF_POOL = ThreadLocal
       .withInitial(() -> ByteBuffer.allocateDirect(VERTEX_BUF_SIZE)
@@ -184,13 +194,13 @@ public class CustomChunkMesher {
     this.pendingBlockUpdateNanos.defaultReturnValue(0L);
 
     int processors = Runtime.getRuntime().availableProcessors();
-    this.immediateThreadCount = Math.max(1, Math.min(2, processors / 6 + 1));
-    this.backgroundThreadCount = Math.max(1, Math.min(4, processors / 3));
+    this.immediateThreadCount = Math.max(3, Math.min(6, processors / 3 + 1));
+    this.backgroundThreadCount = Math.max(4, Math.min(8, processors - 2));
 
     final java.util.concurrent.ThreadFactory immediateFactory = r -> {
       Thread t = new Thread(r, "MetalRender-MeshBuilder-Immediate");
       t.setDaemon(true);
-      t.setPriority(Thread.NORM_PRIORITY);
+      t.setPriority(Thread.NORM_PRIORITY - 1);
       return t;
     };
     final java.util.concurrent.ThreadFactory backgroundFactory = r -> {
@@ -273,6 +283,7 @@ public class CustomChunkMesher {
 
     int priority = interactive ? 0 : (highPriority ? 1 : 2);
     boolean submitted = submitMeshTask(priority, () -> {
+      long taskStart = System.nanoTime();
       try {
         if (isTaskCancelled(key, genAtSubmit, globalGenAtSubmit)) {
           return;
@@ -285,17 +296,33 @@ public class CustomChunkMesher {
         boolean useApproximateLight = lodTier >= 1;
         SectionSnapshot snapshot = captureSectionSnapshot(world, chunkX, chunkY, chunkZ, useApproximateLight);
         if (!snapshot.valid) {
+          int v = DIAG_INVALID.incrementAndGet();
+          if (v % 500 == 1) {
+            MetalLogger.info("builddiag: invalid_snapshot=%d empty=%d built=%d",
+                DIAG_INVALID.get(), DIAG_EMPTY.get(), DIAG_BUILT.get());
+          }
           return;
         }
         if (snapshot.empty) {
+          DIAG_EMPTY.incrementAndGet();
           removeEmptyMesh(key, chunkX, chunkY, chunkZ, genAtSubmit, globalGenAtSubmit);
           return;
         }
+        DIAG_BUILT.incrementAndGet();
         doMeshBuild(chunkX, chunkY, chunkZ, snapshot, key, genAtSubmit, globalGenAtSubmit, context, lodTier);
       } catch (Exception e) {
         MetalLogger.error("mesher fail [%d,%d,%d]: %s", chunkX,
             chunkY, chunkZ, e.getMessage());
       } finally {
+        long taskWall = System.nanoTime() - taskStart;
+        long acc = BUILD_WALL_ACC.getAndAdd(taskWall);
+        int cnt = BUILD_WALL_CNT.incrementAndGet();
+        if (cnt % 200 == 0) {
+          MetalLogger.info("builddiag: avg_wall=%.2fms over %d tasks",
+              (double) acc / cnt / 1e6, cnt);
+          BUILD_WALL_ACC.set(0);
+          BUILD_WALL_CNT.set(0);
+        }
         synchronized (dirtyGeneration) {
           if (dirtyGeneration.get(key) == genAtSubmit) {
             synchronized (pendingKeys) {
