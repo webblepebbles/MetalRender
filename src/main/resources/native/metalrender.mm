@@ -385,6 +385,7 @@ struct HiZParamsCPU {
   uint32_t padding[3];
 };
 static void encodeHiZDownsample(id<MTLCommandBuffer> commandBuffer) {
+  return;
   if (!commandBuffer || !g_hizDownsamplePipeline || !g_hizPyramid ||
       !g_sceneDepth || g_useMemorylessTargets) {
     return;
@@ -569,19 +570,10 @@ static inline int visibleOpaqueQuadCount(const int counts[7], uint32_t mask) {
 }
 
 static inline uint32_t visibleFacingMaskForAabb(float ox, float oy, float oz) {
-  if (!g_cameraFacingCullingEnabled.load(std::memory_order_relaxed)) {
-    return 0x7Fu;
-  }
-  uint32_t mask = (1u << 6u);
-  float x0 = ox, y0 = oy, z0 = oz;
-  float x1 = ox + 16.0f, y1 = oy + 16.0f, z1 = oz + 16.0f;
-  if (y1 > 0.0f) mask |= (1u << 0u);
-  if (y0 < 0.0f) mask |= (1u << 1u);
-  if (z1 > 0.0f) mask |= (1u << 2u);
-  if (z0 < 0.0f) mask |= (1u << 3u);
-  if (x1 > 0.0f) mask |= (1u << 4u);
-  if (x0 < 0.0f) mask |= (1u << 5u);
-  return mask;
+  (void)ox;
+  (void)oy;
+  (void)oz;
+  return 0x7Fu;
 }
 
 static inline int opaqueBucketStartQuad(const int counts[7], int bucket) {
@@ -633,10 +625,12 @@ struct ChunkMeshletNative {
   uint32_t lodTier;
   uint32_t visibleVertexCount;
   uint32_t faceStart[7];
-  uint32_t _pad;
+  uint32_t visibleFaceStart[7];
+  uint32_t faceVertexCount[7];
+  uint32_t _pad[3];
 };
-static_assert(sizeof(ChunkMeshletNative) == 64,
-              "ChunkMeshletNative must be 64 bytes");
+static_assert(sizeof(ChunkMeshletNative) == 128,
+              "ChunkMeshletNative must be 128 bytes");
 static std::vector<NativeMesh> g_nativeMeshes;
 static std::unordered_map<int64_t, size_t> g_meshKeyToIdx;
 static std::vector<size_t> g_meshFreeSlots;
@@ -1418,6 +1412,100 @@ kernel void mfx_preserve_alpha(
         dbg("WARN: Opaque pipeline failed: %s\n",
             error ? [[error localizedDescription] UTF8String] : "unknown");
       }
+    }
+
+    if (@available(macOS 13.0, *)) {
+      id<MTLFunction> meshObjFn =
+          [g_shaderLibrary newFunctionWithName:@"object_terrain"];
+      id<MTLFunction> meshFn =
+          [g_shaderLibrary newFunctionWithName:@"mesh_terrain"];
+      id<MTLFunction> meshFragOpaqueFn =
+          [g_shaderLibrary newFunctionWithName:@"fragment_terrain_mesh_opaque"];
+      id<MTLFunction> meshFragCutoutFn =
+          [g_shaderLibrary newFunctionWithName:@"fragment_terrain_mesh_cutout"];
+      id<MTLFunction> meshFragEmissiveFn =
+          [g_shaderLibrary newFunctionWithName:@"fragment_terrain_mesh_emissive"];
+
+      if (meshObjFn && meshFn && meshFragOpaqueFn) {
+        MTLMeshRenderPipelineDescriptor *meshDesc =
+            [[MTLMeshRenderPipelineDescriptor alloc] init];
+        meshDesc.objectFunction = meshObjFn;
+        meshDesc.meshFunction = meshFn;
+        meshDesc.fragmentFunction = meshFragOpaqueFn;
+        meshDesc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+        meshDesc.colorAttachments[0].blendingEnabled = NO;
+        meshDesc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+        meshDesc.label = @"MeshTerrainOpaque";
+        meshDesc.rasterizationEnabled = YES;
+        NSError *meshErr = nil;
+        g_pipelineMeshOpaque =
+            [g_device newRenderPipelineStateWithMeshDescriptor:meshDesc
+                                                       options:MTLPipelineOptionNone
+                                                    reflection:nil
+                                                         error:&meshErr];
+        if (g_pipelineMeshOpaque) {
+          g_meshPipelineCount++;
+          dbg("Mesh opaque terrain pipeline created OK\n");
+        } else {
+          dbg("WARN: Mesh opaque pipeline failed: %s\n",
+              meshErr ? [[meshErr localizedDescription] UTF8String]
+                      : "unknown");
+        }
+
+        if (meshFragCutoutFn) {
+          MTLMeshRenderPipelineDescriptor *cutoutDesc =
+              [[MTLMeshRenderPipelineDescriptor alloc] init];
+          cutoutDesc.objectFunction = meshObjFn;
+          cutoutDesc.meshFunction = meshFn;
+          cutoutDesc.fragmentFunction = meshFragCutoutFn;
+          cutoutDesc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+          cutoutDesc.colorAttachments[0].blendingEnabled = NO;
+          cutoutDesc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+          cutoutDesc.label = @"MeshTerrainCutout";
+          cutoutDesc.rasterizationEnabled = YES;
+          NSError *cutoutErr = nil;
+          g_pipelineMeshCutout =
+              [g_device newRenderPipelineStateWithMeshDescriptor:cutoutDesc
+                                                           options:MTLPipelineOptionNone
+                                                        reflection:nil
+                                                             error:&cutoutErr];
+          if (g_pipelineMeshCutout) {
+            g_meshPipelineCount++;
+            dbg("Mesh cutout terrain pipeline created OK\n");
+          }
+        }
+
+        if (meshFragEmissiveFn) {
+          MTLMeshRenderPipelineDescriptor *emissiveDesc =
+              [[MTLMeshRenderPipelineDescriptor alloc] init];
+          emissiveDesc.objectFunction = meshObjFn;
+          emissiveDesc.meshFunction = meshFn;
+          emissiveDesc.fragmentFunction = meshFragEmissiveFn;
+          emissiveDesc.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+          emissiveDesc.colorAttachments[0].blendingEnabled = YES;
+          emissiveDesc.colorAttachments[0].rgbBlendOperation = MTLBlendOperationAdd;
+          emissiveDesc.colorAttachments[0].sourceRGBBlendFactor = MTLBlendFactorOne;
+          emissiveDesc.colorAttachments[0].destinationRGBBlendFactor = MTLBlendFactorOne;
+          emissiveDesc.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+          emissiveDesc.label = @"MeshTerrainEmissive";
+          emissiveDesc.rasterizationEnabled = YES;
+          NSError *emErr = nil;
+          g_pipelineMeshEmissive =
+              [g_device newRenderPipelineStateWithMeshDescriptor:emissiveDesc
+                                                         options:MTLPipelineOptionNone
+                                                      reflection:nil
+                                                           error:&emErr];
+          if (g_pipelineMeshEmissive) {
+            g_meshPipelineCount++;
+            dbg("Mesh emissive terrain pipeline created OK\n");
+          }
+        }
+      } else {
+        dbg("WARN: Mesh shader functions not found (obj=%p mesh=%p fragOpaque=%p)\n",
+            meshObjFn, meshFn, meshFragOpaqueFn);
+      }
+    } else {
+      dbg("Mesh shaders require macOS 13.0+\n");
     }
   }
 
@@ -3520,15 +3608,17 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           meshlets[meshletCount].visibleFaceMask = fm;
           meshlets[meshletCount].lodTier = (uint32_t)s_cmds[i].lodTier;
           uint32_t acc = 0;
-          uint32_t visibleV = 0;
+          uint32_t visibleAcc = 0;
           for (int f = 0; f < 7; f++) {
             meshlets[meshletCount].faceStart[f] = acc;
             uint32_t faceV = (uint32_t)s_cmds[i].opaqueFaceCounts[f] * 4u;
+            meshlets[meshletCount].faceVertexCount[f] = faceV;
+            meshlets[meshletCount].visibleFaceStart[f] = visibleAcc;
             acc += faceV;
             if ((fm & (1u << f)) != 0u)
-              visibleV += faceV;
+              visibleAcc += faceV;
           }
-          meshlets[meshletCount].visibleVertexCount = visibleV;
+          meshlets[meshletCount].visibleVertexCount = visibleAcc;
           meshletCount++;
         }
         cu->totalChunks = (uint32_t)meshletCount;
