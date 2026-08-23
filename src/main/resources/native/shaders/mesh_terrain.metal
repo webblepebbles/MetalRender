@@ -30,7 +30,9 @@ struct ChunkMeshlet {
     uint  lodTier;
     uint  visibleVertexCount;
     uint  faceStart[7];
-    uint  _pad;
+    uint  visibleFaceStart[7];
+    uint  faceVertexCount[7];
+    uint  _pad[3];
 };
 
 
@@ -137,20 +139,28 @@ void mesh_terrain(
 
     if (tid < localVerts) {
         uint vi = vStart + tid;
-        uint srcVertex = 0u;
-        uint running = 0u;
-        for (uint f = 0u; f < 7u; f++) {
-            uint fs = m.faceStart[f];
-            uint fe = (f + 1u < 7u) ? m.faceStart[f + 1u] : m.vertexCount;
-            uint visLen = ((m.visibleFaceMask & (1u << f)) != 0u)
-                              ? (fe - fs)
-                              : 0u;
-            if (vi < running + visLen) {
-                srcVertex = fs + (vi - running);
-                break;
-            }
-            running += visLen;
-        }
+        uint srcVertex = vi;
+        uint visBase0 = m.visibleFaceStart[0];
+        uint visBase1 = m.visibleFaceStart[1];
+        uint visBase2 = m.visibleFaceStart[2];
+        uint visBase3 = m.visibleFaceStart[3];
+        uint visBase4 = m.visibleFaceStart[4];
+        uint visBase5 = m.visibleFaceStart[5];
+        uint visBase6 = m.visibleFaceStart[6];
+        uint len0 = m.faceVertexCount[0];
+        uint len1 = m.faceVertexCount[1];
+        uint len2 = m.faceVertexCount[2];
+        uint len3 = m.faceVertexCount[3];
+        uint len4 = m.faceVertexCount[4];
+        uint len5 = m.faceVertexCount[5];
+        uint len6 = m.faceVertexCount[6];
+        if (vi < visBase0 + len0) { srcVertex = m.faceStart[0] + (vi - visBase0); }
+        else if (vi < visBase1 + len1) { srcVertex = m.faceStart[1] + (vi - visBase1); }
+        else if (vi < visBase2 + len2) { srcVertex = m.faceStart[2] + (vi - visBase2); }
+        else if (vi < visBase3 + len3) { srcVertex = m.faceStart[3] + (vi - visBase3); }
+        else if (vi < visBase4 + len4) { srcVertex = m.faceStart[4] + (vi - visBase4); }
+        else if (vi < visBase5 + len5) { srcVertex = m.faceStart[5] + (vi - visBase5); }
+        else if (vi < visBase6 + len6) { srcVertex = m.faceStart[6] + (vi - visBase6); }
         uint gv = m.baseVertexOffset + srcVertex;
         InhouseTerrainVertex v = vertices[gv];
         float3 localPos = float3(short3(v.position)) / 256.0;
@@ -163,7 +173,7 @@ void mesh_terrain(
         uint pl      = uint(v.packedLight);
         out.lightUV  = half2((float((pl & 0xFu) * 16) + 8.0) / 256.0,
                              (float(((pl >> 4u) & 0xFu) * 16) + 8.0) / 256.0);
-        out.fogDist  = half(length(viewPos.xyz));
+        out.fogDist  = half(dot(viewPos.xyz, viewPos.xyz));
         output.set_vertex(tid, out);
     }
 
@@ -189,7 +199,7 @@ fragment half4 fragment_terrain_mesh_opaque(
     constant CameraUniforms& camera [[buffer(1)]]
 ) {
     constexpr sampler s(mag_filter::nearest, min_filter::linear,
-                        mip_filter::linear, max_anisotropy(2));
+                        mip_filter::linear);
     constexpr sampler lightSampler(mag_filter::nearest, min_filter::nearest,
                                    mip_filter::nearest);
     half4 tex = blockAtlas.sample(s, float2(in.texCoord));
@@ -210,7 +220,7 @@ fragment half4 fragment_terrain_mesh_opaque(
     col.rgb *= max(light, half3(0.04h));
 
     if (camera.waterFog > 0.0f) {
-        half fog = clamp(in.fogDist / half(32.0h), half(0.0h), half(0.85h));
+        half fog = clamp(half(sqrt((float)in.fogDist)) / half(32.0h), half(0.0h), half(0.85h));
         col.rgb  = mix(col.rgb, half3(0.05h, 0.12h, 0.3h), fog);
     }
     return half4(col.rgb, half(1.0h));
@@ -223,7 +233,7 @@ fragment half4 fragment_terrain_mesh_cutout(
     constant CameraUniforms& camera [[buffer(1)]]
 ) {
     constexpr sampler s(mag_filter::nearest, min_filter::linear,
-                        mip_filter::linear, max_anisotropy(2));
+                        mip_filter::linear);
     constexpr sampler lightSampler(mag_filter::nearest, min_filter::nearest,
                                    mip_filter::nearest);
     half4 tex = blockAtlas.sample(s, float2(in.texCoord));
@@ -232,7 +242,7 @@ fragment half4 fragment_terrain_mesh_cutout(
     half3 light = lightmap.sample(lightSampler, float2(in.lightUV)).rgb;
     col.rgb *= max(light, half3(0.04h));
     if (camera.waterFog > 0.0f) {
-        half fog = clamp(in.fogDist / half(32.0h), half(0.0h), half(0.85h));
+        half fog = clamp(half(sqrt((float)in.fogDist)) / half(32.0h), half(0.0h), half(0.85h));
         col.rgb  = mix(col.rgb, half3(0.05h, 0.12h, 0.3h), fog);
     }
     return half4(col.rgb, half(1.0h));
@@ -250,7 +260,7 @@ fragment half4 fragment_terrain_mesh_emissive(
     half4 col = tex * in.color;
 
     if (camera.waterFog > 0.0f) {
-        half fog = clamp(in.fogDist / half(32.0h), half(0.0h), half(0.85h));
+        half fog = clamp(half(sqrt((float)in.fogDist)) / half(32.0h), half(0.0h), half(0.85h));
         col.rgb  = mix(col.rgb, half3(0.05h, 0.12h, 0.3h), fog);
     }
     return col;
