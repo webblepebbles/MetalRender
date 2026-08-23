@@ -22,8 +22,8 @@ public final class MetalRenderConfig {
   public boolean improvedFluidShaping = false;
   public boolean closestPointEntitySort = false;
 
-  public boolean enableDistanceLod = false;
-  public int lodNearChunks = 8;
+  public boolean enableDistanceLod = true;
+  public int lodNearChunks = 6;
   public int lodMidChunks = 16;
   public boolean lodThermalAdaptive = true;
 
