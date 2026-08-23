@@ -1046,6 +1046,8 @@ public class CustomChunkMesher {
                 : blockLightListener.getLightValue(samplePos);
             int sky = skyLayer != null ? skyLayer.get(sampleX & 15, sampleY & 15, sampleZ & 15)
                 : skyLightListener.getLightValue(samplePos);
+            if (sky == 0) sky = 15;
+            if (block == 0 && sky == 0) block = 4;
             approximateLightGrid[(gy * 25) + (gz * 5) + gx] = (byte) ((block & 0xF) | ((sky & 0xF) << 4));
           }
         }
@@ -2057,6 +2059,8 @@ public class CustomChunkMesher {
       byte light = getPaddedLight(sx, sy, sz);
       int bl = light & 0xF;
       int sl = (light >> 4) & 0xF;
+      if (sl == 0) sl = 15;
+      if (bl == 0 && sl == 0) bl = 4;
       if (emission > 0) {
         bl = Math.max(bl, Math.min(15, emission));
       }
