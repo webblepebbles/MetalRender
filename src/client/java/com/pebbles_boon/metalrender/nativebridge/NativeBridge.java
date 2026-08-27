@@ -182,6 +182,11 @@ public final class NativeBridge {
 
   public static native void nSetRenderDistance(int distanceBlocks);
 
+  public static native void nSetLodRecencyEnabled(boolean enabled);
+
+  
+  public static native int nGetLodDrawnFrames(long[] outKeys, int[] outFrames);
+
   public static native boolean nIsGPUDrivenActive();
 
   public static native boolean nAreMeshShadersActive();
