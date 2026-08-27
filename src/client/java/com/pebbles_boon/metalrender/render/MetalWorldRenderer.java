@@ -16,6 +16,7 @@ import com.pebbles_boon.metalrender.nativebridge.NativeMemory;
 import com.pebbles_boon.metalrender.particle.MetalParticleRenderer;
 import com.pebbles_boon.metalrender.performance.AdaptiveResolutionController;
 import com.pebbles_boon.metalrender.render.chunk.CustomChunkMesher;
+import com.pebbles_boon.metalrender.render.lod.LodPolicy;
 import com.pebbles_boon.metalrender.sodium.backend.MeshShaderBackend;
 import com.pebbles_boon.metalrender.performance.BuildBudgetEstimator;
 import com.pebbles_boon.metalrender.performance.PerformanceController;
@@ -83,6 +84,10 @@ public class MetalWorldRenderer {
   private static final int MAX_LOD_SCAN_PER_PASS = 512;
   private static final int LOD_REFRESH_PENDING_LIMIT = 64;
   private static final int LOD_REFRESH_IN_FLIGHT_LIMIT = 48;
+  private static final int MAX_LOD_DEMOTIONS_PER_PASS = 12;
+  private static final int LOD_RECENCY_PULL_INTERVAL = 30;
+  private static final int MAX_LOD_RECENCY_DEMOTIONS_PER_PASS = 8;
+  private static final int LOD_RECENCY_SCRATCH_SIZE = 32768;
   private static final int INTERACTIVE_PRIORITY_CHUNK_RANGE = 6;
   private static final int INTERACTIVE_PRIORITY_SUBMISSIONS_PER_PASS = 8;
   private static final int MAX_INTERACTIVE_PRIORITY_QUEUE_DEPTH = 16;
@@ -180,6 +185,7 @@ public class MetalWorldRenderer {
 
   public void onWorldLoad() {
     AsyncCullTask.reset();
+    lodPolicy.clear();
     worldLoaded = true;
     MetalRenderConfig gpuConfig = MetalRenderClient.getConfig();
     boolean clusterEnabled = gpuConfig != null && gpuConfig.enableClusterFrustumCulling;
@@ -332,6 +338,7 @@ public class MetalWorldRenderer {
       long buildStart = System.nanoTime();
       if (frameCount % LOD_REFRESH_FRAME_INTERVAL == 0) {
         refreshLodTiers(mc);
+        updateLodRecencyEviction(mc);
       }
       releaseDelayedBlockRebuilds();
       buildPendingChunkMeshes(mc);
@@ -679,6 +686,28 @@ public class MetalWorldRenderer {
   private int lodRefreshPlayerCX = Integer.MIN_VALUE;
   private int lodRefreshPlayerCZ = Integer.MIN_VALUE;
   private int lodRefreshThermalBias = Integer.MIN_VALUE;
+  private final LodPolicy lodPolicy = new LodPolicy();
+  private final long[] lodRecencyKeys = new long[LOD_RECENCY_SCRATCH_SIZE];
+  private final int[] lodRecencyFrames = new int[LOD_RECENCY_SCRATCH_SIZE];
+  private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap lodRecencyAgeMap =
+      new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap(LOD_RECENCY_SCRATCH_SIZE);
+  private boolean lodRecencyNativeEnabled;
+  private int lodRecencyPullCounter;
+  private int lodDiagScanCounter;
+
+  private static final class LodCandidate {
+    final long key;
+    final float impact;
+    final int chunkX, chunkY, chunkZ;
+
+    LodCandidate(long key, float impact, int chunkX, int chunkY, int chunkZ) {
+      this.key = key;
+      this.impact = impact;
+      this.chunkX = chunkX;
+      this.chunkY = chunkY;
+      this.chunkZ = chunkZ;
+    }
+  }
 
   private static final class PendingBuildCandidate {
     final long key;
@@ -1399,6 +1428,68 @@ public class MetalWorldRenderer {
       if (pendingBuildSet.add(key)) {
         sortedListDirty = true;
         queued++;
+      }
+    }
+  }
+
+  private void updateLodRecencyEviction(Minecraft mc) {
+    if (mc == null || lodRecencyNativeEnabled ||
+        ++lodRecencyPullCounter < LOD_RECENCY_PULL_INTERVAL) {
+      return;
+    }
+    lodRecencyPullCounter = 0;
+    if (chunkMesher.getMeshSnapshotSize() == 0 ||
+        chunkMesher.getPendingCount() > LOD_REFRESH_IN_FLIGHT_LIMIT) {
+      return;
+    }
+
+    int count = Math.min(chunkMesher.getMeshSnapshotSize(), lodRecencyKeys.length);
+    int staleCount = 0;
+    int currentFrame = frameCount;
+    for (int i = 0; i < count; i++) {
+      CustomChunkMesher.ChunkMeshData mesh = chunkMesher.getMeshSnapshotAt(i);
+      if (mesh == null) {
+        continue;
+      }
+      long key = packChunkKey(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
+      lodRecencyKeys[staleCount] = key;
+      int lastDrawn = lodRecencyAgeMap.getOrDefault(key, currentFrame);
+      lodRecencyFrames[staleCount] = lastDrawn;
+      staleCount++;
+    }
+    if (staleCount == 0) {
+      return;
+    }
+
+    int demoted = 0;
+    for (int i = 0; i < staleCount && demoted < MAX_LOD_RECENCY_DEMOTIONS_PER_PASS; i++) {
+      int oldest = i;
+      for (int j = i + 1; j < staleCount; j++) {
+        if (lodRecencyFrames[j] < lodRecencyFrames[oldest]) {
+          oldest = j;
+        }
+      }
+      if (oldest != i) {
+        long key = lodRecencyKeys[i];
+        lodRecencyKeys[i] = lodRecencyKeys[oldest];
+        lodRecencyKeys[oldest] = key;
+        int frame = lodRecencyFrames[i];
+        lodRecencyFrames[i] = lodRecencyFrames[oldest];
+        lodRecencyFrames[oldest] = frame;
+      }
+      if (currentFrame - lodRecencyFrames[i] < LodPolicy.RECENCY_STALE_TICKS) {
+        break;
+      }
+      int x = unpackChunkX(lodRecencyKeys[i]);
+      int y = unpackChunkY(lodRecencyKeys[i]);
+      int z = unpackChunkZ(lodRecencyKeys[i]);
+      if (chunkMesher.isBuildPending(x, y, z)) {
+        continue;
+      }
+      chunkMesher.markDirty(x, y, z);
+      if (pendingBuildSet.add(lodRecencyKeys[i])) {
+        sortedListDirty = true;
+        demoted++;
       }
     }
   }
