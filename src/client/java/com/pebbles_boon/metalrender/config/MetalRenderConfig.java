@@ -26,6 +26,12 @@ public final class MetalRenderConfig {
   public int lodNearChunks = 6;
   public int lodMidChunks = 16;
   public boolean lodThermalAdaptive = true;
+  public boolean lodThroughputBudget = true;
+  public boolean lodVisibilityGate = true;
+  public boolean lodRecencyEviction = true;
+  public boolean lodStickyTiers = true;
+  public boolean lodViewImpact = true;
+  public boolean lodSkeletonFirst = true;
 
   public boolean enableProgrammableBlending = false;
   public boolean enableIndirectCommandBuffers = true;
@@ -125,6 +131,18 @@ public final class MetalRenderConfig {
           cfg.lodMidChunks = clamp(obj.get("lodMidChunks").getAsInt(), 4, 48);
         if (obj.has("lodThermalAdaptive"))
           cfg.lodThermalAdaptive = obj.get("lodThermalAdaptive").getAsBoolean();
+        if (obj.has("lodThroughputBudget"))
+          cfg.lodThroughputBudget = obj.get("lodThroughputBudget").getAsBoolean();
+        if (obj.has("lodVisibilityGate"))
+          cfg.lodVisibilityGate = obj.get("lodVisibilityGate").getAsBoolean();
+        if (obj.has("lodRecencyEviction"))
+          cfg.lodRecencyEviction = obj.get("lodRecencyEviction").getAsBoolean();
+        if (obj.has("lodStickyTiers"))
+          cfg.lodStickyTiers = obj.get("lodStickyTiers").getAsBoolean();
+        if (obj.has("lodViewImpact"))
+          cfg.lodViewImpact = obj.get("lodViewImpact").getAsBoolean();
+        if (obj.has("lodSkeletonFirst"))
+          cfg.lodSkeletonFirst = obj.get("lodSkeletonFirst").getAsBoolean();
 
         if (obj.has("savedResolutionScale"))
           resolutionScale = clamp(obj.get("savedResolutionScale").getAsFloat(), 0.20f, 1.5f);
@@ -192,6 +210,12 @@ public final class MetalRenderConfig {
       obj.addProperty("lodNearChunks", lodNearChunks);
       obj.addProperty("lodMidChunks", lodMidChunks);
       obj.addProperty("lodThermalAdaptive", lodThermalAdaptive);
+      obj.addProperty("lodThroughputBudget", lodThroughputBudget);
+      obj.addProperty("lodVisibilityGate", lodVisibilityGate);
+      obj.addProperty("lodRecencyEviction", lodRecencyEviction);
+      obj.addProperty("lodStickyTiers", lodStickyTiers);
+      obj.addProperty("lodViewImpact", lodViewImpact);
+      obj.addProperty("lodSkeletonFirst", lodSkeletonFirst);
 
       obj.addProperty("savedResolutionScale", resolutionScale);
       obj.addProperty("enableAdaptiveResolution", adaptiveResolutionEnabled);
