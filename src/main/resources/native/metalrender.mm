@@ -484,6 +484,7 @@ static float g_skyBrightness = 1.0f;
 
 struct StaleDrawCmd {
   uint64_t bufferHandle;
+  int64_t chunkKey;
   int idxCount;
   int opaqueIdxCount;
   int opaqueFaceCounts[7];
@@ -499,6 +500,12 @@ static float *g_staleOffsetData = nullptr;
 static int g_staleOffsetCapacity = 0;
 static bool g_hasStaleDrawList = false;
 static double g_staleCamX = 0, g_staleCamY = 0, g_staleCamZ = 0;
+
+
+
+static bool g_lodRecencyEnabled = false;
+static std::unordered_map<int64_t, int> g_lastDrawnFrame;
+static std::mutex g_lodRecencyMutex;
 
 static float g_targetFrameTimeMs = 16.67f;
 static float g_avgFrameTimeMs = 0.0f;
@@ -3220,6 +3227,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
     static const int VERTEX_STRIDE = 16;
     struct DrawCmd {
       uint64_t bufHandle;
+      int64_t chunkKey;
       size_t megaOffset;
       id<MTLBuffer> resolvedBuf;
 
@@ -3349,6 +3357,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       float cx = ox + 8.0f, cz = oz + 8.0f;
       DrawCmd &cmd = s_cmds[validCount];
       cmd.bufHandle = ms.bufferHandle;
+      cmd.chunkKey = packMeshKey(ms.chunkX, ms.chunkY, ms.chunkZ);
       cmd.megaOffset = ms.megaOffset;
       cmd.resolvedBuf = ms.resolvedBuf;
       cmd.idxCount = ms.quadCount * 6;
@@ -3429,6 +3438,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       for (int i = 0; i < validCount; i++) {
         StaleDrawCmd &stale = g_staleDrawCmds[i];
         stale.bufferHandle = s_cmds[i].bufHandle;
+        stale.chunkKey = s_cmds[i].chunkKey;
         stale.idxCount = s_cmds[i].idxCount;
         stale.opaqueIdxCount = s_cmds[i].opaqueIdxCount;
         memcpy(stale.opaqueFaceCounts, s_cmds[i].opaqueFaceCounts,
@@ -3467,6 +3477,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           continue;
         DrawCmd &cmd = s_cmds[reusedCount++];
         cmd.bufHandle = sc.bufferHandle;
+        cmd.chunkKey = sc.chunkKey;
         cmd.megaOffset = staleRes.offset;
         cmd.resolvedBuf = staleRes.buf;
         cmd.idxCount = sc.idxCount;
@@ -3544,6 +3555,22 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
 
         if (src != s_cmds) {
           memcpy(s_cmds, src, (size_t)validCount * sizeof(DrawCmd));
+        }
+      }
+    }
+
+    if (g_lodRecencyEnabled) {
+      std::lock_guard<std::mutex> lock(g_lodRecencyMutex);
+      for (int i = 0; i < validCount; i++) {
+        g_lastDrawnFrame[s_cmds[i].chunkKey] = g_frameCount;
+      }
+      if (g_lastDrawnFrame.size() > 65536) {
+        for (auto it = g_lastDrawnFrame.begin();
+             it != g_lastDrawnFrame.end();) {
+          if (g_frameCount - it->second > 4096)
+            it = g_lastDrawnFrame.erase(it);
+          else
+            ++it;
         }
       }
     }
@@ -6277,8 +6304,55 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nClearAllChunkRegis
   g_staleMegaCount = 0;
   g_activeMeshIndices.clear();
   g_activeMeshCount = 0;
+  {
+    std::lock_guard<std::mutex> recLock(g_lodRecencyMutex);
+    g_lastDrawnFrame.clear();
+  }
   dbg("nClearAllChunkRegistrations: cleared all %zu mesh slots\n",
       g_nativeMeshes.size());
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetLodRecencyEnabled(
+    JNIEnv *, jclass, jboolean enabled) {
+  std::lock_guard<std::mutex> lock(g_lodRecencyMutex);
+  g_lodRecencyEnabled = (enabled != JNI_FALSE);
+  if (!g_lodRecencyEnabled)
+    g_lastDrawnFrame.clear();
+}
+
+extern "C" JNIEXPORT jint JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetLodDrawnFrames(
+    JNIEnv *env, jclass, jlongArray outKeys, jintArray outFrames) {
+  if (!outKeys || !outFrames)
+    return 0;
+  std::lock_guard<std::mutex> lock(g_lodRecencyMutex);
+  jsize keyLen = env->GetArrayLength(outKeys);
+  jsize frameLen = env->GetArrayLength(outFrames);
+  jsize cap = std::min(keyLen, frameLen);
+  jsize count = std::min((jsize)g_lastDrawnFrame.size(), cap);
+  if (count <= 0)
+    return 0;
+  jlong *keys = env->GetLongArrayElements(outKeys, nullptr);
+  jint *frames = env->GetIntArrayElements(outFrames, nullptr);
+  if (!keys || !frames) {
+    if (keys)
+      env->ReleaseLongArrayElements(outKeys, keys, JNI_ABORT);
+    if (frames)
+      env->ReleaseIntArrayElements(outFrames, frames, JNI_ABORT);
+    return 0;
+  }
+  jsize i = 0;
+  for (const auto &kv : g_lastDrawnFrame) {
+    if (i >= count)
+      break;
+    keys[i] = (jlong)kv.first;
+    frames[i] = (jint)(g_frameCount - kv.second);
+    i++;
+  }
+  env->ReleaseLongArrayElements(outKeys, keys, 0);
+  env->ReleaseIntArrayElements(outFrames, frames, 0);
+  return (jint)i;
 }
 
 extern "C" JNIEXPORT void JNICALL
