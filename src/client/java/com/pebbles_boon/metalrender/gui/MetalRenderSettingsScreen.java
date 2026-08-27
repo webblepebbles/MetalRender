@@ -104,6 +104,12 @@ public class MetalRenderSettingsScreen extends Screen {
   private boolean initialDistanceLod;
   private int initialLodNearChunks;
   private int initialLodMidChunks;
+  private boolean initialLodThroughputBudget;
+  private boolean initialLodVisibilityGate;
+  private boolean initialLodRecencyEviction;
+  private boolean initialLodStickyTiers;
+  private boolean initialLodViewImpact;
+  private boolean initialLodSkeletonFirst;
 
   private final List<Row> rows = new ArrayList<>();
 
@@ -170,6 +176,12 @@ public class MetalRenderSettingsScreen extends Screen {
     initialDistanceLod = config.enableDistanceLod;
     initialLodNearChunks = config.lodNearChunks;
     initialLodMidChunks = config.lodMidChunks;
+    initialLodThroughputBudget = config.lodThroughputBudget;
+    initialLodVisibilityGate = config.lodVisibilityGate;
+    initialLodRecencyEviction = config.lodRecencyEviction;
+    initialLodStickyTiers = config.lodStickyTiers;
+    initialLodViewImpact = config.lodViewImpact;
+    initialLodSkeletonFirst = config.lodSkeletonFirst;
     layout();
     rebuild();
   }
@@ -683,6 +695,12 @@ public class MetalRenderSettingsScreen extends Screen {
 
     sec("Level of Detail");
     tog("Distance LOD", config.enableDistanceLod, v -> config.enableDistanceLod = v);
+    tog("Throughput Budget", config.lodThroughputBudget, v -> config.lodThroughputBudget = v);
+    tog("Visibility Gate", config.lodVisibilityGate, v -> config.lodVisibilityGate = v);
+    tog("Recency Eviction", config.lodRecencyEviction, v -> config.lodRecencyEviction = v);
+    tog("Sticky Tiers", config.lodStickyTiers, v -> config.lodStickyTiers = v);
+    tog("View Impact", config.lodViewImpact, v -> config.lodViewImpact = v);
+    tog("Skeleton First", config.lodSkeletonFirst, v -> config.lodSkeletonFirst = v);
     sld("Full Detail Radius (chunks)", 2, 32, 1, config.lodNearChunks,
         v -> config.lodNearChunks = (int) (float) v);
     sld("Medium Detail Radius (chunks)", 4, 48, 1, config.lodMidChunks,
