@@ -125,9 +125,37 @@ public class CustomChunkMesher {
   }
 
   private static volatile int lodThermalBias = 0;
+  private static volatile int lodForceCoarse = 0;
+  
+  private static final java.util.concurrent.ConcurrentHashMap<Long, Integer> lodTierOverrides =
+      new java.util.concurrent.ConcurrentHashMap<>(256);
 
   public static void setLodThermalBias(int bias) {
     lodThermalBias = Math.max(0, Math.min(2, bias));
+  }
+
+  
+  public static void setLodTierOverride(long key, int tier) {
+    if (tier <= 0) {
+      lodTierOverrides.remove(key);
+    } else {
+      lodTierOverrides.put(key, Math.max(1, Math.min(2, tier)));
+    }
+  }
+
+  public static void clearLodTierOverrides() {
+    lodTierOverrides.clear();
+  }
+
+  
+  public static int applyLodTierOverride(long key, int ringTier) {
+    Integer override = lodTierOverrides.get(key);
+    return override != null && override > ringTier ? override : ringTier;
+  }
+
+  
+  public static void setLodForceCoarse(int cap) {
+    lodForceCoarse = Math.max(0, Math.min(2, cap));
   }
 
   public static int lodTierForDistance(int chunkDist) {
@@ -138,13 +166,19 @@ public class CustomChunkMesher {
     int bias = lodThermalBias;
     int near = Math.max(2, cfg.lodNearChunks - bias * 2);
     int mid = Math.max(near + 2, cfg.lodMidChunks - bias * 4);
+    int tier;
     if (chunkDist <= near) {
-      return 0;
+      tier = 0;
+    } else if (chunkDist <= mid) {
+      tier = 1;
+    } else {
+      tier = 2;
     }
-    if (chunkDist <= mid) {
-      return 1;
+    int cap = lodForceCoarse;
+    if (cap > 0 && tier < cap) {
+      tier = cap;
     }
-    return 2;
+    return tier;
   }
 
   private final Long2ObjectOpenHashMap<ChunkMeshData> meshCache;
@@ -293,6 +327,7 @@ public class CustomChunkMesher {
         int lodTier = lodTierForDistance(Math.max(
             Math.abs(chunkX - context.buildPlayerCX),
             Math.abs(chunkZ - context.buildPlayerCZ)));
+        lodTier = applyLodTierOverride(key, lodTier);
         boolean useApproximateLight = lodTier >= 1;
         SectionSnapshot snapshot = captureSectionSnapshot(world, chunkX, chunkY, chunkZ, useApproximateLight);
         if (!snapshot.valid) {
@@ -508,6 +543,7 @@ public class CustomChunkMesher {
     synchronized (emptyKeys) {
       emptyKeys.clear();
     }
+    lodTierOverrides.clear();
     globalBuildGeneration.incrementAndGet();
     synchronized (batchRegData) {
       batchRegCount = 0;
