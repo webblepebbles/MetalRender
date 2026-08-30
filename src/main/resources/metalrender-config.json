@@ -1,6 +1,5 @@
 {
   "enableShaders": true,
-  "enableSimpleLighting": true,
   "enableDebugOverlay": false,
   "enablemeshshaders": true
 }

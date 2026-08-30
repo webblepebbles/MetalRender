@@ -96,7 +96,6 @@ public class MetalRenderSettingsScreen extends Screen {
   private int initialBiomeDetail;
   private int initialLeafCulling;
   private boolean initialMetalOn;
-  private boolean initialSmoothLighting;
   private boolean initialDebugPinkBlockTint;
   private boolean initialCameraFacingCulling;
   private boolean initialClusterFrustumCulling;
@@ -168,7 +167,6 @@ public class MetalRenderSettingsScreen extends Screen {
     initialBiomeDetail = config.biomeTransitionDetail;
     initialLeafCulling = config.leafCullingMode;
     initialMetalOn = config.enableMetalRendering;
-    initialSmoothLighting = config.enableSimpleLighting;
     initialDebugPinkBlockTint = config.debugPinkBlockTint;
     initialCameraFacingCulling = config.enableCameraFacingCulling;
     initialClusterFrustumCulling = config.enableClusterFrustumCulling;
@@ -508,7 +506,6 @@ public class MetalRenderSettingsScreen extends Screen {
     boolean needsRebuild = (pendingRenderDist != initialRenderDist)
         || (config.biomeTransitionDetail != initialBiomeDetail)
         || (config.leafCullingMode != initialLeafCulling)
-        || (config.enableSimpleLighting != initialSmoothLighting)
         || (config.debugPinkBlockTint != initialDebugPinkBlockTint)
         || (config.enableDistanceLod != initialDistanceLod)
         || (config.lodNearChunks != initialLodNearChunks)
@@ -524,7 +521,7 @@ public class MetalRenderSettingsScreen extends Screen {
         pendingRenderDist != initialRenderDist,
         biomeChanged,
         config.leafCullingMode != initialLeafCulling,
-        config.enableSimpleLighting != initialSmoothLighting);
+        false);
     MetalRenderClient.requestDeferredApply(
         metalFlip || cameraFacingCullingChanged,
         metalFlip,
@@ -640,7 +637,6 @@ public class MetalRenderSettingsScreen extends Screen {
   private void buildMetal() {
     sec("Renderer");
     tog("Metal Rendering", config.enableMetalRendering, v -> config.enableMetalRendering = v);
-    tog("Smooth Lighting", config.enableSimpleLighting, v -> config.enableSimpleLighting = v);
     tog("Debug: Pink Block Tint", config.debugPinkBlockTint, v -> config.debugPinkBlockTint = v);
     if (MetalRenderConfig.isDeepDebugActive()) {
       nfo("Deep Debug Status", "Active this run");

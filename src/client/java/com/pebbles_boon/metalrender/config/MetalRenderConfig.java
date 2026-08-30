@@ -2,7 +2,6 @@ package com.pebbles_boon.metalrender.config;
 
 public final class MetalRenderConfig {
   public boolean enableMetalRendering = true;
-  public boolean enableSimpleLighting = true;
   public boolean enableDebugOverlay = false;
   public boolean debugPinkBlockTint = false;
   public int leafCullingMode = 1;
@@ -80,8 +79,6 @@ public final class MetalRenderConfig {
 
         if (obj.has("enableMetalRendering"))
           cfg.enableMetalRendering = obj.get("enableMetalRendering").getAsBoolean();
-        if (obj.has("enableSimpleLighting"))
-          cfg.enableSimpleLighting = obj.get("enableSimpleLighting").getAsBoolean();
         if (obj.has("enableDebugOverlay"))
           cfg.enableDebugOverlay = obj.get("enableDebugOverlay").getAsBoolean();
         if (obj.has("debugPinkBlockTint"))
@@ -185,7 +182,6 @@ public final class MetalRenderConfig {
     try {
       com.google.gson.JsonObject obj = new com.google.gson.JsonObject();
       obj.addProperty("enableMetalRendering", enableMetalRendering);
-      obj.addProperty("enableSimpleLighting", enableSimpleLighting);
       obj.addProperty("enableDebugOverlay", enableDebugOverlay);
       obj.addProperty("debugPinkBlockTint", debugPinkBlockTint);
       obj.addProperty("leafCullingMode", leafCullingMode);

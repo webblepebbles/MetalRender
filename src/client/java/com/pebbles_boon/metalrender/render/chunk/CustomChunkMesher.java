@@ -878,14 +878,13 @@ public class CustomChunkMesher {
     final TextureAtlasSprite lavaFlowingSprite;
     final TextureAtlasSprite grassSideOverlaySprite;
     final ClientLevel world;
-    final boolean smoothLighting;
     final float[] faceShade;
 
     MeshBuildContext(BlockStateModelSet blockModels, int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ,
         TextureAtlasSprite waterStillSprite, TextureAtlasSprite waterFlowingSprite,
         TextureAtlasSprite lavaStillSprite, TextureAtlasSprite lavaFlowingSprite,
         TextureAtlasSprite grassSideOverlaySprite, ClientLevel world,
-        boolean smoothLighting, float[] faceShade) {
+        float[] faceShade) {
       this.blockModels = blockModels;
       this.buildPlayerCX = buildPlayerCX;
       this.buildPlayerCY = buildPlayerCY;
@@ -896,7 +895,6 @@ public class CustomChunkMesher {
       this.lavaFlowingSprite = lavaFlowingSprite;
       this.grassSideOverlaySprite = grassSideOverlaySprite;
       this.world = world;
-      this.smoothLighting = smoothLighting;
       this.faceShade = faceShade;
     }
   }
@@ -926,8 +924,6 @@ public class CustomChunkMesher {
       grassSideOverlay = getAtlasSprite(mc,
           Identifier.fromNamespaceAndPath("minecraft", "block/grass_block_side_overlay"));
     }
-    MetalRenderConfig config = MetalRenderClient.getConfig();
-    boolean smoothLighting = config == null || config.enableSimpleLighting;
     float[] faceShade = new float[6];
     for (Direction direction : ALL_DIRECTIONS) {
       int index = direction.get3DDataValue();
@@ -937,7 +933,7 @@ public class CustomChunkMesher {
     }
     return new MeshBuildContext(blockModels, buildPCX, buildPCY, buildPCZ,
         waterStill, waterFlow, lavaStill, lavaFlow, grassSideOverlay, world,
-        smoothLighting, faceShade);
+        faceShade);
   }
 
   private static int getGrassTint(ClientLevel world, BlockPos pos) {
@@ -1481,7 +1477,6 @@ public class CustomChunkMesher {
     private final MeshBuildContext context;
     private final int chunkX, chunkY, chunkZ;
     private final int lodTier;
-    private final boolean smoothLighting;
 
     int opaqueQuadCount = 0;
     int waterQuadCount = 0;
@@ -1495,7 +1490,6 @@ public class CustomChunkMesher {
       this.blockModels = blockModels;
       this.snapshot = snapshot;
       this.context = context;
-      this.smoothLighting = context.smoothLighting;
       this.chunkX = chunkX;
       this.chunkY = chunkY;
       this.chunkZ = chunkZ;
@@ -2041,7 +2035,7 @@ public class CustomChunkMesher {
           computeVertexLighting(lx, ly, lz, face, x, y, z,
               quad.materialInfo().lightEmission());
           light = (byte) ((computedBlock & 0xF) | ((computedSky & 0xF) << 4));
-          ao = (lodTier >= 1 || face == null || !smoothLighting) ? 1.0f : computedAo;
+          ao = 1.0f;
         }
 
         float fr, fg, fb;
@@ -2068,20 +2062,6 @@ public class CustomChunkMesher {
       }
     }
 
-    private final int[] sampleBlock = new int[9];
-    private final int[] sampleSky = new int[9];
-    private final float[] sampleAo = new float[9];
-    private final boolean[] sampleEmissive = new boolean[9];
-    private final boolean[] sampleOpaque = new boolean[9];
-    private final float[] weightsScratch = new float[4];
-    private static final Direction[][] EDGE_DIRECTIONS = {
-        { Direction.WEST, Direction.EAST, Direction.NORTH, Direction.SOUTH },
-        { Direction.EAST, Direction.WEST, Direction.NORTH, Direction.SOUTH },
-        { Direction.UP, Direction.DOWN, Direction.EAST, Direction.WEST },
-        { Direction.WEST, Direction.EAST, Direction.DOWN, Direction.UP },
-        { Direction.UP, Direction.DOWN, Direction.NORTH, Direction.SOUTH },
-        { Direction.DOWN, Direction.UP, Direction.NORTH, Direction.SOUTH }
-    };
 
     private byte computeFaceLightFast(int lx, int ly, int lz, Direction face, int emission) {
       int sx = lx;
@@ -2105,7 +2085,6 @@ public class CustomChunkMesher {
 
     private int computedBlock;
     private int computedSky;
-    private float computedAo;
 
     private void computeVertexLighting(int lx, int ly, int lz, Direction face,
         float vx, float vy, float vz, int emission) {
@@ -2113,163 +2092,11 @@ public class CustomChunkMesher {
         byte light = getPaddedLight(lx, ly, lz);
         computedBlock = light & 0xF;
         computedSky = (light >> 4) & 0xF;
-        computedAo = 1.0f;
         return;
       }
-      if (!smoothLighting) {
-        byte light = computeFaceLightFast(lx, ly, lz, face, emission);
-        computedBlock = light & 0xF;
-        computedSky = (light >> 4) & 0xF;
-        computedAo = 1.0f;
-        return;
-      }
-
-      int index = face.get3DDataValue();
-      Direction[] edges = EDGE_DIRECTIONS[index];
-      float depth = faceDepth(face, vx, vy, vz);
-      boolean offset = depth <= 0.5f;
-      int baseX = clampLocal(lx + (offset ? face.getStepX() : 0));
-      int baseY = clampLocal(ly + (offset ? face.getStepY() : 0));
-      int baseZ = clampLocal(lz + (offset ? face.getStepZ() : 0));
-
-      readSample(0, baseX, baseY, baseZ);
-      readSample(1, baseX + edges[0].getStepX(), baseY + edges[0].getStepY(), baseZ + edges[0].getStepZ());
-      readSample(2, baseX + edges[1].getStepX(), baseY + edges[1].getStepY(), baseZ + edges[1].getStepZ());
-      readSample(3, baseX + edges[2].getStepX(), baseY + edges[2].getStepY(), baseZ + edges[2].getStepZ());
-      readSample(4, baseX + edges[3].getStepX(), baseY + edges[3].getStepY(), baseZ + edges[3].getStepZ());
-      readSample(5, baseX + edges[0].getStepX() + edges[2].getStepX(),
-          baseY + edges[0].getStepY() + edges[2].getStepY(),
-          baseZ + edges[0].getStepZ() + edges[2].getStepZ());
-      readSample(6, baseX + edges[0].getStepX() + edges[3].getStepX(),
-          baseY + edges[0].getStepY() + edges[3].getStepY(),
-          baseZ + edges[0].getStepZ() + edges[3].getStepZ());
-      readSample(7, baseX + edges[1].getStepX() + edges[2].getStepX(),
-          baseY + edges[1].getStepY() + edges[2].getStepY(),
-          baseZ + edges[1].getStepZ() + edges[2].getStepZ());
-      readSample(8, baseX + edges[1].getStepX() + edges[3].getStepX(),
-          baseY + edges[1].getStepY() + edges[3].getStepY(),
-          baseZ + edges[1].getStepZ() + edges[3].getStepZ());
-
-      if (sampleOccluded(3) && sampleOccluded(1))
-        copySample(5, 1);
-      if (sampleOccluded(4) && sampleOccluded(1))
-        copySample(6, 1);
-      if (sampleOccluded(3) && sampleOccluded(2))
-        copySample(7, 2);
-      if (sampleOccluded(4) && sampleOccluded(2))
-        copySample(8, 2);
-
-      float[] weights = vertexWeights(face, vx - lx, vy - ly, vz - lz);
-      int c0Block = blendLight(4, 1, 6, 0, true);
-      int c1Block = blendLight(3, 1, 5, 0, true);
-      int c2Block = blendLight(3, 2, 7, 0, true);
-      int c3Block = blendLight(4, 2, 8, 0, true);
-      int c0Sky = blendLight(4, 1, 6, 0, false);
-      int c1Sky = blendLight(3, 1, 5, 0, false);
-      int c2Sky = blendLight(3, 2, 7, 0, false);
-      int c3Sky = blendLight(4, 2, 8, 0, false);
-      float c0Ao = blendAo(4, 1, 6, 0);
-      float c1Ao = blendAo(3, 1, 5, 0);
-      float c2Ao = blendAo(3, 2, 7, 0);
-      float c3Ao = blendAo(4, 2, 8, 0);
-      computedBlock = Math.min(15, Math.round(c0Block * weights[0] + c1Block * weights[1]
-          + c2Block * weights[2] + c3Block * weights[3]));
-      computedSky = Math.min(15, Math.round(c0Sky * weights[0] + c1Sky * weights[1]
-          + c2Sky * weights[2] + c3Sky * weights[3]));
-      computedAo = c0Ao * weights[0] + c1Ao * weights[1]
-          + c2Ao * weights[2] + c3Ao * weights[3];
-      if (emission > 0) {
-        computedBlock = Math.max(computedBlock, Math.min(15, emission));
-      }
-    }
-
-    private void readSample(int slot, int x, int y, int z) {
-      int px = clampLocal(x) + PADDED_RADIUS;
-      int py = clampLocal(y) + PADDED_RADIUS;
-      int pz = clampLocal(z) + PADDED_RADIUS;
-      int index = (py * PADDED_SIZE + pz) * PADDED_SIZE + px;
-      byte light = snapshot.paddedLight[index];
-      sampleBlock[slot] = light & 0xF;
-      sampleSky[slot] = (light >> 4) & 0xF;
-      sampleAo[slot] = 1.0f;
-      sampleEmissive[slot] = snapshot.paddedEmission[index] != 0;
-      sampleOpaque[slot] = snapshot.paddedOcclusion[index] != 0;
-    }
-
-    private void copySample(int target, int source) {
-      sampleBlock[target] = sampleBlock[source];
-      sampleSky[target] = sampleSky[source];
-      sampleAo[target] = sampleAo[source];
-      sampleEmissive[target] = sampleEmissive[source];
-      sampleOpaque[target] = sampleOpaque[source];
-    }
-
-    private boolean sampleOccluded(int slot) {
-      return sampleOpaque[slot];
-    }
-
-    private int blendLight(int a, int b, int c, int d, boolean block) {
-      int[] values = block ? sampleBlock : sampleSky;
-      int v0 = sampleEmissive[a] ? 15 : values[a];
-      int v1 = sampleEmissive[b] ? 15 : values[b];
-      int v2 = sampleEmissive[c] ? 15 : values[c];
-      int v3 = sampleEmissive[d] ? 15 : values[d];
-      return (v0 + v1 + v2 + v3 + 2) >> 2;
-    }
-
-    private float blendAo(int a, int b, int c, int d) {
-      return (sampleAo[a] + sampleAo[b] + sampleAo[c] + sampleAo[d]) * 0.25f;
-    }
-
-    private float[] vertexWeights(Direction face, float x, float y, float z) {
-      float u;
-      float v;
-      switch (face) {
-        case DOWN -> {
-          u = z;
-          v = 1.0f - x;
-        }
-        case UP -> {
-          u = z;
-          v = x;
-        }
-        case NORTH -> {
-          u = 1.0f - x;
-          v = y;
-        }
-        case SOUTH -> {
-          u = y;
-          v = 1.0f - x;
-        }
-        case WEST -> {
-          u = z;
-          v = y;
-        }
-        case EAST -> {
-          u = z;
-          v = 1.0f - y;
-        }
-        default -> {
-          u = 0.0f;
-          v = 0.0f;
-        }
-      }
-      weightsScratch[0] = v * u;
-      weightsScratch[1] = v * (1.0f - u);
-      weightsScratch[2] = (1.0f - v) * (1.0f - u);
-      weightsScratch[3] = (1.0f - v) * u;
-      return weightsScratch;
-    }
-
-    private float faceDepth(Direction face, float x, float y, float z) {
-      return switch (face) {
-        case DOWN -> y;
-        case UP -> 1.0f - y;
-        case NORTH -> z;
-        case SOUTH -> 1.0f - z;
-        case WEST -> x;
-        case EAST -> 1.0f - x;
-      };
+      byte light = computeFaceLightFast(lx, ly, lz, face, emission);
+      computedBlock = light & 0xF;
+      computedSky = (light >> 4) & 0xF;
     }
 
     private int clampLocal(int value) {
