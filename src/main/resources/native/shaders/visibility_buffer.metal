@@ -62,7 +62,7 @@ fragment float4 fragment_deferred_shade(
     device const TerrainVertex* vertices [[buffer(0)]],
     constant float4x4& invViewProj        [[buffer(1)]]
 ) {
-    constexpr sampler nearestSampler(filter::nearest);
+    constexpr sampler nearestSampler(filter::linear);
     constexpr sampler atlasSampler(filter::nearest, address::clamp_to_edge);
     uint2 coord = uint2(in.position.xy);
     uint packedVis = visBuffer.read(coord).r;

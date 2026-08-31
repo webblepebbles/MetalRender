@@ -52,10 +52,11 @@ fragment OitAccumOutput fragment_oit_accum(
     constant OitParams& params  [[buffer(1)]]
 ) {
     constexpr sampler texSampler(filter::nearest, address::clamp_to_edge);
+    constexpr sampler lightSampler(filter::linear, address::clamp_to_edge);
     half4 texColor = blockAtlas.sample(texSampler, float2(in.texCoord));
     if (texColor.a < half(0.004)) discard_fragment();
     half4 baseColor = texColor * in.color;
-    half4 light = lightmap.sample(texSampler, float2(in.lightUV));
+    half4 light = lightmap.sample(lightSampler, float2(in.lightUV));
     baseColor.rgb *= light.rgb;
     float fogFactor = saturate((params.fogEnd - in.viewDepth) /
                                max(params.fogEnd - params.fogStart, 0.001f));

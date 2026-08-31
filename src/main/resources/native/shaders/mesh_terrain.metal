@@ -200,8 +200,8 @@ fragment half4 fragment_terrain_mesh_opaque(
 ) {
     constexpr sampler s(mag_filter::nearest, min_filter::linear,
                         mip_filter::linear);
-    constexpr sampler lightSampler(mag_filter::nearest, min_filter::nearest,
-                                   mip_filter::nearest);
+    constexpr sampler lightSampler(mag_filter::linear, min_filter::linear,
+                                   mip_filter::nearest, address::clamp_to_edge);
     half4 tex = blockAtlas.sample(s, float2(in.texCoord));
     half  va  = in.color.a;
 
@@ -234,8 +234,8 @@ fragment half4 fragment_terrain_mesh_cutout(
 ) {
     constexpr sampler s(mag_filter::nearest, min_filter::linear,
                         mip_filter::linear);
-    constexpr sampler lightSampler(mag_filter::nearest, min_filter::nearest,
-                                   mip_filter::nearest);
+    constexpr sampler lightSampler(mag_filter::linear, min_filter::linear,
+                                   mip_filter::nearest, address::clamp_to_edge);
     half4 tex = blockAtlas.sample(s, float2(in.texCoord));
     if (tex.a < half(0.5h)) discard_fragment();
     half4 col = tex * in.color;
