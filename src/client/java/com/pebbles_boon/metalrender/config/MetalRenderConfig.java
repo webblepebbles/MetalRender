@@ -20,6 +20,7 @@ public final class MetalRenderConfig {
   public boolean hiddenFluidCulling = true;
   public boolean improvedFluidShaping = false;
   public boolean closestPointEntitySort = false;
+  public boolean smoothLighting = true;
 
   public boolean enableDistanceLod = true;
   public int lodNearChunks = 6;
@@ -119,6 +120,8 @@ public final class MetalRenderConfig {
           cfg.improvedFluidShaping = obj.get("improvedFluidShaping").getAsBoolean();
         if (obj.has("closestPointEntitySort"))
           cfg.closestPointEntitySort = obj.get("closestPointEntitySort").getAsBoolean();
+        if (obj.has("smoothLighting"))
+          cfg.smoothLighting = obj.get("smoothLighting").getAsBoolean();
 
         if (obj.has("enableDistanceLod"))
           cfg.enableDistanceLod = obj.get("enableDistanceLod").getAsBoolean();
@@ -202,6 +205,7 @@ public final class MetalRenderConfig {
       obj.addProperty("hiddenFluidCulling", hiddenFluidCulling);
       obj.addProperty("improvedFluidShaping", improvedFluidShaping);
       obj.addProperty("closestPointEntitySort", closestPointEntitySort);
+      obj.addProperty("smoothLighting", smoothLighting);
       obj.addProperty("enableDistanceLod", enableDistanceLod);
       obj.addProperty("lodNearChunks", lodNearChunks);
       obj.addProperty("lodMidChunks", lodMidChunks);

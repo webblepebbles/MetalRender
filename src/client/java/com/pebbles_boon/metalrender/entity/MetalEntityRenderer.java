@@ -220,7 +220,7 @@ public class MetalEntityRenderer {
       try {
         usedModel = renderEntityModel(entity, captured, renderDispatcher, camX,
             camY, camZ, delta);
-      } catch (Exception e) {
+      } catch (Throwable e) {
         if (frameCount < 5) {
           MetalLogger.warn("entity wendewer fail %s: %s",
               entity.getType().toString(), e.getMessage());
@@ -326,11 +326,19 @@ public class MetalEntityRenderer {
       EntityRenderDispatcher renderDispatcher,
       double camX, double camY, double camZ,
       float tickDelta) {
-    EntityRenderer renderer = renderDispatcher.getRenderer(entity);
+    EntityRenderer renderer;
+    try {
+      renderer = renderDispatcher.getRenderer(entity);
+    } catch (RuntimeException ignored) {
+      return false;
+    }
+    if (renderer == null) {
+      return false;
+    }
     EntityRenderState state;
     try {
       state = (EntityRenderState) renderer.createRenderState(entity, tickDelta);
-    } catch (Exception e) {
+    } catch (Throwable e) {
       return false;
     }
     if (state == null) {
@@ -382,7 +390,7 @@ public class MetalEntityRenderer {
         appendFireOverlay(captured, state, ex, ey, ez,
             reusableCameraRenderState.orientation);
       }
-    } catch (Exception e) {
+    } catch (Throwable e) {
       return false;
     }
 

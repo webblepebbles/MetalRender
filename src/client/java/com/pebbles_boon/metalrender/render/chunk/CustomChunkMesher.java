@@ -1073,13 +1073,16 @@ public class CustomChunkMesher {
             }
             net.minecraft.world.level.chunk.DataLayer blockLayer = blockLightLayers[layerIdx];
             net.minecraft.world.level.chunk.DataLayer skyLayer = skyLightLayers[layerIdx];
-            BlockPos.MutableBlockPos samplePos = mutablePos.set(sampleX, sampleY, sampleZ);
-            int block = blockLayer != null ? blockLayer.get(sampleX & 15, sampleY & 15, sampleZ & 15)
-                : blockLightListener.getLightValue(samplePos);
-            int sky = skyLayer != null ? skyLayer.get(sampleX & 15, sampleY & 15, sampleZ & 15)
-                : skyLightListener.getLightValue(samplePos);
-            if (sky == 0) sky = 15;
-            if (block == 0 && sky == 0) block = 4;
+            int block;
+            int sky;
+            if (blockLayer != null && skyLayer != null) {
+              block = blockLayer.get(sampleX & 15, sampleY & 15, sampleZ & 15);
+              sky = skyLayer.get(sampleX & 15, sampleY & 15, sampleZ & 15);
+            } else {
+              // Light data not loaded for this section - use a bright default
+              block = 4;
+              sky = 15;
+            }
             approximateLightGrid[(gy * 25) + (gz * 5) + gx] = (byte) ((block & 0xF) | ((sky & 0xF) << 4));
           }
         }
@@ -1477,6 +1480,7 @@ public class CustomChunkMesher {
     private final MeshBuildContext context;
     private final int chunkX, chunkY, chunkZ;
     private final int lodTier;
+    private final boolean smoothLightingEnabled;
 
     int opaqueQuadCount = 0;
     int waterQuadCount = 0;
@@ -1494,6 +1498,8 @@ public class CustomChunkMesher {
       this.chunkY = chunkY;
       this.chunkZ = chunkZ;
       this.lodTier = lodTier;
+      MetalRenderConfig cfg = MetalRenderClient.getConfig();
+      this.smoothLightingEnabled = cfg == null || cfg.smoothLighting;
     }
 
     void build() {
@@ -1550,7 +1556,16 @@ public class CustomChunkMesher {
           .get();
       BlockState state = cache.get(stateId);
       if (state == null) {
-        state = Block.stateById(stateId);
+        try {
+          state = Block.stateById(stateId);
+        } catch (RuntimeException ignored) {
+          // A registry mismatch must not take down the renderer. Treat the
+          // unknown state as air until the world is rebuilt with matching data.
+          state = Blocks.AIR.defaultBlockState();
+        }
+        if (state == null) {
+          state = Blocks.AIR.defaultBlockState();
+        }
         if (cache.size() < STATE_BY_ID_CACHE_CAP) {
           cache.put(stateId, state);
         }
@@ -1561,9 +1576,15 @@ public class CustomChunkMesher {
     private BlockStateModel getCachedModel(BlockState state) {
       IdentityHashMap<BlockState, BlockStateModel> cache = MODEL_CACHE.get();
       BlockStateModel model = cache.get(state);
-      if (model == null) {
-        model = blockModels.get(state);
-        if (model != null && cache.size() < MODEL_CACHE_CAP) {
+      if (model == null && !cache.containsKey(state)) {
+        try {
+          // Modded blocks may have no baked model (or a model whose loader
+          // throws). Missing models are a valid compatibility case.
+          model = blockModels.get(state);
+        } catch (RuntimeException ignored) {
+          model = null;
+        }
+        if (cache.size() < MODEL_CACHE_CAP) {
           cache.put(state, model);
         }
       }
@@ -1617,27 +1638,45 @@ public class CustomChunkMesher {
 
     private void renderBlockModel(BlockStateModel model, BlockState state, BlockPos pos,
         int lx, int ly, int lz, RandomSource random) {
-      random.setSeed(state.getSeed(pos));
-      java.util.ArrayList<BlockStateModelPart> parts = PARTS_POOL.get();
-      parts.clear();
-      model.collectParts(random, parts);
-      for (BlockStateModelPart part : parts) {
-        for (Direction direction : ALL_DIRECTIONS) {
-          List<BakedQuad> quads = part.getQuads(direction);
-          if (quads == null || quads.isEmpty())
+      try {
+        random.setSeed(state.getSeed(pos));
+        java.util.ArrayList<BlockStateModelPart> parts = PARTS_POOL.get();
+        parts.clear();
+        model.collectParts(random, parts);
+        for (BlockStateModelPart part : parts) {
+          if (part == null) {
             continue;
-          if (shouldCullFace(lx, ly, lz, direction, state))
-            continue;
-          for (BakedQuad quad : quads) {
-            emitBakedQuad(quad, lx, ly, lz, state, false);
+          }
+          for (Direction direction : ALL_DIRECTIONS) {
+            List<BakedQuad> quads;
+            try {
+              quads = part.getQuads(direction);
+            } catch (RuntimeException ignored) {
+              continue;
+            }
+            if (quads == null || quads.isEmpty() || shouldCullFace(lx, ly, lz, direction, state))
+              continue;
+            for (BakedQuad quad : quads) {
+              if (quad != null) {
+                emitBakedQuad(quad, lx, ly, lz, state, false);
+              }
+            }
+          }
+          try {
+            List<BakedQuad> noCull = part.getQuads(null);
+            if (noCull != null) {
+              for (BakedQuad quad : noCull) {
+                if (quad != null) {
+                  emitBakedQuad(quad, lx, ly, lz, state, false);
+                }
+              }
+            }
+          } catch (RuntimeException ignored) {
+            // One malformed face should not discard the rest of the section.
           }
         }
-        List<BakedQuad> noCull = part.getQuads(null);
-        if (noCull != null) {
-          for (BakedQuad quad : noCull) {
-            emitBakedQuad(quad, lx, ly, lz, state, false);
-          }
-        }
+      } catch (RuntimeException ignored) {
+        // Custom model implementations are isolated from the mesh worker.
       }
     }
 
@@ -2006,6 +2045,33 @@ public class CustomChunkMesher {
       byte tintG = (byte) ((blockColor >> 8) & 0xFF);
       byte tintB = (byte) (blockColor & 0xFF);
 
+      // Vanilla faceCubic detection: a quad coplanar with the block boundary
+      // on its normal axis samples smooth lighting/AO around the block in
+      // front of the face; partial quads sample around the block itself.
+      boolean smoothAO = lodTier == 0 && face != null && smoothLightingEnabled;
+      boolean faceCubic = false;
+      if (smoothAO) {
+        float minX = 32f, minY = 32f, minZ = 32f;
+        float maxX = -32f, maxY = -32f, maxZ = -32f;
+        for (int i = 0; i < 4; i++) {
+          org.joml.Vector3fc p = quad.position(i);
+          minX = Math.min(minX, p.x());
+          maxX = Math.max(maxX, p.x());
+          minY = Math.min(minY, p.y());
+          maxY = Math.max(maxY, p.y());
+          minZ = Math.min(minZ, p.z());
+          maxZ = Math.max(maxZ, p.z());
+        }
+        faceCubic = switch (face.getAxis()) {
+          case Y -> minY == maxY
+              && (face == Direction.UP ? maxY > 0.9999f : minY < 1.0e-4f);
+          case Z -> minZ == maxZ
+              && (face == Direction.SOUTH ? maxZ > 0.9999f : minZ < 1.0e-4f);
+          default -> minX == maxX
+              && (face == Direction.EAST ? maxX > 0.9999f : minX < 1.0e-4f);
+        };
+      }
+
       for (int i = 0; i < 4; i++) {
         org.joml.Vector3fc pos = quad.position(i);
         long packedUV = quad.packedUV(i);
@@ -2032,10 +2098,10 @@ public class CustomChunkMesher {
           light = computeFaceLightFast(lx, ly, lz, face, quad.materialInfo().lightEmission());
           ao = 1.0f;
         } else {
-          computeVertexLighting(lx, ly, lz, face, x, y, z,
-              quad.materialInfo().lightEmission());
+          computeVertexLighting(lx, ly, lz, face, faceCubic, pos.x(), pos.y(),
+              pos.z(), quad.materialInfo().lightEmission());
           light = (byte) ((computedBlock & 0xF) | ((computedSky & 0xF) << 4));
-          ao = 1.0f;
+          ao = computedAO;
         }
 
         float fr, fg, fb;
@@ -2075,8 +2141,6 @@ public class CustomChunkMesher {
       byte light = getPaddedLight(sx, sy, sz);
       int bl = light & 0xF;
       int sl = (light >> 4) & 0xF;
-      if (sl == 0) sl = 15;
-      if (bl == 0 && sl == 0) bl = 4;
       if (emission > 0) {
         bl = Math.max(bl, Math.min(15, emission));
       }
@@ -2085,18 +2149,180 @@ public class CustomChunkMesher {
 
     private int computedBlock;
     private int computedSky;
+    private float computedAO;
 
     private void computeVertexLighting(int lx, int ly, int lz, Direction face,
-        float vx, float vy, float vz, int emission) {
+        boolean faceCubic, float vx, float vy, float vz, int emission) {
+      if (lodTier == 0 && face != null && smoothLightingEnabled) {
+        computeSmoothLightAndAO(lx, ly, lz, face, faceCubic, vx, vy, vz, emission);
+        return;
+      }
       if (face == null) {
         byte light = getPaddedLight(lx, ly, lz);
         computedBlock = light & 0xF;
         computedSky = (light >> 4) & 0xF;
+        computedAO = 1.0f;
         return;
       }
       byte light = computeFaceLightFast(lx, ly, lz, face, emission);
       computedBlock = light & 0xF;
       computedSky = (light >> 4) & 0xF;
+      computedAO = 1.0f;
+    }
+
+    // ---- Smooth lighting + Ambient Occlusion (LOD tier 0 only) ----
+    //
+    // Re-derivation of vanilla Minecraft's smooth lighting (BlockModelLighter.
+    // prepareQuadAmbientOcclusion). For each vertex, light and shade brightness
+    // are averaged from 4 samples taken around the block in front of the face:
+    // the two side neighbors adjacent to the vertex, their diagonal corner, and
+    // the front block itself. This produces smooth per-vertex light gradients
+    // and AO darkening at concave edges. Corner directions are derived from the
+    // vertex position within the face plane, so any quad winding order is
+    // handled correctly without fixed remap tables.
+    private void computeSmoothLightAndAO(int lx, int ly, int lz, Direction face,
+        boolean faceCubic, float vx, float vy, float vz, int emission) {
+      int stepX = face.getStepX();
+      int stepY = face.getStepY();
+      int stepZ = face.getStepZ();
+
+      // Base position: the block in front of the face for full cubic faces,
+      // the block itself for partial quads (matches vanilla).
+      int bx;
+      int by;
+      int bz;
+      if (faceCubic) {
+        bx = lx + stepX;
+        by = ly + stepY;
+        bz = lz + stepZ;
+      } else {
+        bx = lx;
+        by = ly;
+        bz = lz;
+      }
+
+      // Tangent axes (the two axes orthogonal to the face normal)
+      int a1;
+      int a2;
+      switch (face.getAxis()) {
+        case X -> { a1 = 1; a2 = 2; }
+        case Y -> { a1 = 0; a2 = 2; }
+        default -> { a1 = 0; a2 = 1; }
+      }
+      float p1 = a1 == 0 ? vx : (a1 == 1 ? vy : vz);
+      float p2 = a2 == 0 ? vx : (a2 == 1 ? vy : vz);
+      int d1 = p1 > 0.5f ? 1 : -1;
+      int d2 = p2 > 0.5f ? 1 : -1;
+
+      // Side neighbors and diagonal corner around the base block
+      int s1x = bx;
+      int s1y = by;
+      int s1z = bz;
+      int s2x = bx;
+      int s2y = by;
+      int s2z = bz;
+      int cxc = bx;
+      int cyc = by;
+      int czc = bz;
+      if (a1 == 0) {
+        s1x += d1;
+        cxc += d1;
+      } else if (a1 == 1) {
+        s1y += d1;
+        cyc += d1;
+      } else {
+        s1z += d1;
+        czc += d1;
+      }
+      if (a2 == 0) {
+        s2x += d2;
+        cxc += d2;
+      } else if (a2 == 1) {
+        s2y += d2;
+        cyc += d2;
+      } else {
+        s2z += d2;
+        czc += d2;
+      }
+
+      byte light1 = getPaddedLight(s1x, s1y, s1z);
+      byte light2 = getPaddedLight(s2x, s2y, s2z);
+      float shade1 = getPaddedShade(s1x, s1y, s1z);
+      float shade2 = getPaddedShade(s2x, s2y, s2z);
+
+      // Vanilla rule: only sample the diagonal corner when at least one side
+      // is non-occluding; otherwise the corner reuses the first side's values.
+      byte cornerLight;
+      float cornerShade;
+      if (!isPaddedOccluding(s1x, s1y, s1z) || !isPaddedOccluding(s2x, s2y, s2z)) {
+        cornerLight = getPaddedLight(cxc, cyc, czc);
+        cornerShade = getPaddedShade(cxc, cyc, czc);
+      } else {
+        cornerLight = light1;
+        cornerShade = shade1;
+      }
+
+      // Center: light of the block in front of the face direction, unless the
+      // front block is solid on a partial face (matches vanilla lightCenter).
+      BlockState front = getPaddedBlockState(lx + stepX, ly + stepY, lz + stepZ);
+      byte centerLight;
+      if (faceCubic || front == null || !front.isSolidRender()) {
+        centerLight = getPaddedLight(lx + stepX, ly + stepY, lz + stepZ);
+      } else {
+        centerLight = getPaddedLight(lx, ly, lz);
+      }
+      float centerShade = getPaddedShade(bx, by, bz);
+
+      int centerBl = centerLight & 0xF;
+      int centerSl = (centerLight >> 4) & 0xF;
+
+      int bl1 = light1 & 0xF;
+      int sl1 = (light1 >> 4) & 0xF;
+      int bl2 = light2 & 0xF;
+      int sl2 = (light2 >> 4) & 0xF;
+      int blC = cornerLight & 0xF;
+      int slC = (cornerLight >> 4) & 0xF;
+
+      // Zero-light neighbors inherit the center's light (vanilla smoothBlend)
+      if (centerBl > 2 || centerSl > 2) {
+        if (bl1 == 0) bl1 = centerBl;
+        if (sl1 == 0) sl1 = centerSl;
+        if (bl2 == 0) bl2 = centerBl;
+        if (sl2 == 0) sl2 = centerSl;
+        if (blC == 0) blC = centerBl;
+        if (slC == 0) slC = centerSl;
+      }
+
+      // Round to nearest (vanilla averages 8-bit values keeping 6-bit
+      // precision; with 4-bit output, rounding is the closest match)
+      int avgBl = (bl1 + bl2 + blC + centerBl + 2) >> 2;
+      int avgSl = (sl1 + sl2 + slC + centerSl + 2) >> 2;
+      if (emission > 0) {
+        avgBl = Math.max(avgBl, Math.min(15, emission));
+      }
+
+      computedBlock = avgBl & 0xF;
+      computedSky = avgSl & 0xF;
+      computedAO = Math.max(0.2f, Math.min(1.0f,
+          (shade1 + shade2 + cornerShade + centerShade) * 0.25f));
+    }
+
+    private boolean isPaddedOccluding(int x, int y, int z) {
+      int px = x + PADDED_RADIUS;
+      int py = y + PADDED_RADIUS;
+      int pz = z + PADDED_RADIUS;
+      return snapshot.paddedOcclusion[(py * PADDED_SIZE + pz) * PADDED_SIZE + px] != 0;
+    }
+
+    private float getPaddedShade(int x, int y, int z) {
+      int px = x + PADDED_RADIUS;
+      int py = y + PADDED_RADIUS;
+      int pz = z + PADDED_RADIUS;
+      if (px < 0 || px >= PADDED_SIZE || py < 0 || py >= PADDED_SIZE
+          || pz < 0 || pz >= PADDED_SIZE) {
+        return 1.0f;
+      }
+      return (snapshot.paddedShade[(py * PADDED_SIZE + pz) * PADDED_SIZE + px] & 0xFF) / 255.0f;
     }
 
     private int clampLocal(int value) {
@@ -2238,11 +2464,22 @@ public class CustomChunkMesher {
         .get();
     BlockState state = cache.get(stateId);
     if (state == null) {
-      state = Block.stateById(stateId);
+      try {
+        state = Block.stateById(stateId);
+      } catch (RuntimeException ignored) {
+        state = Blocks.AIR.defaultBlockState();
+      }
+      if (state == null) {
+        state = Blocks.AIR.defaultBlockState();
+      }
       if (cache.size() < STATE_BY_ID_CACHE_CAP) {
         cache.put(stateId, state);
       }
     }
-    return state.isSolidRender();
+    try {
+      return state.isSolidRender();
+    } catch (RuntimeException ignored) {
+      return false;
+    }
   }
 }

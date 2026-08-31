@@ -109,6 +109,7 @@ public class MetalRenderSettingsScreen extends Screen {
   private boolean initialLodStickyTiers;
   private boolean initialLodViewImpact;
   private boolean initialLodSkeletonFirst;
+  private boolean initialSmoothLighting;
 
   private final List<Row> rows = new ArrayList<>();
 
@@ -166,6 +167,7 @@ public class MetalRenderSettingsScreen extends Screen {
     initialRenderDist = pendingRenderDist;
     initialBiomeDetail = config.biomeTransitionDetail;
     initialLeafCulling = config.leafCullingMode;
+    initialSmoothLighting = config.smoothLighting;
     initialMetalOn = config.enableMetalRendering;
     initialDebugPinkBlockTint = config.debugPinkBlockTint;
     initialCameraFacingCulling = config.enableCameraFacingCulling;
@@ -506,6 +508,7 @@ public class MetalRenderSettingsScreen extends Screen {
     boolean needsRebuild = (pendingRenderDist != initialRenderDist)
         || (config.biomeTransitionDetail != initialBiomeDetail)
         || (config.leafCullingMode != initialLeafCulling)
+        || (config.smoothLighting != initialSmoothLighting)
         || (config.debugPinkBlockTint != initialDebugPinkBlockTint)
         || (config.enableDistanceLod != initialDistanceLod)
         || (config.lodNearChunks != initialLodNearChunks)
@@ -521,6 +524,7 @@ public class MetalRenderSettingsScreen extends Screen {
         pendingRenderDist != initialRenderDist,
         biomeChanged,
         config.leafCullingMode != initialLeafCulling,
+        config.smoothLighting != initialSmoothLighting,
         false);
     MetalRenderClient.requestDeferredApply(
         metalFlip || cameraFacingCullingChanged,
@@ -704,6 +708,7 @@ public class MetalRenderSettingsScreen extends Screen {
     tog("Thermal-Adaptive LOD", config.lodThermalAdaptive, v -> config.lodThermalAdaptive = v);
 
     sec("Extras");
+    tog("Smooth Lighting + AO", config.smoothLighting, v -> config.smoothLighting = v);
     tog("Hidden Fluid Culling", config.hiddenFluidCulling, v -> config.hiddenFluidCulling = v);
     tog("Improved Fluid Shaping", config.improvedFluidShaping, v -> config.improvedFluidShaping = v);
     tog("Closest Point Entity Sort", config.closestPointEntitySort, v -> config.closestPointEntitySort = v);

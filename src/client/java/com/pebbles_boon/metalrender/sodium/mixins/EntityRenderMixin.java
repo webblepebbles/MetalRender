@@ -100,7 +100,9 @@ public class EntityRenderMixin {
             metalrender$entityCaptureCount,
             metalrender$entityCullCount);
       }
-    } catch (Exception e) {
+    } catch (Throwable e) {
+      // Entity enumeration/render hooks are supplied by other mods too.
+      // Never let one unusual entity abort LevelRenderer's frame.
       if (metalrender$entityCaptureCount < 10) {
         MetalLogger.error("[entitymix] cap fail: %s", e.getMessage());
       }
