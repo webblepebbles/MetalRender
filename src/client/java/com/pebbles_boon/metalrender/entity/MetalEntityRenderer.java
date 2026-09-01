@@ -356,7 +356,7 @@ public class MetalEntityRenderer {
     ez += offset.z;
     matrixStack.translate(ex, ey, ez);
 
-    if (frameCount % 3000 == 1 && state instanceof LivingEntityRenderState livingState) {
+    if (MetalRenderConfig.isDeepDebugActive() && frameCount % 3000 == 1 && state instanceof LivingEntityRenderState livingState) {
       MetalLogger.info(
           "[entity_diag] ent=%s body=%.1f sc=%.2f living=true",
           entity.getType().toString(), livingState.bodyRot, livingState.scale);
