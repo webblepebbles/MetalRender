@@ -10,7 +10,7 @@ import org.joml.Vector3f;
 
 public class AsyncCullTask {
   private static final int CULL_THREADS = 2;
-  private static final String THREAD_NAME_PREFIX = "MetalRender-AsyncCull";
+  private static final String THREAD_NAME_PREFIX = "a system thread";
 
   private static final AtomicLong handleCounter = new AtomicLong(0);
   private static final AtomicLong staleFrames = new AtomicLong(0);
