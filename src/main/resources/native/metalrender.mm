@@ -2403,7 +2403,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateBufferWithHi
       return (jlong)oldHandle;
     }
   }
-  if (g_megaVB && aligned <= 16 * 1024 * 1024) {
+  if (g_megaVB && aligned <= 64 * 1024 * 1024) {
     uint64_t megaH = megaAlloc(aligned);
     if (megaH != 0) {
       return (jlong)megaH;
@@ -2422,7 +2422,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateBuffer(
   ensure_device();
   if (!g_device || sizeBytes <= 0)
     return 0;
-  if (g_megaVB && sizeBytes <= 16 * 1024 * 1024) {
+  if (g_megaVB && sizeBytes <= 64 * 1024 * 1024) {
     uint64_t megaH = megaAlloc((size_t)sizeBytes);
     if (megaH != 0) {
       return (jlong)megaH;
@@ -4739,7 +4739,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
       std::lock_guard<std::mutex> lock(g_deferredMutex);
 
       int freed = 0;
-      const size_t kMaxDeletionsPerFrame = 128;
+      const size_t kMaxDeletionsPerFrame = 512;
       size_t i = 0;
       while (i < g_deferredDeletions.size() &&
              (size_t)freed < kMaxDeletionsPerFrame) {
