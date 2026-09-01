@@ -332,7 +332,7 @@ public class CustomChunkMesher {
         SectionSnapshot snapshot = captureSectionSnapshot(world, chunkX, chunkY, chunkZ, useApproximateLight);
         if (!snapshot.valid) {
           int v = DIAG_INVALID.incrementAndGet();
-          if (v % 500 == 1) {
+          if (v % 2000 == 1) {
             MetalLogger.info("builddiag: invalid_snapshot=%d empty=%d built=%d",
                 DIAG_INVALID.get(), DIAG_EMPTY.get(), DIAG_BUILT.get());
           }
@@ -352,7 +352,7 @@ public class CustomChunkMesher {
         long taskWall = System.nanoTime() - taskStart;
         long acc = BUILD_WALL_ACC.getAndAdd(taskWall);
         int cnt = BUILD_WALL_CNT.incrementAndGet();
-        if (cnt % 200 == 0) {
+        if (cnt % 1000 == 0) {
           MetalLogger.info("builddiag: avg_wall=%.2fms over %d tasks",
               (double) acc / cnt / 1e6, cnt);
           BUILD_WALL_ACC.set(0);
