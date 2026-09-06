@@ -559,7 +559,6 @@ static __unsafe_unretained id<MTLBuffer> g_deferredWaterOffsetBuf = nil;
 
 static int g_thermalQualityLevel = 0;
 
-static bool g_supportsASTC = false;
 static id<MTLDepthStencilState> g_depthStateReversedZ = nil;
 static id<MTLDepthStencilState> g_depthStateReversedZNoWrite = nil;
 static id<MTLDepthStencilState> g_depthStateReversedZReadOnly = nil;
@@ -830,10 +829,6 @@ static void ensure_device() {
     if (g_device) {
       g_queue = [g_device newCommandQueue];
 
-      g_supportsASTC = [g_device supportsFamily:MTLGPUFamilyApple1];
-      if (g_supportsASTC) {
-        dbg("ASTC texture compression supported (Apple GPU)\n");
-      }
       if (!g_megaVB) {
         g_megaVB = [g_device newBufferWithLength:MEGA_VB_CAPACITY
                                          options:MTLStorageModeShared];
@@ -4568,7 +4563,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
     encodeHiZDownsample(g_currentCmdBuffer);
 #ifdef METALRENDER_HAS_METALFX
     if (@available(macOS 13.0, *)) {
-      if (mfxActive() && !g_wasReuseFrame && g_sceneColor &&
+      if (mfxActive() && g_scale < 0.99f && !g_wasReuseFrame && g_sceneColor &&
           g_upscaledColor[g_renderSlot] && g_currentCmdBuffer &&
           ((!g_mfxTemporalScaler) || (g_sceneDepth && g_motionVectorPipeline &&
                                       g_motionTexture[g_renderSlot]))) {
@@ -4583,31 +4578,34 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
           }
         }
         if (g_mfxTemporalScaler) {
-          MotionVectorParamsCPU motionParams = {};
-          memcpy(motionParams.currentViewProjection, currentViewProjection,
-                 sizeof(currentViewProjection));
-          memcpy(motionParams.previousViewProjection,
-                 g_hasPreviousViewProjection ? g_previousViewProjection
-                                             : currentViewProjection,
-                 sizeof(currentViewProjection));
-          motionParams.size[0] = (uint32_t)g_sceneColor.width;
-          motionParams.size[1] = (uint32_t)g_sceneColor.height;
-          id<MTLComputeCommandEncoder> motionEnc =
-              [g_currentCmdBuffer computeCommandEncoder];
-          if (motionEnc) {
-            [motionEnc setComputePipelineState:g_motionVectorPipeline];
-            [motionEnc setTexture:g_sceneDepth atIndex:0];
-            [motionEnc setTexture:g_motionTexture[g_renderSlot] atIndex:1];
-            [motionEnc setBytes:&motionParams
-                         length:sizeof(motionParams)
-                        atIndex:0];
-            MTLSize motionThreads = MTLSizeMake(8, 8, 1);
-            MTLSize motionGroups =
-                MTLSizeMake(((NSUInteger)g_sceneColor.width + 7) / 8,
-                            ((NSUInteger)g_sceneColor.height + 7) / 8, 1);
-            [motionEnc dispatchThreadgroups:motionGroups
-                      threadsPerThreadgroup:motionThreads];
-            [motionEnc endEncoding];
+          bool temporalReset = g_mfxReset || !g_hasPreviousViewProjection;
+          if (!temporalReset) {
+            MotionVectorParamsCPU motionParams = {};
+            memcpy(motionParams.currentViewProjection, currentViewProjection,
+                   sizeof(currentViewProjection));
+            memcpy(motionParams.previousViewProjection,
+                   g_hasPreviousViewProjection ? g_previousViewProjection
+                                               : currentViewProjection,
+                   sizeof(currentViewProjection));
+            motionParams.size[0] = (uint32_t)g_sceneColor.width;
+            motionParams.size[1] = (uint32_t)g_sceneColor.height;
+            id<MTLComputeCommandEncoder> motionEnc =
+                [g_currentCmdBuffer computeCommandEncoder];
+            if (motionEnc) {
+              [motionEnc setComputePipelineState:g_motionVectorPipeline];
+              [motionEnc setTexture:g_sceneDepth atIndex:0];
+              [motionEnc setTexture:g_motionTexture[g_renderSlot] atIndex:1];
+              [motionEnc setBytes:&motionParams
+                           length:sizeof(motionParams)
+                          atIndex:0];
+              MTLSize motionThreads = MTLSizeMake(8, 8, 1);
+              MTLSize motionGroups =
+                  MTLSizeMake(((NSUInteger)g_sceneColor.width + 7) / 8,
+                              ((NSUInteger)g_sceneColor.height + 7) / 8, 1);
+              [motionEnc dispatchThreadgroups:motionGroups
+                        threadsPerThreadgroup:motionThreads];
+              [motionEnc endEncoding];
+            }
           }
           g_mfxTemporalScaler.colorTexture = g_sceneColor;
           g_mfxTemporalScaler.depthTexture = g_sceneDepth;
@@ -4620,8 +4618,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
           g_mfxTemporalScaler.jitterOffsetX = 0.0f;
           g_mfxTemporalScaler.jitterOffsetY = 0.0f;
           g_mfxTemporalScaler.depthReversed = NO;
-          g_mfxTemporalScaler.reset =
-              g_mfxReset || !g_hasPreviousViewProjection;
+          g_mfxTemporalScaler.reset = temporalReset;
           [g_mfxTemporalScaler encodeToCommandBuffer:g_currentCmdBuffer];
         } else if (g_mfxSpatialScaler) {
           g_mfxSpatialScaler.colorTexture = g_sceneColor;
@@ -4922,95 +4919,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nBindTexture(
   }
 }
 
-static void astc_encode_block_4x4(const uint8_t *pixels, uint8_t out[16]) {
-  memset(out, 0, 16);
-
-  auto setBits = [&](int pos, int count, uint32_t val) {
-    for (int i = 0; i < count; i++) {
-      if (val & (1u << i)) {
-        out[(pos + i) >> 3] |= (1 << ((pos + i) & 7));
-      }
-    }
-  };
-
-  setBits(0, 11, 0x14A);
-
-  setBits(11, 2, 0);
-
-  setBits(13, 4, 12);
-
-  uint8_t mn[4] = {255, 255, 255, 255};
-  uint8_t mx[4] = {0, 0, 0, 0};
-  for (int i = 0; i < 16; i++) {
-    for (int c = 0; c < 4; c++) {
-      uint8_t v = pixels[i * 4 + c];
-      if (v < mn[c])
-        mn[c] = v;
-      if (v > mx[c])
-        mx[c] = v;
-    }
-  }
-
-  uint8_t ep[8] = {mn[0], mx[0], mn[1], mx[1], mn[2], mx[2], mn[3], mx[3]};
-  for (int i = 0; i < 8; i++) {
-    setBits(17 + i * 8, 8, ep[i]);
-  }
-
-  int dr = mx[0] - mn[0], dg = mx[1] - mn[1];
-  int db = mx[2] - mn[2], da = mx[3] - mn[3];
-  int dot_max = dr * dr + dg * dg + db * db + da * da;
-  for (int i = 0; i < 16; i++) {
-    int w = 0;
-    if (dot_max > 0) {
-      int cr = pixels[i * 4] - mn[0];
-      int cg = pixels[i * 4 + 1] - mn[1];
-      int cb = pixels[i * 4 + 2] - mn[2];
-      int ca = pixels[i * 4 + 3] - mn[3];
-      int dot = cr * dr + cg * dg + cb * db + ca * da;
-      w = (dot * 3 + dot_max / 2) / dot_max;
-      if (w < 0)
-        w = 0;
-      if (w > 3)
-        w = 3;
-    }
-
-    setBits(126 - i * 2, 2, (uint32_t)w);
-  }
-}
-
-static uint8_t *compress_rgba_to_astc4x4(const uint8_t *rgba, int w, int h,
-                                         size_t *outSize) {
-  int bw = (w + 3) / 4;
-  int bh = (h + 3) / 4;
-  size_t compSize = (size_t)bw * bh * 16;
-  uint8_t *comp = new uint8_t[compSize];
-  for (int by = 0; by < bh; by++) {
-    for (int bx = 0; bx < bw; bx++) {
-
-      uint8_t block[64];
-      for (int py = 0; py < 4; py++) {
-        for (int px = 0; px < 4; px++) {
-          int sx = bx * 4 + px;
-          int sy = by * 4 + py;
-          if (sx >= w)
-            sx = w - 1;
-          if (sy >= h)
-            sy = h - 1;
-          const uint8_t *src = rgba + ((size_t)sy * w + sx) * 4;
-          uint8_t *dst = block + (py * 4 + px) * 4;
-          dst[0] = src[0];
-          dst[1] = src[1];
-          dst[2] = src[2];
-          dst[3] = src[3];
-        }
-      }
-      astc_encode_block_4x4(block, comp + ((size_t)by * bw + bx) * 16);
-    }
-  }
-  *outSize = compSize;
-  return comp;
-}
-
 extern "C" JNIEXPORT jlong JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateTexture2D(
     JNIEnv *env, jclass, jlong deviceHandle, jint width, jint height,
@@ -5023,34 +4931,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateTexture2D(
     return 0;
 
   id<MTLTexture> tex = nil;
-
-  bool useASTC = false;
-  if (useASTC) {
-    MTLTextureDescriptor *desc = [MTLTextureDescriptor
-        texture2DDescriptorWithPixelFormat:MTLPixelFormatASTC_4x4_LDR
-                                     width:(NSUInteger)width
-                                    height:(NSUInteger)height
-                                 mipmapped:NO];
-    desc.usage = MTLTextureUsageShaderRead;
-    desc.storageMode = MTLStorageModeShared;
-    tex = [g_device newTextureWithDescriptor:desc];
-    if (tex) {
-      size_t compSize = 0;
-      uint8_t *comp = compress_rgba_to_astc4x4((const uint8_t *)data, width,
-                                               height, &compSize);
-      MTLRegion region =
-          MTLRegionMake2D(0, 0, (NSUInteger)width, (NSUInteger)height);
-
-      [tex replaceRegion:region
-             mipmapLevel:0
-               withBytes:comp
-             bytesPerRow:(NSUInteger)((width / 4) * 16)];
-      delete[] comp;
-      dbg("nCreateTexture2D: created %dx%d ASTC 4x4 texture %p (%.1fKB vs "
-          "%.1fKB RGBA)\n",
-          width, height, tex, compSize / 1024.0, (width * height * 4) / 1024.0);
-    }
-  }
 
   if (!tex) {
     int maxMips = 1;
@@ -5119,22 +4999,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUpdateTexture2D(
   if (data) {
     MTLRegion region =
         MTLRegionMake2D(0, 0, (NSUInteger)width, (NSUInteger)height);
-
-    if (false && tex.pixelFormat == MTLPixelFormatASTC_4x4_LDR) {
-      size_t compSize = 0;
-      uint8_t *comp = compress_rgba_to_astc4x4((const uint8_t *)data, width,
-                                               height, &compSize);
-      [tex replaceRegion:region
-             mipmapLevel:0
-               withBytes:comp
-             bytesPerRow:(NSUInteger)((width / 4) * 16)];
-      delete[] comp;
-    } else {
-      [tex replaceRegion:region
-             mipmapLevel:0
-               withBytes:data
-             bytesPerRow:(NSUInteger)(width * 4)];
-    }
+    [tex replaceRegion:region
+           mipmapLevel:0
+             withBytes:data
+           bytesPerRow:(NSUInteger)(width * 4)];
     if ([tex mipmapLevelCount] > 1 && g_queue) {
       id<MTLCommandBuffer> cb = [g_queue commandBuffer];
       id<MTLBlitCommandEncoder> blit = [cb blitCommandEncoder];
@@ -5249,7 +5117,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nWaitForRender(
   }
   if (!g_currentFrameReady) {
     int spins = 0;
-    while (!g_currentFrameReady && spins < 10000) {
+    while (!g_currentFrameReady && spins < 300) {
       std::this_thread::yield();
       spins++;
     }
@@ -5319,7 +5187,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nReadbackDepth(
 
   if (!g_currentFrameReady) {
     int spins = 0;
-    while (!g_currentFrameReady && spins < 10000) {
+    while (!g_currentFrameReady && spins < 300) {
       std::this_thread::yield();
       spins++;
     }
