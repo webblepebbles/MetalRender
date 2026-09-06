@@ -25,11 +25,9 @@ public final class PerformanceController {
       return;
     PERF_LOGGER.endFrame();
     MetalRenderProfiler profiler = MetalRenderProfiler.getInstance();
-    double meshMs = profiler.getSnapshot().currentMeshMs;
-    double uploadMs = profiler.getSnapshot().currentUploadMs;
-    double gpuMs = profiler.getSnapshot().currentGpuMs;
-    BUDGET_ESTIMATOR.record(meshMs, uploadMs, gpuMs);
     profiler.endFrame();
+    BUDGET_ESTIMATOR.record(profiler.getLastMeshMs(), profiler.getLastUploadMs(),
+        profiler.getLastGpuMs());
     AdaptiveResolutionController.getInstance().tick(profiler.getLatestGpuMs());
     frameActive = false;
   }
