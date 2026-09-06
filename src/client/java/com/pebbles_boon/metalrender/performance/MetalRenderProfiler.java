@@ -45,7 +45,6 @@ public final class MetalRenderProfiler {
   private final AtomicLong meshTimeAccNs = new AtomicLong(0);
   private final AtomicLong uploadTimeAccNs = new AtomicLong(0);
   private final AtomicLong cullTimeAccNs = new AtomicLong(0);
-  private final AtomicLong gpuTimeAccNs = new AtomicLong(0);
 
   private final AtomicInteger meshesBuiltAcc = new AtomicInteger(0);
   private final AtomicInteger uploadsDoneAcc = new AtomicInteger(0);
@@ -60,6 +59,10 @@ public final class MetalRenderProfiler {
   private final MetricHistory cullHistory = new MetricHistory(HISTORY_SIZE);
   private final MetricHistory gpuHistory = new MetricHistory(HISTORY_SIZE);
   private volatile double latestGpuMs;
+  private volatile double lastMeshMs;
+  private volatile double lastUploadMs;
+  private volatile double lastCullMs;
+  private volatile double lastGpuMs;
 
   private long lastLogTimeMs;
   private long lastCsvEmitMs;
@@ -76,6 +79,22 @@ public final class MetalRenderProfiler {
 
   public double getLatestGpuMs() {
     return latestGpuMs;
+  }
+
+  public double getLastMeshMs() {
+    return lastMeshMs;
+  }
+
+  public double getLastUploadMs() {
+    return lastUploadMs;
+  }
+
+  public double getLastCullMs() {
+    return lastCullMs;
+  }
+
+  public double getLastGpuMs() {
+    return lastGpuMs;
   }
 
   public synchronized void startDevelopmentRunCsv() {
@@ -140,11 +159,6 @@ public final class MetalRenderProfiler {
       cullTimeAccNs.addAndGet(nanos);
   }
 
-  public void recordGpuTime(long nanos) {
-    if (nanos > 0)
-      gpuTimeAccNs.addAndGet(nanos);
-  }
-
   public void incrementMeshesBuilt(int count) {
     if (count > 0)
       meshesBuiltAcc.addAndGet(count);
@@ -180,14 +194,16 @@ public final class MetalRenderProfiler {
     double meshMs = meshTimeAccNs.getAndSet(0) / 1_000_000.0;
     double uploadMs = uploadTimeAccNs.getAndSet(0) / 1_000_000.0;
     double cullMs = cullTimeAccNs.getAndSet(0) / 1_000_000.0;
-    double gpuMs = gpuTimeAccNs.getAndSet(0) / 1_000_000.0;
-    if (gpuMs <= 0.0) {
-      try {
-        gpuMs = NativeBridge.nGetGpuFrameTimeMs();
-      } catch (Throwable ignored) {
-      }
+    double gpuMs = 0.0;
+    try {
+      gpuMs = NativeBridge.nGetGpuFrameTimeMs();
+    } catch (Throwable ignored) {
     }
     latestGpuMs = gpuMs;
+    lastMeshMs = meshMs;
+    lastUploadMs = uploadMs;
+    lastCullMs = cullMs;
+    lastGpuMs = gpuMs;
 
     int meshesBuilt = meshesBuiltAcc.getAndSet(0);
     int uploadsDone = uploadsDoneAcc.getAndSet(0);
