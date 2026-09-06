@@ -50,14 +50,6 @@ public final class LodPolicy {
   private boolean viewImpactEnabled = true;
   private boolean stickyEnabled = true;
 
-  private int upgradesQueued;
-  private int downgradesQueued;
-  private int deferredNotVisible;
-  private int deferredCredential;
-  private int deferredBehindCamera;
-  private int deferredHoldoff;
-  private int deferredBusy;
-
   public void setEnabled(boolean visibilityGate, boolean viewImpact, boolean sticky) {
     this.visibilityGateEnabled = visibilityGate;
     this.viewImpactEnabled = viewImpact;
@@ -150,18 +142,14 @@ public final class LodPolicy {
 
   private Decision decideUpgrade(ChunkState state, boolean visible, float viewScore) {
     if (visibilityGateEnabled && !visible) {
-      deferredNotVisible++;
       return Decision.KEEP;
     }
     if (viewImpactEnabled && viewScore <= 0.0f) {
-      deferredBehindCamera++;
       return Decision.KEEP;
     }
     if (visibilityGateEnabled && state.visibleStreak < UPGRADE_CREDENTIAL_SCANS) {
-      deferredCredential++;
       return Decision.KEEP;
     }
-    upgradesQueued++;
     return Decision.UPGRADE;
   }
 
@@ -169,7 +157,6 @@ public final class LodPolicy {
       float viewScore, boolean demotionIdle) {
     boolean stale = state.staleScans >= STALE_DEMOTE_SCANS;
     if (stale) {
-      downgradesQueued++;
       return Decision.DOWNGRADE;
     }
     if (stickyEnabled) {
@@ -177,21 +164,17 @@ public final class LodPolicy {
           ? (visible && viewScore >= IN_VIEW_SCORE)
           : visible;
       if (inView) {
-        deferredHoldoff++;
         return Decision.KEEP;
       }
       boolean holdoffExpired = state.lastUpgradeScan == Integer.MIN_VALUE
           || (scanIndex - state.lastUpgradeScan) >= DOWNGRADE_HOLDOFF_SCANS;
       if (!holdoffExpired) {
-        deferredHoldoff++;
         return Decision.KEEP;
       }
     }
     if (!demotionIdle) {
-      deferredBusy++;
       return Decision.KEEP;
     }
-    downgradesQueued++;
     return Decision.DOWNGRADE;
   }
 
@@ -230,45 +213,4 @@ public final class LodPolicy {
     pruneCounter = 0;
   }
 
-  public int getStateCount() {
-    return states.size();
-  }
-
-  public int getUpgradesQueued() {
-    return upgradesQueued;
-  }
-
-  public int getDowngradesQueued() {
-    return downgradesQueued;
-  }
-
-  public int getDeferredNotVisible() {
-    return deferredNotVisible;
-  }
-
-  public int getDeferredCredential() {
-    return deferredCredential;
-  }
-
-  public int getDeferredBehindCamera() {
-    return deferredBehindCamera;
-  }
-
-  public int getDeferredHoldoff() {
-    return deferredHoldoff;
-  }
-
-  public int getDeferredBusy() {
-    return deferredBusy;
-  }
-
-  public void resetDiagnostics() {
-    upgradesQueued = 0;
-    downgradesQueued = 0;
-    deferredNotVisible = 0;
-    deferredCredential = 0;
-    deferredBehindCamera = 0;
-    deferredHoldoff = 0;
-    deferredBusy = 0;
-  }
 }
