@@ -99,11 +99,6 @@ fragment half4 fragment_oit_composite(
     return half4(result, half(1.0));
 }
 
-
-
-
-
-
 struct TerrainOitVertOut {
     float4 position    [[position]];
     float2 texCoord;
@@ -111,8 +106,6 @@ struct TerrainOitVertOut {
     half   light;
     uint   normalIndex [[flat]];
 };
-
-
 
 fragment OitAccumOutput fragment_oit_terrain_accum(
     TerrainOitVertOut      in        [[stage_in]],
@@ -139,8 +132,6 @@ fragment OitAccumOutput fragment_oit_terrain_accum(
     out.revealage  = alpha;
     return out;
 }
-
-
 
 fragment half4 fragment_oit_composite_tbdr(
     CompositeVertexOut      in            [[stage_in]],
