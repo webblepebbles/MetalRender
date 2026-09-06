@@ -88,6 +88,9 @@ public class CustomChunkMesher {
   public static final int NEIGHBOR_MISSING_MINUS_Z = 4;
   public static final int NEIGHBOR_MISSING_PLUS_Z = 8;
 
+  private static final int MAX_STASHED_VARIANTS = 1500;
+
+
   public static class ChunkMeshData {
     public final long bufferHandle;
     public final int quadCount;
@@ -132,6 +135,13 @@ public class CustomChunkMesher {
       this.missingNeighborMask = missingNeighborMask;
       this.faceOcclusionMask = faceOcclusionMask;
     }
+  }
+
+  private static final class StashedVariants {
+    final ChunkMeshData[] byTier = new ChunkMeshData[3];
+    final long[] epoch = new long[3];
+    final long[] stamp = new long[3];
+    int liveSlots;
   }
 
   private static volatile int lodThermalBias = 0;
@@ -189,6 +199,15 @@ public class CustomChunkMesher {
   }
 
   private final Long2ObjectOpenHashMap<ChunkMeshData> meshCache;
+
+  private final Long2ObjectOpenHashMap<StashedVariants> stashedVariants =
+      new Long2ObjectOpenHashMap<>(512);
+  private final Long2LongOpenHashMap contentEpochByKey = new Long2LongOpenHashMap();
+  private final Long2LongOpenHashMap meshEpochByKey = new Long2LongOpenHashMap();
+  private final Object variantLock = new Object();
+  private int stashedVariantCount;
+  private long variantTick;
+
   private final java.util.ArrayList<ChunkMeshData> cachedMeshSnapshot = new java.util.ArrayList<>(8192);
   private volatile int cachedSnapshotGen = Integer.MIN_VALUE;
   private final LongOpenHashSet pendingKeys = new LongOpenHashSet();
@@ -231,6 +250,8 @@ public class CustomChunkMesher {
   public CustomChunkMesher() {
     this.meshCache = new Long2ObjectOpenHashMap<>();
     this.dirtyGeneration.defaultReturnValue(0L);
+    this.contentEpochByKey.defaultReturnValue(0L);
+    this.meshEpochByKey.defaultReturnValue(0L);
     this.pendingVisibleSectionNanos.defaultReturnValue(0L);
     this.pendingBlockUpdateNanos.defaultReturnValue(0L);
 
@@ -294,7 +315,7 @@ public class CustomChunkMesher {
     NativeBridge.nUploadBufferData(this.globalIndexBufferHandle, ibData, 0,
         ibData.length);
     this.initialized = true;
-    MetalLogger.info("mesher ready (maxq=%d ib=%d)",
+    MetalLogger.info("mesher weady (maxq=%d ib=%d)",
         MAX_QUADS, ibData.length);
   }
 
@@ -314,8 +335,12 @@ public class CustomChunkMesher {
     long key = packChunkKey(chunkX, chunkY, chunkZ);
     final long genAtSubmit;
     final long globalGenAtSubmit = globalBuildGeneration.get();
+    final long epochAtSubmit;
     synchronized (dirtyGeneration) {
       genAtSubmit = dirtyGeneration.get(key);
+    }
+    synchronized (variantLock) {
+      epochAtSubmit = contentEpochByKey.get(key);
     }
 
     synchronized (pendingKeys) {
@@ -351,7 +376,8 @@ public class CustomChunkMesher {
           return;
         }
         DIAG_BUILT.incrementAndGet();
-        doMeshBuild(chunkX, chunkY, chunkZ, snapshot, key, genAtSubmit, globalGenAtSubmit, context, lodTier);
+        doMeshBuild(chunkX, chunkY, chunkZ, snapshot, key, genAtSubmit,
+            globalGenAtSubmit, context, lodTier, epochAtSubmit);
       } catch (Exception e) {
         MetalLogger.error("mesher fail [%d,%d,%d]: %s", chunkX,
             chunkY, chunkZ, e.getMessage());
@@ -474,8 +500,197 @@ public class CustomChunkMesher {
     }
   }
 
+  public void contentChanged(int cx, int cy, int cz) {
+    long key = packChunkKey(cx, cy, cz);
+    synchronized (variantLock) {
+      contentEpochByKey.put(key, contentEpochByKey.get(key) + 1L);
+      destroyStashForKeyLocked(key);
+    }
+    markDirty(cx, cy, cz);
+  }
+
+
+  public boolean tryTierSwap(int cx, int cy, int cz, int targetTier) {
+    if (targetTier < 0 || targetTier > 2) {
+      return false;
+    }
+    long key = packChunkKey(cx, cy, cz);
+    ChunkMeshData promoted = null;
+    long currentEpoch;
+    synchronized (variantLock) {
+      currentEpoch = contentEpochByKey.get(key);
+      StashedVariants sv = stashedVariants.get(key);
+      if (sv != null && sv.byTier[targetTier] != null
+          && sv.epoch[targetTier] == currentEpoch) {
+        promoted = sv.byTier[targetTier];
+        sv.byTier[targetTier] = null;
+        sv.epoch[targetTier] = 0;
+        sv.stamp[targetTier] = 0;
+        sv.liveSlots--;
+        stashedVariantCount--;
+      }
+    }
+    if (promoted == null) {
+      return false;
+    }
+
+    synchronized (meshCache) {
+      ChunkMeshData old = meshCache.get(key);
+      if (old == null) {
+        NativeBridge.nDestroyBuffer(promoted.bufferHandle);
+        return true;
+      }
+      if (old.lodTier == promoted.lodTier) {
+        synchronized (variantLock) {
+          StashedVariants sv = stashedVariants.get(key);
+          if (sv == null) {
+            sv = new StashedVariants();
+            stashedVariants.put(key, sv);
+          }
+          sv.byTier[targetTier] = promoted;
+          sv.epoch[targetTier] = currentEpoch;
+          sv.stamp[targetTier] = ++variantTick;
+          sv.liveSlots++;
+          stashedVariantCount++;
+        }
+        return true;
+      }
+
+      meshCache.put(key, promoted);
+      vertexCountAtomic.addAndGet((promoted.quadCount - old.quadCount) * 4);
+
+      boolean demoted = false;
+      synchronized (variantLock) {
+        long oldEpoch = meshEpochByKey.get(key);
+        meshEpochByKey.put(key, currentEpoch);
+        if (old.lodTier != targetTier && oldEpoch == currentEpoch) {
+          StashedVariants sv = stashedVariants.get(key);
+          if (sv == null) {
+            sv = new StashedVariants();
+            stashedVariants.put(key, sv);
+          }
+          if (sv.byTier[old.lodTier] == null) {
+            sv.byTier[old.lodTier] = old;
+            sv.epoch[old.lodTier] = currentEpoch;
+            sv.stamp[old.lodTier] = ++variantTick;
+            sv.liveSlots++;
+            stashedVariantCount++;
+            demoted = true;
+          }
+        }
+      }
+      if (!demoted && old.bufferHandle != promoted.bufferHandle) {
+        NativeBridge.nDestroyBuffer(old.bufferHandle);
+      }
+    }
+    queueDrawRegistration(promoted);
+    synchronized (dirtyKeys) {
+      dirtyKeys.remove(key);
+    }
+    meshUpdateGeneration.incrementAndGet();
+    return true;
+  }
+
+  private void destroyStashForKeyLocked(long key) {
+    StashedVariants sv = stashedVariants.remove(key);
+    if (sv == null) {
+      return;
+    }
+    for (int t = 0; t < sv.byTier.length; t++) {
+      if (sv.byTier[t] != null) {
+        NativeBridge.nDestroyBuffer(sv.byTier[t].bufferHandle);
+        sv.byTier[t] = null;
+        sv.liveSlots--;
+        stashedVariantCount--;
+      }
+    }
+  }
+
+  private void stashVariant(long key, ChunkMeshData mesh, long epoch) {
+    if (mesh == null || mesh.lodTier < 0 || mesh.lodTier > 2) {
+      return;
+    }
+    synchronized (variantLock) {
+      StashedVariants sv = stashedVariants.get(key);
+      if (sv == null) {
+        sv = new StashedVariants();
+        stashedVariants.put(key, sv);
+      }
+      if (sv.byTier[mesh.lodTier] != null) {
+        NativeBridge.nDestroyBuffer(sv.byTier[mesh.lodTier].bufferHandle);
+        sv.liveSlots--;
+        stashedVariantCount--;
+      }
+      sv.byTier[mesh.lodTier] = mesh;
+      sv.epoch[mesh.lodTier] = epoch;
+      sv.stamp[mesh.lodTier] = ++variantTick;
+      sv.liveSlots++;
+      stashedVariantCount++;
+    }
+    evictStashedVariantsIfNeeded();
+  }
+
+  private void evictStashedVariantsIfNeeded() {
+    if (stashedVariantCount <= MAX_STASHED_VARIANTS) {
+      return;
+    }
+    synchronized (variantLock) {
+      while (stashedVariantCount > MAX_STASHED_VARIANTS) {
+        long oldestStamp = Long.MAX_VALUE;
+        long oldestKey = Long.MIN_VALUE;
+        int oldestTier = -1;
+        var iter = stashedVariants.long2ObjectEntrySet().fastIterator();
+        while (iter.hasNext()) {
+          var entry = iter.next();
+          StashedVariants sv = entry.getValue();
+          for (int t = 0; t < sv.byTier.length; t++) {
+            if (sv.byTier[t] != null && sv.stamp[t] < oldestStamp) {
+              oldestStamp = sv.stamp[t];
+              oldestKey = entry.getLongKey();
+              oldestTier = t;
+            }
+          }
+        }
+        if (oldestTier < 0) {
+          return;
+        }
+        StashedVariants sv = stashedVariants.get(oldestKey);
+        NativeBridge.nDestroyBuffer(sv.byTier[oldestTier].bufferHandle);
+        sv.byTier[oldestTier] = null;
+        sv.epoch[oldestTier] = 0;
+        sv.stamp[oldestTier] = 0;
+        sv.liveSlots--;
+        stashedVariantCount--;
+        if (sv.liveSlots <= 0) {
+          stashedVariants.remove(oldestKey);
+        }
+      }
+    }
+  }
+
+  private void destroyAllStashedVariants() {
+    synchronized (variantLock) {
+      var iter = stashedVariants.long2ObjectEntrySet().fastIterator();
+      while (iter.hasNext()) {
+        var entry = iter.next();
+        StashedVariants sv = entry.getValue();
+        for (int t = 0; t < sv.byTier.length; t++) {
+          if (sv.byTier[t] != null) {
+            NativeBridge.nDestroyBuffer(sv.byTier[t].bufferHandle);
+            sv.byTier[t] = null;
+            sv.liveSlots--;
+            stashedVariantCount--;
+          }
+        }
+      }
+      stashedVariants.clear();
+      stashedVariantCount = 0;
+    }
+  }
+
   public void markAllDirty() {
     invalidateThreadLocalCaches();
+    destroyAllStashedVariants();
     long[] keys;
     long[] emptyArr;
     synchronized (meshCache) {
@@ -502,6 +717,10 @@ public class CustomChunkMesher {
 
   public void removeMesh(int cx, int cy, int cz) {
     long key = packChunkKey(cx, cy, cz);
+    synchronized (variantLock) {
+      destroyStashForKeyLocked(key);
+      meshEpochByKey.remove(key);
+    }
     ChunkMeshData old;
     synchronized (dirtyGeneration) {
       dirtyGeneration.put(key, dirtyGeneration.get(key) + 1L);
@@ -526,6 +745,11 @@ public class CustomChunkMesher {
 
   public void clearAllMeshes() {
     invalidateThreadLocalCaches();
+    destroyAllStashedVariants();
+    synchronized (variantLock) {
+      meshEpochByKey.clear();
+      contentEpochByKey.clear();
+    }
     int count;
     synchronized (meshCache) {
       count = meshCache.size();
@@ -822,6 +1046,10 @@ public class CustomChunkMesher {
 
   private void removeEmptyMesh(long key, int chunkX, int chunkY, int chunkZ,
       long generation, long globalGeneration) {
+    synchronized (variantLock) {
+      destroyStashForKeyLocked(key);
+      meshEpochByKey.remove(key);
+    }
     ChunkMeshData old;
     synchronized (dirtyGeneration) {
       if (globalBuildGeneration.get() != globalGeneration ||
@@ -1400,7 +1628,7 @@ public class CustomChunkMesher {
 
   private void doMeshBuild(int chunkX, int chunkY, int chunkZ,
       SectionSnapshot snapshot, long key, long generation, long globalGeneration,
-      MeshBuildContext context, int lodTier) {
+      MeshBuildContext context, int lodTier, long contentEpochAtSubmit) {
     long buildStart = System.nanoTime();
     try {
       if (isTaskCancelled(key, generation, globalGeneration)) {
@@ -1520,7 +1748,18 @@ public class CustomChunkMesher {
       if (flushCount > 0) {
         NativeBridge.nRegisterChunkMeshBatch(flushCount, batchRegData);
       }
-      if (old != null && old.bufferHandle != bufferHandle) {
+      boolean stashedOld = false;
+      synchronized (variantLock) {
+        long oldEpoch = meshEpochByKey.get(key);
+        meshEpochByKey.put(key, contentEpochAtSubmit);
+        if (old != null && old.bufferHandle != bufferHandle
+            && old.lodTier != mesh.lodTier && oldEpoch == contentEpochAtSubmit) {
+          stashedOld = true;
+        }
+      }
+      if (stashedOld) {
+        stashVariant(key, old, contentEpochAtSubmit);
+      } else if (old != null && old.bufferHandle != bufferHandle) {
         NativeBridge.nDestroyBuffer(old.bufferHandle);
       }
 
