@@ -51,7 +51,7 @@ public final class MetalRenderCommands {
                             .then(literal("adaptive")
                                     .then(literal("on").executes(ctx -> {
                                         MetalRenderConfig.setAdaptiveResolutionEnabled(true);
-                                        msg(ctx.getSource(), "§aAdaptive resolution enabled (auto-scales render res to keep GPU time in budget)");
+                                        msg(ctx.getSource(), "§aAdaptive resolution enabled (auto-scales wendew res to keep GPU time in budget)");
                                         return 1;
                                     }))
                                     .then(literal("off").executes(ctx -> {
@@ -76,7 +76,7 @@ public final class MetalRenderCommands {
                                     .then(literal("reload").executes(ctx -> {
 
                                         msg(ctx.getSource(),
-                                                "§eConfig reloaded. some changes would need restart");
+                                                "§eConfig weloaded. some changes would need westart");
                                         return 1;
                                     }))
                                     .then(literal("reset").executes(ctx -> {
@@ -121,7 +121,7 @@ public final class MetalRenderCommands {
         msg(src, "§e/metalrender cache clear §7- Clear cache & westart wendewer");
         msg(src, "§e/metalrender reload §7- weload world wendewer");
         msg(src, "§e/metalrender restart §7- Full wendewer westart");
-        msg(src, "§e/metalrender config open §7- Open MetalRender settings screen");
+        msg(src, "§e/metalrender config open §7- Open MetalRender settings scween");
         msg(src, "§e/metalrender config save|reload|reset §7- Config management");
         msg(src, "§e/metalrender performance reset §7- reset perf settings");
         msg(src, "§e/metalrender profile §7- Toggle profiler overlay");
@@ -137,7 +137,7 @@ public final class MetalRenderCommands {
             MetalRenderClient.openSettingsScreen(mc);
             msg(src, "§aopen metalrender setting");
         } catch (Exception e) {
-            msg(src, "§cfailed to open config screen: " + e.getMessage());
+            msg(src, "§cfailed to open config scween: " + e.getMessage());
         }
     }
 
@@ -205,7 +205,6 @@ public final class MetalRenderCommands {
 
     private static void resetConfig(FabricClientCommandSource src) {
         MetalRenderConfig.setResolutionScale(1.0f);
-        MetalRenderConfig.setMirrorUploads(false);
         invalidateAllMeshes();
         msg(src, "§esettings wreturned to default");
     }

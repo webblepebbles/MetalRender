@@ -33,7 +33,7 @@ public class MetalRenderClient implements ClientModInitializer {
     if (StartupBlocker.shouldBlockStartup()) {
       return;
     }
-    MetalLogger.info("metalrender ready");
+    MetalLogger.info("metalrender weady");
     config = MetalRenderConfig.load();
     cfgWasOn = config != null && config.enableMetalRendering;
     MetalDebugEntry.register();
@@ -132,7 +132,7 @@ public class MetalRenderClient implements ClientModInitializer {
             NativeBridge.nFlushDeferredDeletions();
             NativeBridge.nDestroy(handle);
           } catch (Throwable t) {
-            MetalLogger.warn("renderer destroy fail: %s", t.getMessage());
+            MetalLogger.warn("wendewer destroy fail: %s", t.getMessage());
           }
         }
         renderer = null;
