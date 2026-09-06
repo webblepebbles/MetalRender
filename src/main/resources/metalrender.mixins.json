@@ -17,6 +17,7 @@
     "OptionsScreenMixin",
     "ChunkLoadMixin",
     "SpriteContentsTickerMixin",
+    "LightUpdateMixin",
     "WeatherRenderMixin",
     "accessor.BillboardParticleAccessor",
     "accessor.ParticleAccessor",
