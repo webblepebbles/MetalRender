@@ -100,15 +100,24 @@ public class CustomChunkMesher {
     public final int lodTier;
     public final byte missingNeighborMask;
 
+    public final byte faceOcclusionMask;
+
     public ChunkMeshData(long bufferHandle, int quadCount, int chunkX, int chunkY, int chunkZ,
         int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ) {
       this(bufferHandle, quadCount, chunkX, chunkY, chunkZ, buildPlayerCX, buildPlayerCY, buildPlayerCZ, 0L,
-          new int[7], 0, (byte) 0);
+          new int[7], 0, (byte) 0, (byte) 0);
     }
 
     public ChunkMeshData(long bufferHandle, int quadCount, int chunkX, int chunkY, int chunkZ,
         int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ, long visibilityMask, int[] facingQuadCounts,
         int lodTier, byte missingNeighborMask) {
+      this(bufferHandle, quadCount, chunkX, chunkY, chunkZ, buildPlayerCX, buildPlayerCY, buildPlayerCZ,
+          visibilityMask, facingQuadCounts, lodTier, missingNeighborMask, (byte) 0);
+    }
+
+    public ChunkMeshData(long bufferHandle, int quadCount, int chunkX, int chunkY, int chunkZ,
+        int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ, long visibilityMask, int[] facingQuadCounts,
+        int lodTier, byte missingNeighborMask, byte faceOcclusionMask) {
       this.bufferHandle = bufferHandle;
       this.quadCount = quadCount;
       this.chunkX = chunkX;
@@ -121,12 +130,13 @@ public class CustomChunkMesher {
       this.facingQuadCounts = facingQuadCounts != null ? Arrays.copyOf(facingQuadCounts, 14) : new int[14];
       this.lodTier = lodTier;
       this.missingNeighborMask = missingNeighborMask;
+      this.faceOcclusionMask = faceOcclusionMask;
     }
   }
 
   private static volatile int lodThermalBias = 0;
   private static volatile int lodForceCoarse = 0;
-  
+
   private static final java.util.concurrent.ConcurrentHashMap<Long, Integer> lodTierOverrides =
       new java.util.concurrent.ConcurrentHashMap<>(256);
 
@@ -134,7 +144,6 @@ public class CustomChunkMesher {
     lodThermalBias = Math.max(0, Math.min(2, bias));
   }
 
-  
   public static void setLodTierOverride(long key, int tier) {
     if (tier <= 0) {
       lodTierOverrides.remove(key);
@@ -147,13 +156,11 @@ public class CustomChunkMesher {
     lodTierOverrides.clear();
   }
 
-  
   public static int applyLodTierOverride(long key, int ringTier) {
     Integer override = lodTierOverrides.get(key);
     return override != null && override > ringTier ? override : ringTier;
   }
 
-  
   public static void setLodForceCoarse(int cap) {
     lodForceCoarse = Math.max(0, Math.min(2, cap));
   }
@@ -328,8 +335,8 @@ public class CustomChunkMesher {
             Math.abs(chunkX - context.buildPlayerCX),
             Math.abs(chunkZ - context.buildPlayerCZ)));
         lodTier = applyLodTierOverride(key, lodTier);
-        boolean useApproximateLight = lodTier >= 1;
-        SectionSnapshot snapshot = captureSectionSnapshot(world, chunkX, chunkY, chunkZ, useApproximateLight);
+
+        SectionSnapshot snapshot = captureSectionSnapshot(world, chunkX, chunkY, chunkZ, lodTier);
         if (!snapshot.valid) {
           int v = DIAG_INVALID.incrementAndGet();
           if (v % 2000 == 1) {
@@ -992,8 +999,44 @@ public class CustomChunkMesher {
     return sections[sectionIdx];
   }
 
+  private static BlockState getBorderBlockState(LevelChunk[] neighborChunks, LevelChunk centerChunk,
+      int chunkX, int chunkZ, int chunkY, int wx, int wy, int wz,
+      ClientLevel world, BlockPos.MutableBlockPos mutablePos) {
+    int ncx = wx >> 4;
+    int ncz = wz >> 4;
+    int dx = ncx - chunkX;
+    int dz = ncz - chunkZ;
+    if (dx >= -1 && dx <= 1 && dz >= -1 && dz <= 1) {
+      LevelChunk nc = neighborChunks[(dz + 1) * 3 + (dx + 1)];
+      if (nc != null) {
+        try {
+          int sectionIdx = nc.getSectionIndexFromSectionY(wy >> 4);
+          LevelChunkSection[] sections = nc.getSections();
+          if (sectionIdx >= 0 && sectionIdx < sections.length) {
+            LevelChunkSection sec = sections[sectionIdx];
+            if (sec != null && !sec.hasOnlyAir()) {
+              return sec.getStates().get(wx & 15, wy & 15, wz & 15);
+            }
+            if (sec != null) {
+              return Blocks.AIR.defaultBlockState();
+            }
+          }
+        } catch (Exception ignored) {
+        }
+      } else {
+        return Blocks.AIR.defaultBlockState();
+      }
+    }
+    mutablePos.set(wx, wy, wz);
+    try {
+      return world.getBlockState(mutablePos);
+    } catch (Exception e) {
+      return Blocks.AIR.defaultBlockState();
+    }
+  }
+
   private SectionSnapshot captureSectionSnapshot(ClientLevel world, int chunkX, int chunkY, int chunkZ,
-      boolean useApproximateLight) {
+      int lodTier) {
     if (world == null) {
       return new SectionSnapshot(false, false, null, null, null, null, null, null);
     }
@@ -1030,64 +1073,40 @@ public class CustomChunkMesher {
 
     net.minecraft.world.level.chunk.PalettedContainer<BlockState> localStates = section.getStates();
 
+    LevelChunk[] neighborChunks = new LevelChunk[9];
+    var chunkSource = world.getChunkSource();
+    for (int dz = -1; dz <= 1; dz++) {
+      for (int dx = -1; dx <= 1; dx++) {
+        if (dx == 0 && dz == 0) {
+          neighborChunks[(dz + 1) * 3 + (dx + 1)] = chunk;
+        } else {
+          neighborChunks[(dz + 1) * 3 + (dx + 1)] =
+              chunkSource.getChunkNow(chunkX + dx, chunkZ + dz);
+        }
+      }
+    }
+
     net.minecraft.world.level.lighting.LayerLightEventListener blockLightListener = null;
     net.minecraft.world.level.lighting.LayerLightEventListener skyLightListener = null;
     net.minecraft.world.level.chunk.DataLayer[] blockLightLayers = null;
     net.minecraft.world.level.chunk.DataLayer[] skyLightLayers = null;
     boolean[] lightLayerResolved = null;
-    byte[] approximateLightGrid = useApproximateLight ? new byte[125] : null;
-    if (!useApproximateLight) {
-      blockLightListener = world.getChunkSource().getLightEngine()
-          .getLayerListener(LightLayer.BLOCK);
-      skyLightListener = world.getChunkSource().getLightEngine()
-          .getLayerListener(LightLayer.SKY);
-      blockLightLayers = new net.minecraft.world.level.chunk.DataLayer[27];
-      skyLightLayers = new net.minecraft.world.level.chunk.DataLayer[27];
-      lightLayerResolved = new boolean[27];
-    }
-    if (useApproximateLight) {
-      blockLightListener = world.getChunkSource().getLightEngine()
-          .getLayerListener(LightLayer.BLOCK);
-      skyLightListener = world.getChunkSource().getLightEngine()
-          .getLayerListener(LightLayer.SKY);
-      blockLightLayers = new net.minecraft.world.level.chunk.DataLayer[27];
-      skyLightLayers = new net.minecraft.world.level.chunk.DataLayer[27];
-      lightLayerResolved = new boolean[27];
-      for (int gy = 0; gy < 5; gy++) {
-        for (int gz = 0; gz < 5; gz++) {
-          for (int gx = 0; gx < 5; gx++) {
-            int sampleX = baseX + gx * 4 - PADDED_RADIUS;
-            int sampleY = baseY + gy * 4 - PADDED_RADIUS;
-            int sampleZ = baseZ + gz * 4 - PADDED_RADIUS;
-            int sectionX = sampleX >> 4;
-            int sectionY = sampleY >> 4;
-            int sectionZ = sampleZ >> 4;
-            int layerIdx = ((sectionY - chunkY + 1) * 3 + (sectionZ - chunkZ + 1)) * 3 +
-                (sectionX - chunkX + 1);
-            if (!lightLayerResolved[layerIdx]) {
-              net.minecraft.core.SectionPos sectionPos = net.minecraft.core.SectionPos.of(sectionX, sectionY,
-                  sectionZ);
-              blockLightLayers[layerIdx] = blockLightListener.getDataLayerData(sectionPos);
-              skyLightLayers[layerIdx] = skyLightListener.getDataLayerData(sectionPos);
-              lightLayerResolved[layerIdx] = true;
-            }
-            net.minecraft.world.level.chunk.DataLayer blockLayer = blockLightLayers[layerIdx];
-            net.minecraft.world.level.chunk.DataLayer skyLayer = skyLightLayers[layerIdx];
-            int block;
-            int sky;
-            if (blockLayer != null && skyLayer != null) {
-              block = blockLayer.get(sampleX & 15, sampleY & 15, sampleZ & 15);
-              sky = skyLayer.get(sampleX & 15, sampleY & 15, sampleZ & 15);
-            } else {
-              // Light data not loaded for this section - use a bright default
-              block = 4;
-              sky = 15;
-            }
-            approximateLightGrid[(gy * 25) + (gz * 5) + gx] = (byte) ((block & 0xF) | ((sky & 0xF) << 4));
-          }
-        }
-      }
-    }
+
+    blockLightListener = world.getChunkSource().getLightEngine()
+        .getLayerListener(LightLayer.BLOCK);
+    skyLightListener = world.getChunkSource().getLightEngine()
+        .getLayerListener(LightLayer.SKY);
+    blockLightLayers = new net.minecraft.world.level.chunk.DataLayer[27];
+    skyLightLayers = new net.minecraft.world.level.chunk.DataLayer[27];
+    lightLayerResolved = new boolean[27];
+
+    boolean coarseTint = lodTier >= 2;
+    int[] coarseTintState = coarseTint ? new int[64] : null;
+    int[] coarseTint0 = coarseTint ? new int[64] : null;
+    int[] coarseTint1 = coarseTint ? new int[64] : null;
+    int[] coarseTint2 = coarseTint ? new int[64] : null;
+    int[] coarseTint3 = coarseTint ? new int[64] : null;
+    boolean[] coarseTintInit = coarseTint ? new boolean[64] : null;
 
     for (int py = 0; py < PADDED_SIZE; py++) {
       for (int pz = 0; pz < PADDED_SIZE; pz++) {
@@ -1110,7 +1129,8 @@ public class CustomChunkMesher {
               state = world.getBlockState(mutablePos);
             }
           } else {
-            state = world.getBlockState(mutablePos);
+            state = getBorderBlockState(neighborChunks, chunk, chunkX, chunkZ,
+                chunkY, wx, wy, wz, world, mutablePos);
           }
 
           int stateId = 0;
@@ -1140,17 +1160,17 @@ public class CustomChunkMesher {
             paddedEmission[pIdx] = (byte) (state.emissiveRendering(world, mutablePos) ? 1 : 0);
           }
 
-          if (useApproximateLight) {
-            int lightX = Math.min(4, px >> 2);
-            int lightY = Math.min(4, py >> 2);
-            int lightZ = Math.min(4, pz >> 2);
-            paddedLight[pIdx] = approximateLightGrid[(lightY * 25) + (lightZ * 5) + lightX];
+          int sectionX = wx >> 4;
+          int sectionY = wy >> 4;
+          int sectionZ = wz >> 4;
+          int layerIdx = ((sectionY - chunkY + 1) * 3 + (sectionZ - chunkZ + 1)) * 3 +
+              (sectionX - chunkX + 1);
+          int bl;
+          int sl;
+          if (layerIdx < 0 || layerIdx >= 27) {
+            bl = blockLightListener.getLightValue(mutablePos);
+            sl = skyLightListener.getLightValue(mutablePos);
           } else {
-            int sectionX = wx >> 4;
-            int sectionY = wy >> 4;
-            int sectionZ = wz >> 4;
-            int layerIdx = ((sectionY - chunkY + 1) * 3 + (sectionZ - chunkZ + 1)) * 3 +
-                (sectionX - chunkX + 1);
             if (!lightLayerResolved[layerIdx]) {
               net.minecraft.core.SectionPos sectionPos = net.minecraft.core.SectionPos.of(sectionX, sectionY,
                   sectionZ);
@@ -1160,18 +1180,29 @@ public class CustomChunkMesher {
             }
             net.minecraft.world.level.chunk.DataLayer blockLayer = blockLightLayers[layerIdx];
             net.minecraft.world.level.chunk.DataLayer skyLayer = skyLightLayers[layerIdx];
-            int bl = blockLayer != null ? blockLayer.get(wx & 15, wy & 15, wz & 15)
+            bl = blockLayer != null ? blockLayer.get(wx & 15, wy & 15, wz & 15)
                 : blockLightListener.getLightValue(mutablePos);
-            int sl = skyLayer != null ? skyLayer.get(wx & 15, wy & 15, wz & 15)
+            sl = skyLayer != null ? skyLayer.get(wx & 15, wy & 15, wz & 15)
                 : skyLightListener.getLightValue(mutablePos);
-            paddedLight[pIdx] = (byte) ((bl & 0xF) | ((sl & 0xF) << 4));
           }
+          paddedLight[pIdx] = (byte) ((bl & 0xF) | ((sl & 0xF) << 4));
 
           if (inner) {
             int x = px - PADDED_RADIUS;
             int y = py - PADDED_RADIUS;
             int z = pz - PADDED_RADIUS;
             int tintBase = (y * 256 + z * 16 + x) * BIOME_TINT_SLOTS;
+            int coarseIdx = -1;
+            if (coarseTint && stateId != 0) {
+              coarseIdx = ((y >> 2) * 4 + (z >> 2)) * 4 + (x >> 2);
+              if (coarseTintInit[coarseIdx] && coarseTintState[coarseIdx] == stateId) {
+                biomeTints[tintBase] = coarseTint0[coarseIdx];
+                biomeTints[tintBase + 1] = coarseTint1[coarseIdx];
+                biomeTints[tintBase + 2] = coarseTint2[coarseIdx];
+                biomeTints[tintBase + 3] = coarseTint3[coarseIdx];
+                continue;
+              }
+            }
             biomeTints[tintBase] = 0xFFFFFF;
             biomeTints[tintBase + 1] = 0xFFFFFF;
             biomeTints[tintBase + 2] = 0xFFFFFF;
@@ -1222,6 +1253,14 @@ public class CustomChunkMesher {
                   }
                   biomeTints[tintBase + tintIndex] = tint == -1 ? 0xFFFFFF : tint;
                 }
+              }
+              if (coarseIdx >= 0) {
+                coarseTintInit[coarseIdx] = true;
+                coarseTintState[coarseIdx] = stateId;
+                coarseTint0[coarseIdx] = biomeTints[tintBase];
+                coarseTint1[coarseIdx] = biomeTints[tintBase + 1];
+                coarseTint2[coarseIdx] = biomeTints[tintBase + 2];
+                coarseTint3[coarseIdx] = biomeTints[tintBase + 3];
               }
             }
           }
@@ -1369,6 +1408,7 @@ public class CustomChunkMesher {
       }
       vertexBuffer.flip();
       long visibilityMask = computeVisibilityMask(snapshot.paddedBlockStates);
+      byte faceOcclusionMask = computeFaceOcclusionMask(snapshot.paddedBlockStates);
       int dataLen = quadCount * 4 * VERTEX_STRIDE;
 
       if (isTaskCancelled(key, generation, globalGeneration)) {
@@ -1400,7 +1440,7 @@ public class CustomChunkMesher {
       ChunkMeshData mesh = new ChunkMeshData(bufferHandle, quadCount, chunkX, chunkY, chunkZ,
           context.buildPlayerCX, context.buildPlayerCY, context.buildPlayerCZ,
           visibilityMask, facingQuadCounts, lodTier,
-          computeMissingNeighborMask(context.world, chunkX, chunkZ));
+          computeMissingNeighborMask(context.world, chunkX, chunkZ), faceOcclusionMask);
       ChunkMeshData old;
       synchronized (dirtyGeneration) {
         if (isTaskCancelled(key, generation, globalGeneration)) {
@@ -1559,8 +1599,7 @@ public class CustomChunkMesher {
         try {
           state = Block.stateById(stateId);
         } catch (RuntimeException ignored) {
-          // A registry mismatch must not take down the renderer. Treat the
-          // unknown state as air until the world is rebuilt with matching data.
+
           state = Blocks.AIR.defaultBlockState();
         }
         if (state == null) {
@@ -1578,8 +1617,7 @@ public class CustomChunkMesher {
       BlockStateModel model = cache.get(state);
       if (model == null && !cache.containsKey(state)) {
         try {
-          // Modded blocks may have no baked model (or a model whose loader
-          // throws). Missing models are a valid compatibility case.
+
           model = blockModels.get(state);
         } catch (RuntimeException ignored) {
           model = null;
@@ -1638,6 +1676,14 @@ public class CustomChunkMesher {
 
     private void renderBlockModel(BlockStateModel model, BlockState state, BlockPos pos,
         int lx, int ly, int lz, RandomSource random) {
+
+      boolean skipDetailQuads = lodTier >= 2;
+      boolean blockEmitsLight;
+      try {
+        blockEmitsLight = state.getLightEmission() != 0;
+      } catch (RuntimeException ignored) {
+        blockEmitsLight = false;
+      }
       try {
         random.setSeed(state.getSeed(pos));
         java.util.ArrayList<BlockStateModelPart> parts = PARTS_POOL.get();
@@ -1647,6 +1693,13 @@ public class CustomChunkMesher {
           if (part == null) {
             continue;
           }
+          boolean partAO;
+          try {
+            partAO = part.useAmbientOcclusion();
+          } catch (RuntimeException ignored) {
+            partAO = true;
+          }
+          boolean forceFlat = !partAO || blockEmitsLight;
           for (Direction direction : ALL_DIRECTIONS) {
             List<BakedQuad> quads;
             try {
@@ -1658,25 +1711,25 @@ public class CustomChunkMesher {
               continue;
             for (BakedQuad quad : quads) {
               if (quad != null) {
-                emitBakedQuad(quad, lx, ly, lz, state, false);
+                emitBakedQuad(quad, lx, ly, lz, state, false, forceFlat);
               }
             }
           }
           try {
-            List<BakedQuad> noCull = part.getQuads(null);
+            List<BakedQuad> noCull = skipDetailQuads ? null : part.getQuads(null);
             if (noCull != null) {
               for (BakedQuad quad : noCull) {
                 if (quad != null) {
-                  emitBakedQuad(quad, lx, ly, lz, state, false);
+                  emitBakedQuad(quad, lx, ly, lz, state, false, forceFlat);
                 }
               }
             }
           } catch (RuntimeException ignored) {
-            // One malformed face should not discard the rest of the section.
+
           }
         }
       } catch (RuntimeException ignored) {
-        // Custom model implementations are isolated from the mesh worker.
+
       }
     }
 
@@ -1706,7 +1759,8 @@ public class CustomChunkMesher {
         return true;
       }
       if (state.getBlock() instanceof LeavesBlock) {
-        if (lodTier >= 2) {
+
+        if (lodTier >= 1) {
           return true;
         }
         MetalRenderConfig cfg = MetalRenderClient.getConfig();
@@ -1731,7 +1785,8 @@ public class CustomChunkMesher {
 
       float[] cornerHeights = this.cornerHeights;
       float fluidHeight = sampleFluidHeight(lx, ly, lz, isLava);
-      if (lodTier >= 2 || fluidHeight >= 1.0f) {
+
+      if (lodTier >= 1 || fluidHeight >= 1.0f) {
         if (fluidHeight <= 0.0f) {
           fluidHeight = fluid.getOwnHeight();
         }
@@ -2017,7 +2072,7 @@ public class CustomChunkMesher {
     }
 
     private void emitBakedQuad(BakedQuad quad, int lx, int ly, int lz,
-        BlockState state, boolean water) {
+        BlockState state, boolean water, boolean forceFlat) {
       ByteBuffer target = water ? waterBuffer : solidBuffer;
       Direction face = quad.direction();
       byte normalIndex = (byte) (face != null ? face.get3DDataValue() : 6);
@@ -2028,7 +2083,7 @@ public class CustomChunkMesher {
 
       boolean isLeaves = state.getBlock() instanceof LeavesBlock;
       MetalRenderConfig cfg = MetalRenderClient.getConfig();
-      boolean fastLeaves = isLeaves && (lodTier >= 2 || (cfg != null && cfg.leafCullingMode == 0));
+      boolean fastLeaves = isLeaves && (lodTier >= 1 || (cfg != null && cfg.leafCullingMode == 0));
 
       TextureAtlasSprite quadSprite = quad.materialInfo().sprite();
       boolean grassOverlay = state.getBlock() == Blocks.GRASS_BLOCK &&
@@ -2045,10 +2100,7 @@ public class CustomChunkMesher {
       byte tintG = (byte) ((blockColor >> 8) & 0xFF);
       byte tintB = (byte) (blockColor & 0xFF);
 
-      // Vanilla faceCubic detection: a quad coplanar with the block boundary
-      // on its normal axis samples smooth lighting/AO around the block in
-      // front of the face; partial quads sample around the block itself.
-      boolean smoothAO = lodTier == 0 && face != null && smoothLightingEnabled;
+      boolean smoothAO = !forceFlat && lodTier == 0 && face != null && smoothLightingEnabled;
       boolean faceCubic = false;
       if (smoothAO) {
         float minX = 32f, minY = 32f, minZ = 32f;
@@ -2128,7 +2180,6 @@ public class CustomChunkMesher {
       }
     }
 
-
     private byte computeFaceLightFast(int lx, int ly, int lz, Direction face, int emission) {
       int sx = lx;
       int sy = ly;
@@ -2170,24 +2221,12 @@ public class CustomChunkMesher {
       computedAO = 1.0f;
     }
 
-    // ---- Smooth lighting + Ambient Occlusion (LOD tier 0 only) ----
-    //
-    // Re-derivation of vanilla Minecraft's smooth lighting (BlockModelLighter.
-    // prepareQuadAmbientOcclusion). For each vertex, light and shade brightness
-    // are averaged from 4 samples taken around the block in front of the face:
-    // the two side neighbors adjacent to the vertex, their diagonal corner, and
-    // the front block itself. This produces smooth per-vertex light gradients
-    // and AO darkening at concave edges. Corner directions are derived from the
-    // vertex position within the face plane, so any quad winding order is
-    // handled correctly without fixed remap tables.
     private void computeSmoothLightAndAO(int lx, int ly, int lz, Direction face,
         boolean faceCubic, float vx, float vy, float vz, int emission) {
       int stepX = face.getStepX();
       int stepY = face.getStepY();
       int stepZ = face.getStepZ();
 
-      // Base position: the block in front of the face for full cubic faces,
-      // the block itself for partial quads (matches vanilla).
       int bx;
       int by;
       int bz;
@@ -2201,7 +2240,6 @@ public class CustomChunkMesher {
         bz = lz;
       }
 
-      // Tangent axes (the two axes orthogonal to the face normal)
       int a1;
       int a2;
       switch (face.getAxis()) {
@@ -2214,7 +2252,6 @@ public class CustomChunkMesher {
       int d1 = p1 > 0.5f ? 1 : -1;
       int d2 = p2 > 0.5f ? 1 : -1;
 
-      // Side neighbors and diagonal corner around the base block
       int s1x = bx;
       int s1y = by;
       int s1z = bz;
@@ -2250,8 +2287,6 @@ public class CustomChunkMesher {
       float shade1 = getPaddedShade(s1x, s1y, s1z);
       float shade2 = getPaddedShade(s2x, s2y, s2z);
 
-      // Vanilla rule: only sample the diagonal corner when at least one side
-      // is non-occluding; otherwise the corner reuses the first side's values.
       byte cornerLight;
       float cornerShade;
       if (!isPaddedOccluding(s1x, s1y, s1z) || !isPaddedOccluding(s2x, s2y, s2z)) {
@@ -2262,8 +2297,6 @@ public class CustomChunkMesher {
         cornerShade = shade1;
       }
 
-      // Center: light of the block in front of the face direction, unless the
-      // front block is solid on a partial face (matches vanilla lightCenter).
       BlockState front = getPaddedBlockState(lx + stepX, ly + stepY, lz + stepZ);
       byte centerLight;
       if (faceCubic || front == null || !front.isSolidRender()) {
@@ -2283,7 +2316,6 @@ public class CustomChunkMesher {
       int blC = cornerLight & 0xF;
       int slC = (cornerLight >> 4) & 0xF;
 
-      // Zero-light neighbors inherit the center's light (vanilla smoothBlend)
       if (centerBl > 2 || centerSl > 2) {
         if (bl1 == 0) bl1 = centerBl;
         if (sl1 == 0) sl1 = centerSl;
@@ -2293,8 +2325,6 @@ public class CustomChunkMesher {
         if (slC == 0) slC = centerSl;
       }
 
-      // Round to nearest (vanilla averages 8-bit values keeping 6-bit
-      // precision; with 4-bit output, rounding is the closest match)
       int avgBl = (bl1 + bl2 + blC + centerBl + 2) >> 2;
       int avgSl = (sl1 + sl2 + slC + centerSl + 2) >> 2;
       if (emission > 0) {
@@ -2388,8 +2418,79 @@ public class CustomChunkMesher {
     return (byte) (w1 >>> 56);
   }
 
-  private static long computeVisibilityMask(int[] paddedBlockStates) {
-    long mask = 0L;
+  public ChunkMeshData getMesh(int cx, int cy, int cz) {
+    long key = packChunkKey(cx, cy, cz);
+    synchronized (meshCache) {
+      return meshCache.get(key);
+    }
+  }
+
+  public void queueDrawRegistration(ChunkMeshData mesh) {
+    if (mesh == null || mesh.bufferHandle == 0 || mesh.quadCount <= 0) {
+      return;
+    }
+    int opaqueQuadCount = 0;
+    int[] facing = mesh.facingQuadCounts;
+    if (facing != null) {
+      for (int i = 0; i < 7 && i < facing.length; i++) {
+        opaqueQuadCount += Math.max(0, facing[i]);
+      }
+    }
+    int flushCount = -1;
+    synchronized (batchRegData) {
+
+      if (batchRegCount >= BATCH_REG_CAPACITY) {
+        try {
+          NativeBridge.nRegisterChunkMeshBatch(batchRegCount, batchRegData);
+        } catch (Exception ignored) {
+        }
+        batchRegCount = 0;
+      }
+      int idx = batchRegCount * BATCH_REG_STRIDE;
+      batchRegData[idx] = (mesh.chunkX & 0xFFFFFFFFL) | ((long) mesh.chunkY << 32);
+      batchRegData[idx + 1] = (mesh.chunkZ & 0xFFFFFFFFL) | ((long) mesh.quadCount << 32);
+      batchRegData[idx + 2] = mesh.bufferHandle;
+      batchRegData[idx + 3] = mesh.visibilityMask;
+      batchRegData[idx + 4] = (opaqueQuadCount & 0xFFFFFFFFL)
+          | ((long) (facing.length > 0 ? Math.max(0, facing[0]) : 0) << 32);
+      batchRegData[idx + 5] = ((long) (facing.length > 1 ? Math.max(0, facing[1]) : 0) & 0xFFFFFFFFL)
+          | ((long) (facing.length > 2 ? Math.max(0, facing[2]) : 0) << 32);
+      batchRegData[idx + 6] = ((long) (facing.length > 3 ? Math.max(0, facing[3]) : 0) & 0xFFFFFFFFL)
+          | ((long) (facing.length > 4 ? Math.max(0, facing[4]) : 0) << 32);
+      batchRegData[idx + 7] = ((long) (facing.length > 5 ? Math.max(0, facing[5]) : 0) & 0xFFFFFFFFL)
+          | ((long) (facing.length > 6 ? Math.max(0, facing[6]) : 0) << 32);
+      batchRegData[idx + 8] = mesh.lodTier;
+      batchRegCount++;
+      if (batchRegCount >= BATCH_REG_CAPACITY) {
+        flushCount = batchRegCount;
+        batchRegCount = 0;
+      }
+    }
+    if (flushCount > 0) {
+      try {
+        NativeBridge.nRegisterChunkMeshBatch(flushCount, batchRegData);
+      } catch (Exception ignored) {
+      }
+    }
+  }
+
+  private static byte computeFaceOcclusionMask(int[] paddedBlockStates) {
+    if (paddedBlockStates == null) {
+      return 0;
+    }
+    byte mask = 0;
+    for (Direction dir : ALL_DIRECTIONS) {
+      try {
+        if (isSectionFaceOccluded(paddedBlockStates, dir)) {
+          mask |= (byte) (1 << dir.get3DDataValue());
+        }
+      } catch (Exception ignored) {
+      }
+    }
+    return mask;
+  }
+
+  private static long computeVisibilityMask(int[] paddedBlockStates) {    long mask = 0L;
     if (paddedBlockStates == null)
       return mask;
     for (int y = 0; y < SECTION_SIZE; y++) {

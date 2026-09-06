@@ -88,7 +88,7 @@ public class MetalRenderClient implements ClientModInitializer {
       NativeBridge.nSetFeatureFlags(config.enableIndirectCommandBuffers,
           config.enableMeshShaders, useArgBufs,
           config.enableProgrammableBlending);
-      
+
     }
 
     MetalWorldRenderer wr = worldRenderer;

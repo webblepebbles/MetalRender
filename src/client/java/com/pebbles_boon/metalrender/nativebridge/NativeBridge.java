@@ -136,6 +136,9 @@ public final class NativeBridge {
 
   public static native void nSetWaterFog(long frameContext, float waterFog);
 
+  public static native void nSetFog(float r, float g, float b,
+      float envStart, float envEnd, float renderStart, float renderEnd);
+
   public static native void nSetSkyBrightness(long frameContext,
       float brightness);
 
@@ -184,7 +187,6 @@ public final class NativeBridge {
 
   public static native void nSetLodRecencyEnabled(boolean enabled);
 
-  
   public static native int nGetLodDrawnFrames(long[] outKeys, int[] outFrames);
 
   public static native boolean nIsGPUDrivenActive();

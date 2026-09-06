@@ -78,6 +78,14 @@ public class WorldRendererBlitMixin {
       }
       CapturedMatrices.capture(metalrender$projection, metalrender$modelView,
           camPos.x, camPos.y, camPos.z);
+      try {
+        com.pebbles_boon.metalrender.render.fog.VanillaFog.FogState fog =
+            com.pebbles_boon.metalrender.render.fog.VanillaFog.fromRenderState(cameraRenderState);
+        if (fog != null) {
+          worldRenderer.setFogState(fog);
+        }
+      } catch (Exception ignored) {
+      }
       worldRenderer.beginFrame(camera, tickDelta, metalrender$projection,
           metalrender$modelView, camPos.x, camPos.y, camPos.z);
       com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance().startRender();

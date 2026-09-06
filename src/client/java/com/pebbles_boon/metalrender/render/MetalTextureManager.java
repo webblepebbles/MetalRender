@@ -32,6 +32,9 @@ public class MetalTextureManager {
 
   private static final int ATLAS_MIN_UPLOAD_INTERVAL = 1;
   private static final int ATLAS_HEARTBEAT_FRAMES = 1800;
+
+  private static final long ATLAS_MIN_UPLOAD_INTERVAL_MS = 50L;
+  private long lastAtlasUploadMs = 0L;
   private static final int ATLAS_DIFF_TILE = 16;
   private static final int ATLAS_MAX_REGION_TILES = 256;
   private static final int LIGHTMAP_MIN_UPLOAD_INTERVAL = 2;
@@ -127,6 +130,11 @@ public class MetalTextureManager {
       return;
     if (!atlasDirty && atlasFramesSinceUpload < ATLAS_HEARTBEAT_FRAMES)
       return;
+    long nowMs = System.currentTimeMillis();
+    if (atlasDirty && nowMs - lastAtlasUploadMs < ATLAS_MIN_UPLOAD_INTERVAL_MS) {
+      return;
+    }
+    lastAtlasUploadMs = nowMs;
     atlasFramesSinceUpload = 0;
     atlasDirty = false;
     int mipLevels = currentMipmapLevels();
@@ -399,6 +407,7 @@ public class MetalTextureManager {
     atlasPixelBuffer = null;
     lightmapPixelBuffer = null;
     atlasFramesSinceUpload = 0;
+    lastAtlasUploadMs = 0L;
     atlasDirty = true;
   }
 }

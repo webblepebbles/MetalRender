@@ -36,6 +36,7 @@ public final class MetalRenderConfig {
   public boolean enableProgrammableBlending = false;
   public boolean enableIndirectCommandBuffers = true;
   public boolean enableCameraFacingCulling = true;
+  public boolean enableOcclusionCulling = true;
   private static volatile boolean mirrorUploads = true;
   private static volatile boolean swapOpaque = false;
   private static volatile boolean swapCutout = false;
@@ -113,6 +114,8 @@ public final class MetalRenderConfig {
           cfg.enableIndirectCommandBuffers = obj.get("enableIndirectCommandBuffers").getAsBoolean();
         if (obj.has("enableCameraFacingCulling"))
           cfg.enableCameraFacingCulling = obj.get("enableCameraFacingCulling").getAsBoolean();
+        if (obj.has("enableOcclusionCulling"))
+          cfg.enableOcclusionCulling = obj.get("enableOcclusionCulling").getAsBoolean();
 
         if (obj.has("hiddenFluidCulling"))
           cfg.hiddenFluidCulling = obj.get("hiddenFluidCulling").getAsBoolean();
@@ -202,6 +205,7 @@ public final class MetalRenderConfig {
       obj.addProperty("enableProgrammableBlending", enableProgrammableBlending);
       obj.addProperty("enableIndirectCommandBuffers", enableIndirectCommandBuffers);
       obj.addProperty("enableCameraFacingCulling", enableCameraFacingCulling);
+      obj.addProperty("enableOcclusionCulling", enableOcclusionCulling);
       obj.addProperty("hiddenFluidCulling", hiddenFluidCulling);
       obj.addProperty("improvedFluidShaping", improvedFluidShaping);
       obj.addProperty("closestPointEntitySort", closestPointEntitySort);

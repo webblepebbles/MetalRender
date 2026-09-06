@@ -5,44 +5,40 @@ import it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap;
 public final class LodPolicy {
   public enum Decision { KEEP, UPGRADE, DOWNGRADE }
 
-  
   public static final int UPGRADE_CREDENTIAL_SCANS = 2;
-  
+
   public static final int DOWNGRADE_HOLDOFF_SCANS = 40;
-  
+
   public static final int STALE_DEMOTE_SCANS = 60;
-  
+
   public static final float IN_VIEW_SCORE = 0.25f;
-  
+
   public static final int STATE_MAX_AGE_SCANS = 900;
-  
+
   public static final int PRUNE_INTERVAL_SCANS = 64;
 
-  
   public static final int MAX_UPGRADES_PER_PASS = 16;
-  
+
   public static final int BUDGET_TARGET_PENDING = 64;
-  
+
   public static final double MESH_MS_HARD_CAP = 8.0;
-  
+
   public static final double MESH_MS_EXTREME_CAP = 14.0;
 
-  
   public static final int SKELETON_BACKLOG_MEDIUM = 384;
-  
+
   public static final int SKELETON_BACKLOG_HEAVY = 1024;
 
-  
   public static final int RECENCY_STALE_TICKS = 120;
 
   public static final class ChunkState {
-    
+
     public int visibleStreak;
-    
+
     public int staleScans;
-    
+
     public int lastUpgradeScan = Integer.MIN_VALUE;
-    
+
     public int lastTouchedScan = Integer.MIN_VALUE;
   }
 
@@ -54,7 +50,6 @@ public final class LodPolicy {
   private boolean viewImpactEnabled = true;
   private boolean stickyEnabled = true;
 
-  
   private int upgradesQueued;
   private int downgradesQueued;
   private int deferredNotVisible;
@@ -69,7 +64,6 @@ public final class LodPolicy {
     this.stickyEnabled = sticky;
   }
 
-  
   public int beginScan() {
     if (scanIndex == Integer.MAX_VALUE) {
       renormalizeStamps();
@@ -80,7 +74,6 @@ public final class LodPolicy {
     return scanIndex;
   }
 
-  
   public float computeViewScore(float dx, float dz, float forwardX, float forwardZ,
       float distSq) {
     float inv = (float) (1.0 / Math.sqrt((double) distSq + 1.0));
@@ -88,14 +81,12 @@ public final class LodPolicy {
     return Math.max(0.0f, dot);
   }
 
-  
   public float computeUpgradeImpact(float viewScore, float distSq, int quadCount) {
     float proximity = 1.0f / (1.0f + distSq * 0.00005f);
     float weight = 1.0f + Math.min(1.0f, quadCount / 16384.0f);
     return viewScore * proximity * weight;
   }
 
-  
   public int computeUpgradeBudget(int pending, int inFlight, double ewmaMeshMs) {
     int depth = pending + inFlight;
     double fillness = 1.0 - Math.min(1.0, Math.max(0.0,
@@ -109,7 +100,6 @@ public final class LodPolicy {
     return budget;
   }
 
-  
   public int computeSkeletonTierCap(int pending, int inFlight) {
     int backlog = pending + inFlight;
     if (backlog >= SKELETON_BACKLOG_HEAVY) {
@@ -121,7 +111,6 @@ public final class LodPolicy {
     return 0;
   }
 
-  
   public Decision observeAndDecide(long key, int currentTier, int ringTier,
       boolean visible, float viewScore, boolean demotionIdle) {
     ChunkState state = states.get(key);
@@ -222,7 +211,6 @@ public final class LodPolicy {
     }
   }
 
-  
   private void renormalizeStamps() {
     var iter = states.long2ObjectEntrySet().fastIterator();
     while (iter.hasNext()) {
@@ -236,7 +224,6 @@ public final class LodPolicy {
     }
   }
 
-  
   public void clear() {
     states.clear();
     scanIndex = 0;
@@ -275,7 +262,6 @@ public final class LodPolicy {
     return deferredBusy;
   }
 
-  
   public void resetDiagnostics() {
     upgradesQueued = 0;
     downgradesQueued = 0;

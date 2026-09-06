@@ -828,7 +828,6 @@ public class MetalRenderSettingsScreen extends Screen {
     return Component.translatable("options.framerate", fpsLimit);
   }
 
-
   private int totalH() {
     return totalContentHeight;
   }

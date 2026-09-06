@@ -325,6 +325,15 @@ static int g_prof_count = 0;
 static const int kProfileEmitInterval = 240;
 static id<MTLTexture> g_entityTexture = nil;
 static float g_entityOverlayParams[4] = {0, 0, 0, 1};
+
+static float g_fogColor[4] = {0.0f, 0.0f, 0.0f, 1.0f};
+static float g_fogRanges[4] = {60000.0f, 60000.0f, 60000.0f, 60000.0f};
+struct FogUniformsCPU {
+  float color[4];
+  float ranges[4];
+};
+static FogUniformsCPU g_fogUniforms = {{0.0f, 0.0f, 0.0f, 1.0f},
+                                       {60000.0f, 60000.0f, 60000.0f, 60000.0f}};
 static float g_entityTintColor[4] = {1, 1, 1, 1};
 static id<MTLIndirectCommandBuffer> g_icb[3] = {};
 
@@ -501,8 +510,6 @@ static int g_staleOffsetCapacity = 0;
 static bool g_hasStaleDrawList = false;
 static double g_staleCamX = 0, g_staleCamY = 0, g_staleCamZ = 0;
 
-
-
 static bool g_lodRecencyEnabled = false;
 static std::unordered_map<int64_t, int> g_lastDrawnFrame;
 static std::mutex g_lodRecencyMutex;
@@ -620,7 +627,12 @@ struct CameraUniformsCPU {
   uint32_t totalChunks;
   float waterFog;
   float cameraSpeed;
+  float _padFog[3];
+  float fogColor[4];
+  float fogRanges[4];
 };
+static_assert(sizeof(CameraUniformsCPU) == 384,
+              "CameraUniformsCPU must match the Metal CameraUniforms layout");
 
 struct ChunkMeshletNative {
   uint32_t baseVertexOffset;
@@ -968,6 +980,30 @@ static void load_shaders() {
     NSString *shaderSource = @R"(
 #include <metal_stdlib>
 using namespace metal;
+struct FogUniforms {
+	float4 color;
+	float4 ranges;
+};
+inline float vanilla_linear_fog(float dist, float start, float end) {
+	if (end <= start) {
+		return 0.0f;
+	}
+	if (dist <= start) {
+		return 0.0f;
+	} else if (dist >= end) {
+		return 1.0f;
+	}
+	return (dist - start) / (end - start);
+}
+inline float vanilla_fog_factor(float2 sphCyl, constant FogUniforms& fog) {
+	float env = vanilla_linear_fog(sphCyl.x, fog.ranges.x, fog.ranges.y);
+	float ren = vanilla_linear_fog(sphCyl.y, fog.ranges.z, fog.ranges.w);
+	return max(env, ren);
+}
+inline float3 vanilla_apply_fog(float3 rgb, float2 sphCyl, constant FogUniforms& fog) {
+	float f = vanilla_fog_factor(sphCyl, fog);
+	return mix(rgb, fog.color.rgb, f * fog.color.a);
+}
 struct InhouseTerrainVertex {
 	packed_short3 position;
 	packed_ushort2 texCoord;
@@ -982,7 +1018,7 @@ struct SimpleVertexOut {
 	half light;
 	float3 worldPos;
 	uint normalIdx [[flat]];
-	half fogDist;
+	half2 fogSphCyl;
 };
 vertex SimpleVertexOut vertex_terrain_inhouse(
 	device const InhouseTerrainVertex* vertices   [[buffer(0)]],
@@ -1016,13 +1052,15 @@ vertex SimpleVertexOut vertex_terrain_inhouse(
 	out.light    = half(max(blockLight, skyLight * cameraPosition.w));
 	out.worldPos = worldPos;
 	out.normalIdx = v.normalIndex & 0x7;
-	out.fogDist = half(length(viewPos.xyz));
+	out.fogSphCyl = half2(half(length(viewPos.xyz)),
+		half(max(length(viewPos.xz), abs(viewPos.y))));
 	return out;
 }
 fragment float4 fragment_terrain(
 	SimpleVertexOut in [[stage_in]],
 	texture2d<float> blockAtlas [[texture(0)]],
-	constant float4& overlayParams [[buffer(5)]]
+	constant float4& overlayParams [[buffer(5)]],
+	constant FogUniforms& fog [[buffer(6)]]
 ) {
 	constexpr sampler s(filter::nearest, address::clamp_to_edge);
 	float4 texColor = blockAtlas.sample(s, in.texCoord);
@@ -1036,11 +1074,7 @@ fragment float4 fragment_terrain(
 	}
 	float4 baseColor = texColor * float4(in.color);
 	baseColor.rgb *= max(float(in.light), 0.04f);
-	float waterFog = overlayParams.z;
-	if (waterFog > 0.0) {
-		float fogFactor = clamp(float(in.fogDist) / 48.0, 0.0, 0.85);
-		baseColor.rgb = mix(baseColor.rgb, float3(0.05, 0.12, 0.3), fogFactor * waterFog);
-	}
+	baseColor.rgb = vanilla_apply_fog(baseColor.rgb, float2(in.fogSphCyl), fog);
 	float outAlpha = ca > 0.98 ? 1.0 : ca;
 	return float4(baseColor.rgb, outAlpha);
 }
@@ -1050,7 +1084,8 @@ struct FragmentArgs {
 fragment float4 fragment_terrain_icb(
 	SimpleVertexOut in [[stage_in]],
 	constant FragmentArgs& args [[buffer(0)]],
-	constant float4& overlayParams [[buffer(5)]]
+	constant float4& overlayParams [[buffer(5)]],
+	constant FogUniforms& fog [[buffer(6)]]
 ) {
 	constexpr sampler s(filter::nearest, address::clamp_to_edge);
 	float4 texColor = args.blockAtlas.sample(s, in.texCoord);
@@ -1064,16 +1099,10 @@ fragment float4 fragment_terrain_icb(
 	}
 	float4 baseColor = texColor * float4(in.color);
 	baseColor.rgb *= max(float(in.light), 0.04f);
-	float waterFog = overlayParams.z;
-	if (waterFog > 0.0) {
-		float fogFactor = clamp(float(in.fogDist) / 48.0, 0.0, 0.85);
-		baseColor.rgb = mix(baseColor.rgb, float3(0.05, 0.12, 0.3), fogFactor * waterFog);
-	}
+	baseColor.rgb = vanilla_apply_fog(baseColor.rgb, float2(in.fogSphCyl), fog);
 	float outAlpha = ca > 0.98 ? 1.0 : ca;
 	return float4(baseColor.rgb, outAlpha);
 }
-
-
 
 struct DepthOnlyOut {
 	float4 position [[position]];
@@ -1119,7 +1148,7 @@ struct EntityVertexOut {
 	float2 lightUV;
 	float2 overlay;
 	float3 worldPos;
-	float fogDist;
+	float2 fogSphCyl;
 };
 vertex EntityVertexOut vertex_entity(
 	device const EntityVertex*     vertices    [[buffer(0)]],
@@ -1135,8 +1164,6 @@ vertex EntityVertexOut vertex_entity(
 	out.texCoord = float2(v.texCoord) / 32768.0;
 	out.color    = float4(v.color) / 255.0;
 
-
-
 	float3 rawN = float3(v.normal.xyz);
 	out.normal = normalize(float3(
 		rawN.x > 127.0f ? rawN.x - 256.0f : rawN.x,
@@ -1146,13 +1173,15 @@ vertex EntityVertexOut vertex_entity(
 	out.lightUV  = float2(v.lightUV) / 256.0;
 	out.overlay  = float2(v.overlay.x, v.overlay.y);
 	out.worldPos = pos;
-	out.fogDist  = length(viewPos.xyz);
+	out.fogSphCyl = float2(length(viewPos.xyz),
+		max(length(viewPos.xz), abs(viewPos.y)));
 	return out;
 }
 fragment float4 fragment_entity(
 	EntityVertexOut in [[stage_in]],
 	texture2d<float> entityTex  [[texture(0)]],
-	constant float4& overlayParams [[buffer(5)]]
+	constant float4& overlayParams [[buffer(5)]],
+	constant FogUniforms& fog [[buffer(6)]]
 ) {
 	constexpr sampler texSampler(filter::nearest, address::clamp_to_edge);
 	float4 texColor = entityTex.sample(texSampler, in.texCoord);
@@ -1177,19 +1206,14 @@ fragment float4 fragment_entity(
 			clamp(whiteFlash, 0.0, 1.0));
 	}
 
-	float waterFog = overlayParams.z;
-	if (waterFog > 0.0) {
-		float dist = in.fogDist;
-		float fogFactor = clamp(dist / 32.0, 0.0, 0.85);
-		baseColor.rgb = mix(baseColor.rgb, float3(0.05, 0.12, 0.3), fogFactor);
-		baseColor.a = mix(1.0, 0.3, fogFactor);
-	}
+	baseColor.rgb = vanilla_apply_fog(baseColor.rgb, in.fogSphCyl, fog);
 	return float4(baseColor.rgb, baseColor.a);
 }
 fragment float4 fragment_entity_translucent(
 	EntityVertexOut in [[stage_in]],
 	texture2d<float> entityTex  [[texture(0)]],
-	constant float4& overlayParams [[buffer(5)]]
+	constant float4& overlayParams [[buffer(5)]],
+	constant FogUniforms& fog [[buffer(6)]]
 ) {
 	constexpr sampler texSampler(filter::linear, address::clamp_to_edge);
 	float4 texColor = entityTex.sample(texSampler, in.texCoord);
@@ -1207,13 +1231,7 @@ fragment float4 fragment_entity_translucent(
 			clamp(hurtTime, 0.0, 0.6));
 	}
 
-	float waterFog = overlayParams.z;
-	if (waterFog > 0.0) {
-		float dist = in.fogDist;
-		float fogFactor = clamp(dist / 32.0, 0.0, 0.85);
-		baseColor.rgb = mix(baseColor.rgb, float3(0.05, 0.12, 0.3), fogFactor);
-		baseColor.a *= (1.0 - fogFactor * 0.4);
-	}
+	baseColor.rgb = vanilla_apply_fog(baseColor.rgb, in.fogSphCyl, fog);
 	return baseColor;
 }
 fragment float4 fragment_entity_emissive(
@@ -1228,28 +1246,21 @@ fragment float4 fragment_entity_emissive(
 fragment float4 fragment_particle(
 	EntityVertexOut in [[stage_in]],
 	texture2d<float> entityTex  [[texture(0)]],
-	constant float4& overlayParams [[buffer(5)]]
+	constant float4& overlayParams [[buffer(5)]],
+	constant FogUniforms& fog [[buffer(6)]]
 ) {
 
 	constexpr sampler texSampler(filter::nearest, address::clamp_to_edge);
 	float4 texColor = entityTex.sample(texSampler, in.texCoord);
 
-
 	if (texColor.a < 0.01) discard_fragment();
 	float4 baseColor = texColor * in.color;
-
 
 	float blockLight = clamp(in.lightUV.x, 0.0, 1.0);
 	float skyLight   = clamp(in.lightUV.y * overlayParams.w, 0.0, 1.0);
 	baseColor.rgb *= max(max(blockLight, skyLight), 0.3);
 
-	float waterFog = overlayParams.z;
-	if (waterFog > 0.0) {
-		float dist = in.fogDist;
-		float fogFactor = clamp(dist / 24.0, 0.0, 0.85);
-		baseColor.rgb = mix(baseColor.rgb, float3(0.05, 0.12, 0.3), fogFactor);
-		baseColor.a *= (1.0 - fogFactor * 0.5);
-	}
+	baseColor.rgb = vanilla_apply_fog(baseColor.rgb, in.fogSphCyl, fog);
 	return baseColor;
 }
 
@@ -2775,6 +2786,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBatch(
     [g_currentEncoder setFragmentBytes:g_entityOverlayParams
                                 length:sizeof(g_entityOverlayParams)
                                atIndex:5];
+                                [g_currentEncoder setFragmentBytes:&g_fogUniforms
+                                length:sizeof(g_fogUniforms)
+                               atIndex:6];
     int icbCandidateCount = 0;
     for (int i = 0; i < validCount; i++) {
       const DrawCmd &cmd = cmds[i];
@@ -3600,6 +3614,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       cu->cameraSpeed = 0.0f;
 
       cu->waterFog = g_entityOverlayParams[2];
+      memcpy(cu->fogColor, g_fogColor, sizeof(g_fogColor));
+      memcpy(cu->fogRanges, g_fogRanges, sizeof(g_fogRanges));
 
       int meshletSlot = g_renderSlot % kTripleBufferCount;
       size_t meshletBufNeeded = (size_t)validCount * sizeof(ChunkMeshletNative);
@@ -3739,6 +3755,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
               [g_currentEncoder setFragmentBytes:g_entityOverlayParams
                                           length:sizeof(g_entityOverlayParams)
                                          atIndex:5];
+                                          [g_currentEncoder setFragmentBytes:&g_fogUniforms
+                                          length:sizeof(g_fogUniforms)
+                                         atIndex:6];
               for (int i = 0; i < validCount; i++) {
                 if (s_cmds[i].isMega)
                   continue;
@@ -3874,6 +3893,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
     [g_currentEncoder setFragmentBytes:g_entityOverlayParams
                                 length:sizeof(g_entityOverlayParams)
                                atIndex:5];
+                                [g_currentEncoder setFragmentBytes:&g_fogUniforms
+                                length:sizeof(g_fogUniforms)
+                               atIndex:6];
 
     if (g_useProgrammableBlending) {
       if (g_oitCmdsCapacity < validCount) {
@@ -5352,6 +5374,27 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetWaterFog(
   g_entityOverlayParams[2] = waterFog;
 }
 extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetFog(
+    JNIEnv *, jclass, jfloat r, jfloat g, jfloat b, jfloat envStart,
+    jfloat envEnd, jfloat renderStart, jfloat renderEnd) {
+
+  if (!(r == r) || !(g == g) || !(b == b) || !(envStart == envStart) ||
+      !(envEnd == envEnd) || !(renderStart == renderStart) ||
+      !(renderEnd == renderEnd)) {
+    return;
+  }
+  g_fogColor[0] = r;
+  g_fogColor[1] = g;
+  g_fogColor[2] = b;
+  g_fogColor[3] = 1.0f;
+  g_fogRanges[0] = envStart;
+  g_fogRanges[1] = envEnd;
+  g_fogRanges[2] = renderStart;
+  g_fogRanges[3] = renderEnd;
+  memcpy(g_fogUniforms.color, g_fogColor, sizeof(g_fogColor));
+  memcpy(g_fogUniforms.ranges, g_fogRanges, sizeof(g_fogRanges));
+}
+extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetSkyBrightness(
     JNIEnv *, jclass, jlong frameContext, jfloat brightness) {
   (void)frameContext;
@@ -5423,6 +5466,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawEntityBuffer(
   [g_currentEncoder setFragmentBytes:g_entityOverlayParams
                               length:sizeof(g_entityOverlayParams)
                              atIndex:5];
+                              [g_currentEncoder setFragmentBytes:&g_fogUniforms
+                              length:sizeof(g_fogUniforms)
+                             atIndex:6];
   if (g_entityTexture) {
     [g_currentEncoder setFragmentTexture:g_entityTexture atIndex:0];
   } else {
@@ -5476,6 +5522,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawEntityBufferIn
   [g_currentEncoder setFragmentBytes:g_entityOverlayParams
                               length:sizeof(g_entityOverlayParams)
                              atIndex:5];
+                              [g_currentEncoder setFragmentBytes:&g_fogUniforms
+                              length:sizeof(g_fogUniforms)
+                             atIndex:6];
   if (g_entityTexture) {
     [g_currentEncoder setFragmentTexture:g_entityTexture atIndex:0];
   } else if (g_blockAtlas) {
@@ -5525,6 +5574,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUploadCameraUnifor
   u->hizMipCount = g_useMemorylessTargets ? 0 : g_hizMipCount;
   u->totalChunks = (uint32_t)totalChunks;
   u->waterFog = g_entityOverlayParams[2];
+  memcpy(u->fogColor, g_fogColor, sizeof(g_fogColor));
+  memcpy(u->fogRanges, g_fogRanges, sizeof(g_fogRanges));
 }
 extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUploadSubChunkData(
@@ -5714,6 +5765,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRunGPUCulling(
   cam->hizMipCount = g_hizMipCount;
   cam->totalChunks = count;
   cam->waterFog = g_entityOverlayParams[2];
+  memcpy(cam->fogColor, g_fogColor, sizeof(g_fogColor));
+  memcpy(cam->fogRanges, g_fogRanges, sizeof(g_fogRanges));
   {
     double dcx = g_camX - g_hizCamX;
     double dcy = g_camY - g_hizCamY;
@@ -5797,6 +5850,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nExecuteGpuCulledDr
   [g_currentEncoder setFragmentBytes:g_entityOverlayParams
                               length:sizeof(g_entityOverlayParams)
                              atIndex:5];
+                              [g_currentEncoder setFragmentBytes:&g_fogUniforms
+                              length:sizeof(g_fogUniforms)
+                             atIndex:6];
 
   struct SubChunkCPU {
     float aabbMin[4];
@@ -5940,6 +5996,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawDeferredWaterP
     [g_currentEncoder setFragmentBytes:g_entityOverlayParams
                                 length:sizeof(g_entityOverlayParams)
                                atIndex:5];
+                                [g_currentEncoder setFragmentBytes:&g_fogUniforms
+                                length:sizeof(g_fogUniforms)
+                               atIndex:6];
     [g_currentEncoder setDepthStencilState:g_depthStateNoWrite];
     [g_currentEncoder setCullMode:MTLCullModeNone];
     [g_currentEncoder setDepthBias:0.0f slopeScale:0.0f clamp:0.0f];
