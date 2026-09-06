@@ -3,7 +3,6 @@ package com.pebbles_boon.metalrender.config;
 public final class MetalRenderConfig {
   public boolean enableMetalRendering = true;
   public boolean enableDebugOverlay = false;
-  public boolean debugPinkBlockTint = false;
   public int leafCullingMode = 1;
   public int biomeTransitionDetail = 2;
   public int targetFrameRate = 300;
@@ -37,15 +36,10 @@ public final class MetalRenderConfig {
   public boolean enableIndirectCommandBuffers = true;
   public boolean enableCameraFacingCulling = true;
   public boolean enableOcclusionCulling = true;
-  private static volatile boolean mirrorUploads = true;
-  private static volatile boolean swapOpaque = false;
-  private static volatile boolean swapCutout = false;
-  private static volatile boolean swapTranslucent = false;
   private static volatile float resolutionScale = 1.0f;
   private static volatile boolean adaptiveResolutionEnabled = true;
   private static volatile boolean metalFXTemporalEnabled = true;
   private static volatile boolean deepDebugActive = false;
-  private static volatile boolean debugPinkBlockTintEnabled = false;
 
   private static java.nio.file.Path configFile() {
     return net.fabricmc.loader.api.FabricLoader.getInstance()
@@ -83,8 +77,6 @@ public final class MetalRenderConfig {
           cfg.enableMetalRendering = obj.get("enableMetalRendering").getAsBoolean();
         if (obj.has("enableDebugOverlay"))
           cfg.enableDebugOverlay = obj.get("enableDebugOverlay").getAsBoolean();
-        if (obj.has("debugPinkBlockTint"))
-          cfg.debugPinkBlockTint = obj.get("debugPinkBlockTint").getAsBoolean();
         if (obj.has("leafCullingMode"))
           cfg.leafCullingMode = obj.get("leafCullingMode").getAsInt();
         if (obj.has("biomeTransitionDetail"))
@@ -161,19 +153,12 @@ public final class MetalRenderConfig {
 
     }
 
-    applyStableQualityFallback(cfg);
-    setDebugPinkBlockTint(cfg.debugPinkBlockTint);
-
     cfg.loadFeatureFlags();
     loadFromSystemProperties();
     return cfg;
   }
 
   private MetalRenderConfig() {
-  }
-
-  private static void applyStableQualityFallback(MetalRenderConfig cfg) {
-    resolutionScale = 1.0f;
   }
 
   public void save() {
@@ -189,7 +174,6 @@ public final class MetalRenderConfig {
       com.google.gson.JsonObject obj = new com.google.gson.JsonObject();
       obj.addProperty("enableMetalRendering", enableMetalRendering);
       obj.addProperty("enableDebugOverlay", enableDebugOverlay);
-      obj.addProperty("debugPinkBlockTint", debugPinkBlockTint);
       obj.addProperty("leafCullingMode", leafCullingMode);
       obj.addProperty("biomeTransitionDetail", biomeTransitionDetail);
       obj.addProperty("targetFrameRate", targetFrameRate);
@@ -233,32 +217,12 @@ public final class MetalRenderConfig {
     }
   }
 
-  public static boolean mirrorUploads() {
-    return mirrorUploads;
-  }
-
-  public static boolean swapOpaque() {
-    return swapOpaque;
-  }
-
-  public static boolean swapCutout() {
-    return swapCutout;
-  }
-
-  public static boolean swapTranslucent() {
-    return swapTranslucent;
-  }
-
   public static float resolutionScale() {
     return resolutionScale;
   }
 
   public static boolean isDeepDebugActive() {
     return deepDebugActive;
-  }
-
-  public static boolean debugPinkBlockTint() {
-    return debugPinkBlockTintEnabled;
   }
 
   public static boolean isOneRunDeepDebugRequested() {
@@ -283,22 +247,6 @@ public final class MetalRenderConfig {
     }
   }
 
-  public static void setMirrorUploads(boolean v) {
-    mirrorUploads = v;
-  }
-
-  public static void setSwapOpaque(boolean v) {
-    swapOpaque = v;
-  }
-
-  public static void setSwapCutout(boolean v) {
-    swapCutout = v;
-  }
-
-  public static void setSwapTranslucent(boolean v) {
-    swapTranslucent = v;
-  }
-
   public static void setResolutionScale(float v) {
     resolutionScale = clamp(v, 0.20f, 1.5f);
   }
@@ -319,15 +267,7 @@ public final class MetalRenderConfig {
     metalFXTemporalEnabled = v;
   }
 
-  public static void setDebugPinkBlockTint(boolean v) {
-    debugPinkBlockTintEnabled = v;
-  }
-
   public static void loadFromSystemProperties() {
-    mirrorUploads = getBool("metalrender.mirror", mirrorUploads);
-    swapOpaque = getBool("metalrender.swap.opaque", swapOpaque);
-    swapCutout = getBool("metalrender.swap.cutout", swapCutout);
-    swapTranslucent = getBool("metalrender.swap.translucent", swapTranslucent);
     resolutionScale = getFloat("metalrender.render.resolutionScale", resolutionScale);
   }
 
