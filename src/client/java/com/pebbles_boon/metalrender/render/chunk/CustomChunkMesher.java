@@ -609,6 +609,13 @@ public class CustomChunkMesher {
     }
   }
 
+  public long getSectionAvailableNanos(int cx, int cy, int cz) {
+    long key = packChunkKey(cx, cy, cz);
+    synchronized (pendingVisibleSectionNanos) {
+      return pendingVisibleSectionNanos.getOrDefault(key, 0L);
+    }
+  }
+
   public void noteBlockUpdate(int cx, int cy, int cz) {
     long key = packChunkKey(cx, cy, cz);
     synchronized (pendingBlockUpdateNanos) {
@@ -1100,6 +1107,17 @@ public class CustomChunkMesher {
     skyLightLayers = new net.minecraft.world.level.chunk.DataLayer[27];
     lightLayerResolved = new boolean[27];
 
+    boolean checkStaleLight = false;
+    int snapshotSkyDarken = 0;
+    try {
+      if (world.dimensionType().hasSkyLight()) {
+        snapshotSkyDarken = world.getSkyDarken();
+        checkStaleLight = snapshotSkyDarken <= 0;
+      }
+    } catch (Exception ignored) {
+      checkStaleLight = false;
+    }
+
     boolean coarseTint = lodTier >= 2;
     int[] coarseTintState = coarseTint ? new int[64] : null;
     int[] coarseTint0 = coarseTint ? new int[64] : null;
@@ -1184,6 +1202,23 @@ public class CustomChunkMesher {
                 : blockLightListener.getLightValue(mutablePos);
             sl = skyLayer != null ? skyLayer.get(wx & 15, wy & 15, wz & 15)
                 : skyLightListener.getLightValue(mutablePos);
+          }
+          if (checkStaleLight && bl == 0 && sl == 0 && stateId == 0
+              && px > 0 && px < PADDED_SIZE - 1
+              && py > 0 && py < PADDED_SIZE - 1
+              && pz > 0 && pz < PADDED_SIZE - 1
+              && paddedBlockStates[pIdx - 1] == 0
+              && paddedBlockStates[pIdx + 1] == 0
+              && paddedBlockStates[pIdx - PADDED_SIZE] == 0
+              && paddedBlockStates[pIdx + PADDED_SIZE] == 0
+              && paddedBlockStates[pIdx - PADDED_SIZE * PADDED_SIZE] == 0
+              && paddedBlockStates[pIdx + PADDED_SIZE * PADDED_SIZE] == 0) {
+            int liveBl = blockLightListener.getLightValue(mutablePos);
+            int liveSl = skyLightListener.getLightValue(mutablePos);
+            if (liveBl != 0 || liveSl != 0) {
+              bl = liveBl;
+              sl = liveSl;
+            }
           }
           paddedLight[pIdx] = (byte) ((bl & 0xF) | ((sl & 0xF) << 4));
 
@@ -1539,7 +1574,22 @@ public class CustomChunkMesher {
       this.chunkZ = chunkZ;
       this.lodTier = lodTier;
       MetalRenderConfig cfg = MetalRenderClient.getConfig();
-      this.smoothLightingEnabled = cfg == null || cfg.smoothLighting;
+      this.smoothLightingEnabled = (cfg == null || cfg.smoothLighting)
+          && vanillaSmoothLightingEnabled();
+    }
+
+    private static boolean vanillaSmoothLightingEnabled() {
+      try {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc != null && mc.options != null && mc.options.ambientOcclusion() != null) {
+          Object v = mc.options.ambientOcclusion().get();
+          if (v instanceof Boolean b) {
+            return b;
+          }
+        }
+      } catch (Exception ignored) {
+      }
+      return true;
     }
 
     void build() {
@@ -1674,6 +1724,62 @@ public class CustomChunkMesher {
           Float.compare(sprite.getV1(), overlay.getV1()) == 0;
     }
 
+    private boolean isCrossLike(BlockState state, BlockStateModel model, RandomSource random,
+        BlockPos pos, int lx, int ly, int lz) {
+      try {
+        if (state.isAir() || state.isSolidRender()) {
+          return false;
+        }
+        if (state.getRenderShape() != net.minecraft.world.level.block.RenderShape.MODEL) {
+          return false;
+        }
+        java.util.ArrayList<BlockStateModelPart> parts = PARTS_POOL.get();
+        int savedSize = parts.size();
+        try {
+          random.setSeed(state.getSeed(pos));
+        } catch (RuntimeException ignored) {
+        }
+        model.collectParts(random, parts);
+        try {
+          for (int i = savedSize; i < parts.size(); i++) {
+            BlockStateModelPart part = parts.get(i);
+            if (part == null) {
+              continue;
+            }
+            for (Direction direction : ALL_DIRECTIONS) {
+              List<BakedQuad> quads;
+              try {
+                quads = part.getQuads(direction);
+              } catch (RuntimeException ignored) {
+                continue;
+              }
+              if (quads == null || quads.isEmpty()) {
+                continue;
+              }
+              boolean anyKept = false;
+              for (BakedQuad quad : quads) {
+                if (quad == null) {
+                  continue;
+                }
+                anyKept = true;
+                break;
+              }
+              if (anyKept && !shouldCullFace(lx, ly, lz, direction, state)) {
+                return false;
+              }
+            }
+          }
+        } finally {
+          while (parts.size() > savedSize) {
+            parts.remove(parts.size() - 1);
+          }
+        }
+        return true;
+      } catch (Exception ignored) {
+        return false;
+      }
+    }
+
     private void renderBlockModel(BlockStateModel model, BlockState state, BlockPos pos,
         int lx, int ly, int lz, RandomSource random) {
 
@@ -1684,6 +1790,7 @@ public class CustomChunkMesher {
       } catch (RuntimeException ignored) {
         blockEmitsLight = false;
       }
+      boolean crossLike = isCrossLike(state, model, random, pos, lx, ly, lz);
       try {
         random.setSeed(state.getSeed(pos));
         java.util.ArrayList<BlockStateModelPart> parts = PARTS_POOL.get();
@@ -1699,7 +1806,7 @@ public class CustomChunkMesher {
           } catch (RuntimeException ignored) {
             partAO = true;
           }
-          boolean forceFlat = !partAO || blockEmitsLight;
+          boolean forceFlat = crossLike || !partAO || blockEmitsLight;
           for (Direction direction : ALL_DIRECTIONS) {
             List<BakedQuad> quads;
             try {
@@ -1711,7 +1818,7 @@ public class CustomChunkMesher {
               continue;
             for (BakedQuad quad : quads) {
               if (quad != null) {
-                emitBakedQuad(quad, lx, ly, lz, state, false, forceFlat);
+                emitBakedQuad(quad, lx, ly, lz, state, false, forceFlat, crossLike);
               }
             }
           }
@@ -1720,7 +1827,7 @@ public class CustomChunkMesher {
             if (noCull != null) {
               for (BakedQuad quad : noCull) {
                 if (quad != null) {
-                  emitBakedQuad(quad, lx, ly, lz, state, false, forceFlat);
+                  emitBakedQuad(quad, lx, ly, lz, state, false, true, crossLike);
                 }
               }
             }
@@ -2072,7 +2179,7 @@ public class CustomChunkMesher {
     }
 
     private void emitBakedQuad(BakedQuad quad, int lx, int ly, int lz,
-        BlockState state, boolean water, boolean forceFlat) {
+        BlockState state, boolean water, boolean forceFlat, boolean crossLike) {
       ByteBuffer target = water ? waterBuffer : solidBuffer;
       Direction face = quad.direction();
       byte normalIndex = (byte) (face != null ? face.get3DDataValue() : 6);
@@ -2151,9 +2258,19 @@ public class CustomChunkMesher {
           ao = 1.0f;
         } else {
           computeVertexLighting(lx, ly, lz, face, faceCubic, pos.x(), pos.y(),
-              pos.z(), quad.materialInfo().lightEmission());
+              pos.z(), quad.materialInfo().lightEmission(), forceFlat);
           light = (byte) ((computedBlock & 0xF) | ((computedSky & 0xF) << 4));
           ao = computedAO;
+          if (crossLike) {
+            byte above = getPaddedLight(lx, ly + 1, lz);
+            int bl = Math.max(light & 0xF, above & 0xF);
+            int sl = Math.max((light >> 4) & 0xF, (above >> 4) & 0xF);
+            int emission = quad.materialInfo().lightEmission();
+            if (emission > 0) {
+              bl = Math.max(bl, Math.min(15, emission));
+            }
+            light = (byte) ((bl & 0xF) | ((sl & 0xF) << 4));
+          }
         }
 
         float fr, fg, fb;
@@ -2203,8 +2320,8 @@ public class CustomChunkMesher {
     private float computedAO;
 
     private void computeVertexLighting(int lx, int ly, int lz, Direction face,
-        boolean faceCubic, float vx, float vy, float vz, int emission) {
-      if (lodTier == 0 && face != null && smoothLightingEnabled) {
+        boolean faceCubic, float vx, float vy, float vz, int emission, boolean flatLight) {
+      if (!flatLight && lodTier == 0 && face != null && smoothLightingEnabled) {
         computeSmoothLightAndAO(lx, ly, lz, face, faceCubic, vx, vy, vz, emission);
         return;
       }

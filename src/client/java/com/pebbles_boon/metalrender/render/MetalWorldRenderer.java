@@ -29,6 +29,8 @@ import net.minecraft.client.Camera;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.core.BlockPos;
+import net.minecraft.core.SectionPos;
+import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.level.chunk.LevelChunk;
 import net.minecraft.world.level.chunk.LevelChunkSection;
@@ -143,6 +145,9 @@ public class MetalWorldRenderer {
   private int subChunkUploadCapacity = 4096;
   private long argumentBufferHandle;
   private it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap readinessCache;
+  private it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap lightReadinessCache;
+  private static final long LIGHT_GRACE_NANOS = 1_500_000_000L;
+  private long lastLightWaitLogMs;
   private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap delayedBlockRebuildFrames =
       new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
   private final int[] cameraFacingCullStats = new int[3];
@@ -173,6 +178,7 @@ public class MetalWorldRenderer {
     this.particleRenderer = new MetalParticleRenderer();
     this.chunkMesher = new CustomChunkMesher();
     this.readinessCache = new it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap();
+    this.lightReadinessCache = new it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap();
     this.delayedBlockRebuildFrames.defaultReturnValue(Integer.MIN_VALUE);
     MetalRenderer renderer = MetalRenderClient.getRenderer();
     long device = renderer != null ? renderer.getBackend().getDeviceHandle() : 0;
@@ -257,6 +263,7 @@ public class MetalWorldRenderer {
     ioSurfaceBlitter.destroy();
     chunkMesher.clear();
     clearOcclusionState();
+    vanillaAOTracked = false;
     lodRingPlayerCX = Integer.MIN_VALUE;
     lodRingPlayerCZ = Integer.MIN_VALUE;
     lodRingMeshGen = Integer.MIN_VALUE;
@@ -300,6 +307,23 @@ public class MetalWorldRenderer {
       return;
     Minecraft mc = Minecraft.getInstance();
     maxMeshes = shouldPinLoadedMeshes(mc) ? PINNED_MAX_MESHES : DEFAULT_MAX_MESHES;
+    try {
+      boolean vanillaAO = true;
+      if (mc != null && mc.options != null && mc.options.ambientOcclusion() != null) {
+        Object v = mc.options.ambientOcclusion().get();
+        if (v instanceof Boolean b) {
+          vanillaAO = b;
+        }
+      }
+      if (vanillaAOTracked && vanillaAO != lastVanillaAO) {
+        chunkMesher.markAllDirty();
+        MetalLogger.info("vanilla AO toggled (%s); rebuilding meshes to match",
+            vanillaAO ? "on" : "off");
+      }
+      lastVanillaAO = vanillaAO;
+      vanillaAOTracked = true;
+    } catch (Exception ignored) {
+    }
     int w = mc.getWindow().getWidth();
     int h = mc.getWindow().getHeight();
     int refreshRate = mc.getWindow().getRefreshRate();
@@ -745,6 +769,8 @@ public class MetalWorldRenderer {
 
   private int lastResizeW = -1;
   private int lastResizeH = -1;
+  private boolean lastVanillaAO = true;
+  private boolean vanillaAOTracked = false;
 
   private float fogR = 0.0f;
   private float fogG = 0.0f;
@@ -1175,6 +1201,8 @@ public class MetalWorldRenderer {
     if (pendingBuildSet.isEmpty())
       return 0;
     readinessCache.clear();
+    lightReadinessCache.clear();
+    int lightSkipped = 0;
     if (sortedListDirty) {
       int currentSize = pendingBuildSet.size();
       int sortInterval = currentSize > 25000 ? 30
@@ -1305,6 +1333,11 @@ public class MetalWorldRenderer {
             index++;
             continue;
           }
+          if (!isSectionLightReady(world, cx, cy, cz)) {
+            lightSkipped++;
+            index++;
+            continue;
+          }
           PendingBuildCandidate candidate = new PendingBuildCandidate(
               key, index, cx, cy, cz, chunkDist);
           boolean ringBoost = lodRingBoostKeys.contains(key);
@@ -1407,6 +1440,11 @@ public class MetalWorldRenderer {
           built, importantSubmitted, backgroundSubmissions,
           pendingBuildSet.size(), chunkMesher.getPendingCount(),
           chunkMesher.getMeshCount(), budgetNanos);
+    }
+    if (lightSkipped > 0 && System.currentTimeMillis() - lastLightWaitLogMs >= 5000) {
+      lastLightWaitLogMs = System.currentTimeMillis();
+      MetalLogger.info("light_wait: %d sections held for skylight data (p=%d)",
+          lightSkipped, pendingBuildSet.size());
     }
     return built;
   }
@@ -2199,6 +2237,7 @@ public class MetalWorldRenderer {
     }
     chunkMesher.clearAllMeshes();
     clearOcclusionState();
+    vanillaAOTracked = false;
     lodRingPlayerCX = Integer.MIN_VALUE;
     lodRingPlayerCZ = Integer.MIN_VALUE;
     lodRingMeshGen = Integer.MIN_VALUE;
@@ -2265,6 +2304,7 @@ public class MetalWorldRenderer {
       if (highPrioritySection && immediateBuildChunk && mc != null &&
           mc.level != null &&
           isSectionBuildReady(mc.level, chunkX, worldY, chunkZ) &&
+          isSectionLightReady(mc.level, chunkX, worldY, chunkZ) &&
           !chunkMesher.hasMesh(chunkX, worldY, chunkZ)) {
         if (!chunkMesher.buildMeshFromWorld(chunkX, worldY, chunkZ, false, true)) {
           enqueueSectionBuild(chunkX, worldY, chunkZ);
@@ -2310,7 +2350,8 @@ public class MetalWorldRenderer {
       MetalRenderProfiler.getInstance().incrementChunksScanned(1);
       int worldY = chunk.getSectionYFromSectionIndex(sy);
       if (!chunkMesher.hasMesh(chunkX, worldY, chunkZ) &&
-          isSectionBuildReady(mc.level, chunkX, worldY, chunkZ)) {
+          isSectionBuildReady(mc.level, chunkX, worldY, chunkZ) &&
+          isSectionLightReady(mc.level, chunkX, worldY, chunkZ)) {
         chunkMesher.noteSectionAvailable(chunkX, worldY, chunkZ);
         if (pendingBuildSet.add(packChunkKey(chunkX, worldY, chunkZ))) {
           sortedListDirty = true;
@@ -2375,6 +2416,59 @@ public class MetalWorldRenderer {
     }
     readinessCache.put(pKey, true);
     return true;
+  }
+
+  private boolean isSectionLightReady(ClientLevel world, int chunkX, int chunkY,
+      int chunkZ) {
+    long key = packChunkKey(chunkX, chunkY, chunkZ);
+    if (lightReadinessCache.containsKey(key)) {
+      return lightReadinessCache.get(key);
+    }
+    boolean ready = isSectionLightReadyUncached(world, chunkX, chunkY, chunkZ);
+    lightReadinessCache.put(key, ready);
+    return ready;
+  }
+
+  private boolean isSectionLightReadyUncached(ClientLevel world, int chunkX,
+      int chunkY, int chunkZ) {
+    try {
+      if (!world.dimensionType().hasSkyLight()) {
+        return true;
+      }
+      var skyListener = world.getChunkSource().getLightEngine()
+          .getLayerListener(LightLayer.SKY);
+      if (skyListener == null) {
+        return true;
+      }
+      if (skyListener.getDataLayerData(SectionPos.of(chunkX, chunkY, chunkZ)) != null) {
+        return true;
+      }
+    } catch (Exception ignored) {
+      return true;
+    }
+    long firstSeen = chunkMesher.getSectionAvailableNanos(chunkX, chunkY, chunkZ);
+    return firstSeen == 0L || System.nanoTime() - firstSeen >= LIGHT_GRACE_NANOS;
+  }
+
+  public void onLightDataApplied(int chunkX, int chunkY, int chunkZ) {
+    if (!worldLoaded || !renderingActive) {
+      return;
+    }
+    try {
+      if (!RenderSystem.isOnRenderThread()) {
+        return;
+      }
+    } catch (Exception ignored) {
+      return;
+    }
+    try {
+      if (chunkMesher.hasMeshIgnoreDirty(chunkX, chunkY, chunkZ)
+          || chunkMesher.isBuildPending(chunkX, chunkY, chunkZ)) {
+        chunkMesher.markDirty(chunkX, chunkY, chunkZ);
+        enqueueSectionBuild(chunkX, chunkY, chunkZ);
+      }
+    } catch (Exception ignored) {
+    }
   }
 
   private static long readinessColumnKey(int chunkX, int chunkZ) {
