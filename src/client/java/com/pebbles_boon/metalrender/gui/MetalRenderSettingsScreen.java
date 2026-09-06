@@ -96,7 +96,6 @@ public class MetalRenderSettingsScreen extends Screen {
   private int initialBiomeDetail;
   private int initialLeafCulling;
   private boolean initialMetalOn;
-  private boolean initialDebugPinkBlockTint;
   private boolean initialCameraFacingCulling;
   private boolean initialClusterFrustumCulling;
   private boolean initialGpuTranslucencySort;
@@ -169,7 +168,6 @@ public class MetalRenderSettingsScreen extends Screen {
     initialLeafCulling = config.leafCullingMode;
     initialSmoothLighting = config.smoothLighting;
     initialMetalOn = config.enableMetalRendering;
-    initialDebugPinkBlockTint = config.debugPinkBlockTint;
     initialCameraFacingCulling = config.enableCameraFacingCulling;
     initialClusterFrustumCulling = config.enableClusterFrustumCulling;
     initialGpuTranslucencySort = config.enableGpuTranslucencySort;
@@ -509,7 +507,6 @@ public class MetalRenderSettingsScreen extends Screen {
         || (config.biomeTransitionDetail != initialBiomeDetail)
         || (config.leafCullingMode != initialLeafCulling)
         || (config.smoothLighting != initialSmoothLighting)
-        || (config.debugPinkBlockTint != initialDebugPinkBlockTint)
         || (config.enableDistanceLod != initialDistanceLod)
         || (config.lodNearChunks != initialLodNearChunks)
         || (config.lodMidChunks != initialLodMidChunks);
@@ -553,7 +550,6 @@ public class MetalRenderSettingsScreen extends Screen {
     config.targetFrameRate = pendingTargetFps;
     config.maxMemoryMB = pendingMaxMemMb;
     MetalRenderConfig.setOneRunDeepDebugRequested(pendingDeepDebugNextRun);
-    MetalRenderConfig.setDebugPinkBlockTint(config.debugPinkBlockTint);
   }
 
   private void rebuild() {
@@ -641,19 +637,18 @@ public class MetalRenderSettingsScreen extends Screen {
   private void buildMetal() {
     sec("Renderer");
     tog("Metal Rendering", config.enableMetalRendering, v -> config.enableMetalRendering = v);
-    tog("Debug: Pink Block Tint", config.debugPinkBlockTint, v -> config.debugPinkBlockTint = v);
     if (MetalRenderConfig.isDeepDebugActive()) {
-      nfo("Deep Debug Status", "Active this run");
+      infoRow("Deep Debug Status", "Active this run");
     } else {
       tog("Deep Debug Next Run", pendingDeepDebugNextRun, v -> pendingDeepDebugNextRun = v);
-      nfo("Deep Debug Status", pendingDeepDebugNextRun ? "Armed for next launch" : "Off");
+      infoRow("Deep Debug Status", pendingDeepDebugNextRun ? "Armed for next launch" : "Off");
     }
     sec("Hardware");
-    nfo("GPU", MetalHardwareChecker.getDeviceName());
-    nfo("Metal", MetalRenderClient.isMetalAvailable() ? "Supported" : "Not Available");
-    nfo("Apple Silicon", MetalHardwareChecker.appleSilicon() ? "Yes" : "No");
-    nfo("Sodium", MetalRenderClient.isSodiumLoaded() ? "Installed" : "Not Installed");
-    nfo("Mesh Shaders", MetalHardwareChecker.supportsMeshShaders() ? "Supported" : "Not Available");
+    infoRow("GPU", MetalHardwareChecker.getDeviceName());
+    infoRow("Metal", MetalRenderClient.isMetalAvailable() ? "Supported" : "Not Available");
+    infoRow("Apple Silicon", MetalHardwareChecker.appleSilicon() ? "Yes" : "No");
+    infoRow("Sodium", MetalRenderClient.isSodiumLoaded() ? "Installed" : "Not Installed");
+    infoRow("Mesh Shaders", MetalHardwareChecker.supportsMeshShaders() ? "Supported" : "Not Available");
   }
 
   private void buildQuality() {
@@ -720,12 +715,12 @@ public class MetalRenderSettingsScreen extends Screen {
     tog("Triple Buffering", config.enableTripleBuffering, v -> config.enableTripleBuffering = v);
     tog("Burst Thread Mode", config.enableBurstThreadMode, v -> config.enableBurstThreadMode = v);
     tog("Sacrifice TPS for FPS", config.prioritizeFpsOverTps, v -> config.prioritizeFpsOverTps = v);
-    nfo("FPS Priority Mode", config.prioritizeFpsOverTps ? "Simulation Distance <= 5" : "Off");
+    infoRow("FPS Priority Mode", config.prioritizeFpsOverTps ? "Simulation Distance <= 5" : "Off");
     tog("Adaptive Resolution", MetalRenderConfig.isAdaptiveResolutionEnabled(),
         MetalRenderConfig::setAdaptiveResolutionEnabled);
     tog("Temporal MetalFX", MetalRenderConfig.isMetalFXTemporalEnabled(),
         MetalRenderConfig::setMetalFXTemporalEnabled);
-    nfo("MetalFX Mode", MetalRenderConfig.isMetalFXTemporalEnabled() ? "Temporal" : "Spatial");
+    infoRow("MetalFX Mode", MetalRenderConfig.isMetalFXTemporalEnabled() ? "Temporal" : "Spatial");
     sld(MetalRenderConfig.isAdaptiveResolutionEnabled()
         ? "Resolution Scale (auto)"
         : "Resolution Scale",
@@ -739,7 +734,7 @@ public class MetalRenderSettingsScreen extends Screen {
     Runtime rt = Runtime.getRuntime();
     long used = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024);
     long max = rt.maxMemory() / (1024 * 1024);
-    nfo("Heap Usage", used + " / " + max + " MB");
+    infoRow("Heap Usage", used + " / " + max + " MB");
   }
 
   private void buildAdvanced() {
@@ -779,7 +774,7 @@ public class MetalRenderSettingsScreen extends Screen {
     rows.add(r);
   }
 
-  private void nfo(String label, String value) {
+  private void infoRow(String label, String value) {
     Row r = new Row(RT.INFO, label);
     r.value = value;
     rows.add(r);
