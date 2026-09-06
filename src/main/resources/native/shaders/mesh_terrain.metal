@@ -2,7 +2,6 @@
 #include <metal_mesh>
 using namespace metal;
 
-
 struct CameraUniforms {
     float4x4 viewProjection;
     float4x4 projection;
@@ -17,8 +16,30 @@ struct CameraUniforms {
     uint     totalChunks;
     float    waterFog;
     float    cameraSpeed;
+    float4   fogColor;
+    float4   fogRanges;
 };
 
+inline float vanilla_linear_fog(float dist, float start, float end) {
+    if (end <= start) {
+        return 0.0f;
+    }
+    if (dist <= start) {
+        return 0.0f;
+    } else if (dist >= end) {
+        return 1.0f;
+    }
+    return (dist - start) / (end - start);
+}
+inline float vanilla_fog_factor(float2 sphCyl, float4 ranges) {
+    float env = vanilla_linear_fog(sphCyl.x, ranges.x, ranges.y);
+    float ren = vanilla_linear_fog(sphCyl.y, ranges.z, ranges.w);
+    return max(env, ren);
+}
+inline half3 vanilla_apply_fog(half3 rgb, float2 sphCyl, float4 color, float4 ranges) {
+    float f = vanilla_fog_factor(sphCyl, ranges);
+    return mix(rgb, half3(color.rgb), half(f * color.a));
+}
 
 struct ChunkMeshlet {
     uint  baseVertexOffset;
@@ -35,7 +56,6 @@ struct ChunkMeshlet {
     uint  _pad[3];
 };
 
-
 struct InhouseTerrainVertex {
     packed_short3  position;
     packed_ushort2 texCoord;
@@ -44,28 +64,17 @@ struct InhouseTerrainVertex {
     uchar          normalIndex;
 };
 
-
-
-
 struct MeshVertexOut {
     float4 position    [[position]];
     float2 texCoord;
     half2  lightUV;
     half4  color;
-    half   fogDist;
+    half2  fogSphCyl;
 };
-
 
 struct MeshletPayload {
     uint chunkIndex;
 };
-
-
-
-
-
-
-
 
 [[object, max_total_threads_per_threadgroup(1)]]
 void object_terrain(
@@ -87,7 +96,7 @@ void object_terrain(
 
     float3 minC = float3(m.worldX, m.worldY, m.worldZ);
     float3 maxC = minC + float3(16.0, 16.0, 16.0);
-    for (uint i = 0u; i < 4u; i++) {
+    for (uint i = 0u; i < 6u; i++) {
         float4 plane = camera.frustumPlanes[i];
         float3 pv;
         pv.x = (plane.x > 0.0) ? maxC.x : minC.x;
@@ -102,14 +111,6 @@ void object_terrain(
     uint numGroups = (m.visibleVertexCount + 255u) / 256u;
     grid.set_threadgroups_per_grid(uint3(numGroups, 1, 1));
 }
-
-
-
-
-
-
-
-
 
 constant uint kMaxMeshVerts = 256u;
 constant uint kMaxMeshTris  = 128u;
@@ -173,7 +174,9 @@ void mesh_terrain(
         uint pl      = uint(v.packedLight);
         out.lightUV  = half2((float((pl & 0xFu) * 16) + 8.0) / 256.0,
                              (float(((pl >> 4u) & 0xFu) * 16) + 8.0) / 256.0);
-        out.fogDist  = half(dot(viewPos.xyz, viewPos.xyz));
+        float sphDist = length(viewPos.xyz);
+        float cylDist = max(length(viewPos.xz), abs(viewPos.y));
+        out.fogSphCyl = half2(half(sphDist), half(cylDist));
         output.set_vertex(tid, out);
     }
 
@@ -188,24 +191,18 @@ void mesh_terrain(
     }
 }
 
-
-
-
-
 fragment half4 fragment_terrain_mesh_opaque(
     MeshVertexOut in [[stage_in]],
     texture2d<half> blockAtlas [[texture(0)]],
     texture2d<half> lightmap   [[texture(1)]],
     constant CameraUniforms& camera [[buffer(1)]]
 ) {
-    constexpr sampler s(mag_filter::nearest, min_filter::linear,
-                        mip_filter::linear);
     constexpr sampler lightSampler(mag_filter::linear, min_filter::linear,
                                    mip_filter::nearest, address::clamp_to_edge);
+    constexpr sampler s(mag_filter::nearest, min_filter::linear,
+                        mip_filter::linear);
     half4 tex = blockAtlas.sample(s, float2(in.texCoord));
     half  va  = in.color.a;
-
-
 
     if (tex.a < half(0.5h)) {
         if (va > half(0.994h) && va < half(0.998h)) {
@@ -219,10 +216,7 @@ fragment half4 fragment_terrain_mesh_opaque(
     half3 light = lightmap.sample(lightSampler, float2(in.lightUV)).rgb;
     col.rgb *= max(light, half3(0.04h));
 
-    if (camera.waterFog > 0.0f) {
-        half fog = clamp(half(sqrt((float)in.fogDist)) / half(32.0h), half(0.0h), half(0.85h));
-        col.rgb  = mix(col.rgb, half3(0.05h, 0.12h, 0.3h), fog);
-    }
+    col.rgb = vanilla_apply_fog(col.rgb, float2(in.fogSphCyl), camera.fogColor, camera.fogRanges);
     return half4(col.rgb, half(1.0h));
 }
 
@@ -232,19 +226,16 @@ fragment half4 fragment_terrain_mesh_cutout(
     texture2d<half> lightmap   [[texture(1)]],
     constant CameraUniforms& camera [[buffer(1)]]
 ) {
-    constexpr sampler s(mag_filter::nearest, min_filter::linear,
-                        mip_filter::linear);
     constexpr sampler lightSampler(mag_filter::linear, min_filter::linear,
                                    mip_filter::nearest, address::clamp_to_edge);
+    constexpr sampler s(mag_filter::nearest, min_filter::linear,
+                        mip_filter::linear);
     half4 tex = blockAtlas.sample(s, float2(in.texCoord));
     if (tex.a < half(0.5h)) discard_fragment();
     half4 col = tex * in.color;
     half3 light = lightmap.sample(lightSampler, float2(in.lightUV)).rgb;
     col.rgb *= max(light, half3(0.04h));
-    if (camera.waterFog > 0.0f) {
-        half fog = clamp(half(sqrt((float)in.fogDist)) / half(32.0h), half(0.0h), half(0.85h));
-        col.rgb  = mix(col.rgb, half3(0.05h, 0.12h, 0.3h), fog);
-    }
+    col.rgb = vanilla_apply_fog(col.rgb, float2(in.fogSphCyl), camera.fogColor, camera.fogRanges);
     return half4(col.rgb, half(1.0h));
 }
 
@@ -259,9 +250,6 @@ fragment half4 fragment_terrain_mesh_emissive(
     if (tex.a < half(0.1h)) discard_fragment();
     half4 col = tex * in.color;
 
-    if (camera.waterFog > 0.0f) {
-        half fog = clamp(half(sqrt((float)in.fogDist)) / half(32.0h), half(0.0h), half(0.85h));
-        col.rgb  = mix(col.rgb, half3(0.05h, 0.12h, 0.3h), fog);
-    }
+    col.rgb = vanilla_apply_fog(col.rgb, float2(in.fogSphCyl), camera.fogColor, camera.fogRanges);
     return col;
 }

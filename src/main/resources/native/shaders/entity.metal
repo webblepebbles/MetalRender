@@ -1,5 +1,30 @@
 #include <metal_stdlib>
 using namespace metal;
+
+struct FogUniforms {
+    float4 color;
+    float4 ranges;
+};
+inline float vanilla_linear_fog(float dist, float start, float end) {
+    if (end <= start) {
+        return 0.0f;
+    }
+    if (dist <= start) {
+        return 0.0f;
+    } else if (dist >= end) {
+        return 1.0f;
+    }
+    return (dist - start) / (end - start);
+}
+inline float vanilla_fog_factor(float2 sphCyl, constant FogUniforms& fog) {
+    float env = vanilla_linear_fog(sphCyl.x, fog.ranges.x, fog.ranges.y);
+    float ren = vanilla_linear_fog(sphCyl.y, fog.ranges.z, fog.ranges.w);
+    return max(env, ren);
+}
+inline float3 vanilla_apply_fog(float3 rgb, float2 sphCyl, constant FogUniforms& fog) {
+    float f = vanilla_fog_factor(sphCyl, fog);
+    return mix(rgb, fog.color.rgb, f * fog.color.a);
+}
 struct EntityVertex {
     packed_float3 position;
     packed_short2 texCoord;
@@ -15,7 +40,7 @@ struct EntityVertexOut {
     float3 normal;
     float2 lightUV;
     float2 overlay;
-    float  viewDistance;
+    float2 fogSphCyl;
 };
 struct EntityInstanceData {
     float4x4 modelMatrix;
@@ -40,14 +65,13 @@ vertex EntityVertexOut vertex_entity(
     out.texCoord = float2(v.texCoord) / 32768.0;
     out.color    = float4(v.color) / 255.0;
 
-
-
     out.normal   = normalize(float3((int8_t)v.normal.x,
                                     (int8_t)v.normal.y,
                                     (int8_t)v.normal.z) / 127.0f);
     out.lightUV  = float2(v.lightUV) / 256.0;
     out.overlay  = float2(v.overlay.x, v.overlay.y);
-    out.viewDistance = length(viewPos.xyz);
+    out.fogSphCyl = float2(length(viewPos.xyz),
+        max(length(viewPos.xz), abs(viewPos.y)));
     return out;
 }
 vertex EntityVertexOut vertex_entity_instanced(
@@ -72,14 +96,16 @@ vertex EntityVertexOut vertex_entity_instanced(
                                                                (int8_t)v.normal.z) / 127.0f, 0.0)).xyz);
     out.lightUV  = float2(v.lightUV) / 256.0;
     out.overlay  = inst.overlayParams.xy;
-    out.viewDistance = length(viewPos.xyz);
+    out.fogSphCyl = float2(length(viewPos.xyz),
+        max(length(viewPos.xz), abs(viewPos.y)));
     return out;
 }
 fragment float4 fragment_entity(
     EntityVertexOut in [[stage_in]],
     texture2d<float> entityTex  [[texture(0)]],
     texture2d<float> lightmap   [[texture(1)]],
-    constant float4& overlayParams [[buffer(5)]]
+    constant float4& overlayParams [[buffer(5)]],
+    constant FogUniforms& fog [[buffer(6)]]
 ) {
     constexpr sampler texSampler(filter::nearest, address::clamp_to_edge);
     float4 texColor = entityTex.sample(texSampler, in.texCoord);
@@ -100,20 +126,15 @@ fragment float4 fragment_entity(
         baseColor.rgb = mix(baseColor.rgb, float3(1.0), clamp(whiteFlash, 0.0, 1.0));
     }
 
-    float waterFog = overlayParams.z;
-    if (waterFog > 0.0) {
-        float dist = in.viewDistance;
-        float fogFactor = clamp(dist / 32.0, 0.0, 0.85);
-        baseColor.rgb = mix(baseColor.rgb, float3(0.05, 0.12, 0.3), fogFactor);
-        baseColor.a = mix(baseColor.a, 0.3, fogFactor);
-    }
+    baseColor.rgb = vanilla_apply_fog(baseColor.rgb, in.fogSphCyl, fog);
     return float4(baseColor.rgb, baseColor.a);
 }
 fragment float4 fragment_entity_translucent(
     EntityVertexOut in [[stage_in]],
     texture2d<float> entityTex  [[texture(0)]],
     texture2d<float> lightmap   [[texture(1)]],
-    constant float4& overlayParams [[buffer(5)]]
+    constant float4& overlayParams [[buffer(5)]],
+    constant FogUniforms& fog [[buffer(6)]]
 ) {
     constexpr sampler texSampler(filter::linear, address::clamp_to_edge);
     float4 texColor = entityTex.sample(texSampler, in.texCoord);
@@ -128,13 +149,7 @@ fragment float4 fragment_entity_translucent(
     if (hurtTime > 0.0) {
         baseColor.rgb = mix(baseColor.rgb, float3(1.0, 0.0, 0.0), clamp(hurtTime, 0.0, 0.6));
     }
-    float waterFog = overlayParams.z;
-    if (waterFog > 0.0) {
-        float dist = in.viewDistance;
-        float fogFactor = clamp(dist / 32.0, 0.0, 0.85);
-        baseColor.rgb = mix(baseColor.rgb, float3(0.05, 0.12, 0.3), fogFactor);
-        baseColor.a *= (1.0 - fogFactor * 0.4);
-    }
+    baseColor.rgb = vanilla_apply_fog(baseColor.rgb, in.fogSphCyl, fog);
     return baseColor;
 }
 fragment float4 fragment_entity_emissive(
@@ -162,23 +177,17 @@ fragment float4 fragment_particle(
     EntityVertexOut in [[stage_in]],
     texture2d<float> entityTex  [[texture(0)]],
     texture2d<float> lightmap   [[texture(1)]],
-    constant float4& overlayParams [[buffer(5)]]
+    constant float4& overlayParams [[buffer(5)]],
+    constant FogUniforms& fog [[buffer(6)]]
 ) {
     constexpr sampler texSampler(filter::nearest, mip_filter::nearest, address::clamp_to_edge);
     float4 texColor = entityTex.sample(texSampler, in.texCoord);
-
 
     if (texColor.a < 0.01) discard_fragment();
     float4 baseColor = texColor * in.color;
     float4 light = lightmap.sample(texSampler, in.lightUV);
     baseColor.rgb *= light.rgb;
-    float waterFog = overlayParams.z;
-    if (waterFog > 0.0) {
-        float dist = in.viewDistance;
-        float fogFactor = clamp(dist / 24.0, 0.0, 0.85);
-        baseColor.rgb = mix(baseColor.rgb, float3(0.05, 0.12, 0.3), fogFactor);
-        baseColor.a *= (1.0 - fogFactor * 0.5);
-    }
+    baseColor.rgb = vanilla_apply_fog(baseColor.rgb, in.fogSphCyl, fog);
     return baseColor;
 }
 fragment float4 fragment_entity_shadow(
