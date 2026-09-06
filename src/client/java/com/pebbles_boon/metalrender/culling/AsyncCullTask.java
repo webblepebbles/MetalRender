@@ -13,7 +13,6 @@ public class AsyncCullTask {
   private static final String THREAD_NAME_PREFIX = "a system thread";
 
   private static final AtomicLong handleCounter = new AtomicLong(0);
-  private static final AtomicLong staleFrames = new AtomicLong(0);
   private static final AtomicReference<CullResult> latestRef = new AtomicReference<>();
 
   private static final ThreadLocal<FrustumCuller> WORKER_CULLER = ThreadLocal.withInitial(FrustumCuller::new);
@@ -39,7 +38,6 @@ public class AsyncCullTask {
         do {
           prev = latestRef.get();
           if (prev != null && prev.handle >= handle) {
-            staleFrames.incrementAndGet();
             return;
           }
         } while (!latestRef.compareAndSet(prev, result));
@@ -61,10 +59,6 @@ public class AsyncCullTask {
   public static void reset() {
     latestRef.set(null);
     handleCounter.set(0);
-  }
-
-  public static int getStaleFrames() {
-    return (int) staleFrames.get();
   }
 
   public static void shutdown() {
