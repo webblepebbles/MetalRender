@@ -5,13 +5,6 @@ import org.slf4j.Logger;
 
 public final class MetalHardwareChecker {
   private static final Logger LOGGER = LogUtils.getLogger();
-  private static volatile Boolean compatible = null;
-  private static volatile boolean checkScheduled = false;
-
-  public static boolean isCompatible() {
-    scheduleCheck();
-    return compatible == null || compatible;
-  }
 
   public static boolean isMetalSupported() {
     try {
@@ -39,29 +32,8 @@ public final class MetalHardwareChecker {
     }
   }
 
-  public static boolean isAppleSilicon() {
+  public static boolean appleSilicon() {
     String arch = System.getProperty("os.arch", "").toLowerCase();
     return arch.contains("aarch64") || arch.contains("arm64");
-  }
-
-  public static boolean appleSilicon() {
-    return isAppleSilicon();
-  }
-
-  public static void showIncompatibleScreen() {
-  }
-
-  private static void scheduleCheck() {
-    if (compatible != null || checkScheduled)
-      return;
-    checkScheduled = true;
-    try {
-      compatible = true;
-    } catch (UnsatisfiedLinkError | IllegalArgumentException e) {
-      compatible = true;
-      LOGGER.warn("[MetalRender] Could not schedule GL capability check, "
-          + "allowing fallback",
-          e);
-    }
   }
 }
