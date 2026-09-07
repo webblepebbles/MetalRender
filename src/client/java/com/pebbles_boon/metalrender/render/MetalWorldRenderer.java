@@ -364,6 +364,7 @@ public class MetalWorldRenderer {
       boolean textureSyncPressure = pendingBuildSet.size() >= TEXTURE_SYNC_PRESSURE_THRESHOLD ||
           chunkMesher.getPendingCount() >= TEXTURE_SYNC_PRESSURE_THRESHOLD;
       updateTextureBackoffState();
+      textureManager.setAtlasBackoffActive(textureBackoffActive);
       textureManager.updateBlockAtlas();
       int lightmapInterval;
       if (textureBackoffActive) {

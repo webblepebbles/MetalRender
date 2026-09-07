@@ -33,10 +33,14 @@ public class MetalTextureManager {
   private static final int ATLAS_MIN_UPLOAD_INTERVAL = 1;
   private static final int ATLAS_HEARTBEAT_FRAMES = 1800;
 
-  private static final long ATLAS_MIN_UPLOAD_INTERVAL_MS = 50L;
+  private static final long ATLAS_MIN_UPLOAD_INTERVAL_MS = 100L;
+  private static final long ATLAS_BACKOFF_INTERVAL_MS = 400L;
+  private static final double ATLAS_ADAPTIVE_COST_THRESHOLD_MS = 1.5;
+  private static final double ATLAS_ADAPTIVE_DELAY_SCALE = 60.0;
+  private static final long ATLAS_ADAPTIVE_MAX_DELAY_MS = 700L;
   private long lastAtlasUploadMs = 0L;
-  private static final int ATLAS_DIFF_TILE = 16;
-  private static final int ATLAS_MAX_REGION_TILES = 256;
+  private boolean atlasBackoffActive;
+  private long atlasExtraDelayMs;
   private static final int LIGHTMAP_MIN_UPLOAD_INTERVAL = 2;
   private static final long LIGHTMAP_MIN_GAME_TIME_DELTA = 4L;
   private int atlasFramesSinceUpload = 0;
@@ -131,7 +135,11 @@ public class MetalTextureManager {
     if (!atlasDirty && atlasFramesSinceUpload < ATLAS_HEARTBEAT_FRAMES)
       return;
     long nowMs = System.currentTimeMillis();
-    if (atlasDirty && nowMs - lastAtlasUploadMs < ATLAS_MIN_UPLOAD_INTERVAL_MS) {
+    long minIntervalMs = atlasBackoffActive
+        ? ATLAS_BACKOFF_INTERVAL_MS
+        : ATLAS_MIN_UPLOAD_INTERVAL_MS;
+    if (atlasDirty &&
+        nowMs - lastAtlasUploadMs < minIntervalMs + atlasExtraDelayMs) {
       return;
     }
     lastAtlasUploadMs = nowMs;
@@ -173,6 +181,7 @@ public class MetalTextureManager {
         atlasPixelBuffer = BufferUtils.createByteBuffer(dataSize);
       }
       atlasPixelBuffer.clear();
+      long syncStartNs = System.nanoTime();
       GL11.glGetTexImage(GL11.GL_TEXTURE_2D, 0, GL11.GL_RGBA,
           GL11.GL_UNSIGNED_BYTE, atlasPixelBuffer);
       GL11.glBindTexture(GL11.GL_TEXTURE_2D, prevTex);
@@ -181,13 +190,15 @@ public class MetalTextureManager {
       }
       atlasPixelBuffer.get(atlasReadbackScratch, 0, dataSize);
       uploadAtlasDiff(width, height, dataSize);
+      trackAtlasSyncCost(syncStartNs);
     } catch (Exception e) {
     }
   }
 
   private void uploadAtlasDiff(int width, int height, int dataSize) {
     byte[] fresh = atlasReadbackScratch;
-    if (atlasUploadData == null || atlasUploadData.length != dataSize) {
+    byte[] mirror = atlasUploadData;
+    if (mirror == null || mirror.length != dataSize) {
       NativeBridge.nUpdateTexture2D(blockAtlasTexture, width, height, fresh);
       if (atlasUploadData == null || atlasUploadData.length < dataSize) {
         atlasUploadData = new byte[dataSize];
@@ -195,67 +206,87 @@ public class MetalTextureManager {
       System.arraycopy(fresh, 0, atlasUploadData, 0, dataSize);
       return;
     }
-    byte[] mirror = atlasUploadData;
-    int tile = ATLAS_DIFF_TILE;
-    int tilesX = (width + tile - 1) / tile;
-    int tilesY = (height + tile - 1) / tile;
-    if (tilesX <= 0 || tilesY <= 0) {
-      NativeBridge.nUpdateTexture2D(blockAtlasTexture, width, height, fresh);
-      System.arraycopy(fresh, 0, mirror, 0, dataSize);
-      return;
-    }
-    java.util.ArrayList<int[]> dirtyBands = new java.util.ArrayList<>();
-    int dirtyTiles = 0;
-    for (int ty = 0; ty < tilesY; ty++) {
-      int bandMinX = Integer.MAX_VALUE;
-      int bandMaxX = -1;
-      for (int tx = 0; tx < tilesX; tx++) {
-        int tileX = tx * tile;
-        int tileY = ty * tile;
-        int tileWidth = Math.min(tile, width - tileX);
-        int tileHeight = Math.min(tile, height - tileY);
-        boolean changed = false;
-        for (int row = 0; row < tileHeight; row++) {
-          int off = ((tileY + row) * width + tileX) * 4;
-          int rowBytes = tileWidth * 4;
-          if (!java.util.Arrays.equals(mirror, off, off + rowBytes, fresh, off,
-              off + rowBytes)) {
-            changed = true;
+    int rowBytes = width * 4;
+    int dirtyRows = 0;
+    java.util.ArrayList<int[]> dirtySpans = new java.util.ArrayList<>(8);
+    int spanStart = -1;
+    int slabRows = 16;
+    int slabBytes = rowBytes * slabRows;
+    for (int row = 0; row < height; ) {
+      int rowsLeft = height - row;
+      boolean slabDirty;
+      if (rowsLeft >= slabRows) {
+        int off = row * rowBytes;
+        slabDirty = !java.util.Arrays.equals(mirror, off, off + slabBytes,
+            fresh, off, off + slabBytes);
+      } else {
+        slabDirty = false;
+        for (int r = row; r < height; r++) {
+          int rOff = r * rowBytes;
+          if (!java.util.Arrays.equals(mirror, rOff, rOff + rowBytes, fresh,
+              rOff, rOff + rowBytes)) {
+            slabDirty = true;
             break;
           }
         }
-        if (changed) {
-          dirtyTiles++;
-          if (tx < bandMinX) {
-            bandMinX = tx;
+      }
+      if (!slabDirty) {
+        if (spanStart >= 0) {
+          dirtySpans.add(new int[] { spanStart, row });
+          spanStart = -1;
+        }
+        row += rowsLeft >= slabRows ? slabRows : rowsLeft;
+        continue;
+      }
+      int slabEnd = Math.min(height, row + slabRows);
+      for (int r = row; r < slabEnd; r++) {
+        int rOff = r * rowBytes;
+        boolean rowDirty = !java.util.Arrays.equals(mirror, rOff,
+            rOff + rowBytes, fresh, rOff, rOff + rowBytes);
+        if (rowDirty) {
+          dirtyRows++;
+          if (spanStart < 0) {
+            spanStart = r;
           }
-          if (tx > bandMaxX) {
-            bandMaxX = tx;
-          }
+        } else if (spanStart >= 0) {
+          dirtySpans.add(new int[] { spanStart, r });
+          spanStart = -1;
         }
       }
-      if (bandMaxX >= 0) {
-        dirtyBands.add(new int[] { ty, bandMinX, bandMaxX });
-        if (dirtyTiles > ATLAS_MAX_REGION_TILES) {
-          break;
-        }
-      }
+      row = slabEnd;
     }
-    if (dirtyTiles == 0) {
+    if (spanStart >= 0) {
+      dirtySpans.add(new int[] { spanStart, height });
+    }
+    if (dirtySpans.isEmpty()) {
       return;
     }
-    if (dirtyTiles <= ATLAS_MAX_REGION_TILES) {
-      for (int[] band : dirtyBands) {
-        int y0 = band[0] * tile;
-        int x0 = band[1] * tile;
-        int x1 = Math.min(width, (band[2] + 1) * tile);
-        NativeBridge.nUpdateTexture2DRegion(blockAtlasTexture, width, x0, y0,
-            x1 - x0, tile, fresh);
-      }
-    } else {
-      NativeBridge.nUpdateTexture2D(blockAtlasTexture, width, height, fresh);
+    for (int[] span : dirtySpans) {
+      int y0 = span[0];
+      int y1 = span[1];
+      NativeBridge.nUpdateTexture2DRegion(blockAtlasTexture, width, 0, y0,
+          width, y1 - y0, fresh);
     }
-    System.arraycopy(fresh, 0, mirror, 0, dataSize);
+    if (dirtyRows > 0) {
+      System.arraycopy(fresh, 0, mirror, 0, dataSize);
+    }
+  }
+
+  private void trackAtlasSyncCost(long syncStartNs) {
+    double costMs = (System.nanoTime() - syncStartNs) / 1_000_000.0;
+    if (costMs > ATLAS_ADAPTIVE_COST_THRESHOLD_MS) {
+      long extra = (long) ((costMs - ATLAS_ADAPTIVE_COST_THRESHOLD_MS)
+          * ATLAS_ADAPTIVE_DELAY_SCALE);
+      atlasExtraDelayMs = Math.min(ATLAS_ADAPTIVE_MAX_DELAY_MS, extra);
+      MetalLogger.deepInfo("atlas_sync cost=%.1fms next_in=%.0fms", costMs,
+          ATLAS_MIN_UPLOAD_INTERVAL_MS + atlasExtraDelayMs);
+    } else {
+      atlasExtraDelayMs = 0;
+    }
+  }
+
+  public void setAtlasBackoffActive(boolean backoff) {
+    atlasBackoffActive = backoff;
   }
 
   public void updateLightmap() {
@@ -408,6 +439,8 @@ public class MetalTextureManager {
     lightmapPixelBuffer = null;
     atlasFramesSinceUpload = 0;
     lastAtlasUploadMs = 0L;
+    atlasBackoffActive = false;
+    atlasExtraDelayMs = 0L;
     atlasDirty = true;
   }
 }
