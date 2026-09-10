@@ -2,6 +2,7 @@ package com.pebbles_boon.metalrender.sodium.mixins;
 
 import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
+import com.pebbles_boon.metalrender.render.chunk.CustomChunkMesher;
 import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.LightLayer;
 import net.minecraft.world.level.lighting.LevelLightEngine;
@@ -25,7 +26,9 @@ public class LightUpdateMixin {
       if (worldRenderer == null) {
         return;
       }
-      worldRenderer.onLightDataApplied(pos.getX(), pos.getY(), pos.getZ());
+      worldRenderer.onLightDataApplied(pos.getX(), pos.getY(), pos.getZ(),
+          layer == LightLayer.SKY, data != null,
+          CustomChunkMesher.hashDataLayer(data));
     } catch (Exception ignored) {
     }
   }
