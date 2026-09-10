@@ -2499,6 +2499,10 @@ public class MetalWorldRenderer {
   }
 
   public void onLightDataApplied(int chunkX, int chunkY, int chunkZ) {
+    onLightDataApplied(chunkX, chunkY, chunkZ, false, false, 0L);
+  }
+  public void onLightDataApplied(int chunkX, int chunkY, int chunkZ,
+      boolean skyLayer, boolean hasData, long incomingHash) {
     if (!worldLoaded || !renderingActive) {
       return;
     }
@@ -2510,8 +2514,12 @@ public class MetalWorldRenderer {
       return;
     }
     try {
-      if (chunkMesher.hasMeshIgnoreDirty(chunkX, chunkY, chunkZ)
-          || chunkMesher.isBuildPending(chunkX, chunkY, chunkZ)) {
+      if (!chunkMesher.hasMeshIgnoreDirty(chunkX, chunkY, chunkZ)
+          && !chunkMesher.isBuildPending(chunkX, chunkY, chunkZ)) {
+        return;
+      }
+      if (chunkMesher.shouldRebuildForLight(chunkX, chunkY, chunkZ, skyLayer,
+          incomingHash, hasData)) {
         chunkMesher.contentChanged(chunkX, chunkY, chunkZ);
         enqueueSectionBuild(chunkX, chunkY, chunkZ);
       }

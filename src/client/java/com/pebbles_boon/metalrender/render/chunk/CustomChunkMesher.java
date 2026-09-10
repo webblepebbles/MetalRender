@@ -220,6 +220,8 @@ public class CustomChunkMesher {
   private final java.util.concurrent.ThreadPoolExecutor backgroundPool;
 
   private final Long2LongOpenHashMap dirtyGeneration = new Long2LongOpenHashMap();
+  private final Long2LongOpenHashMap builtBlockLightHashByKey = new Long2LongOpenHashMap();
+  private final Long2LongOpenHashMap builtSkyLightHashByKey = new Long2LongOpenHashMap();
   private final java.util.concurrent.atomic.AtomicLong globalBuildGeneration = new java.util.concurrent.atomic.AtomicLong();
   private final Long2LongOpenHashMap pendingVisibleSectionNanos = new Long2LongOpenHashMap();
   private final Long2LongOpenHashMap pendingBlockUpdateNanos = new Long2LongOpenHashMap();
@@ -250,6 +252,8 @@ public class CustomChunkMesher {
   public CustomChunkMesher() {
     this.meshCache = new Long2ObjectOpenHashMap<>();
     this.dirtyGeneration.defaultReturnValue(0L);
+    this.builtBlockLightHashByKey.defaultReturnValue(0L);
+    this.builtSkyLightHashByKey.defaultReturnValue(0L);
     this.contentEpochByKey.defaultReturnValue(0L);
     this.meshEpochByKey.defaultReturnValue(0L);
     this.pendingVisibleSectionNanos.defaultReturnValue(0L);
@@ -268,7 +272,7 @@ public class CustomChunkMesher {
     final java.util.concurrent.ThreadFactory backgroundFactory = r -> {
       Thread t = new Thread(r, "MetalRender-MeshBuilder-Background");
       t.setDaemon(true);
-      t.setPriority(Thread.NORM_PRIORITY - 1);
+      t.setPriority(Thread.MIN_PRIORITY);
       return t;
     };
 
@@ -509,6 +513,51 @@ public class CustomChunkMesher {
     markDirty(cx, cy, cz);
   }
 
+  public static long hashDataLayer(net.minecraft.world.level.chunk.DataLayer layer) {
+    if (layer == null) {
+      return 0L;
+    }
+    byte[] data = layer.getData();
+    if (data == null) {
+      return 0L;
+    }
+    long h = 0xcbf29ce484222325L;
+    for (byte b : data) {
+      h ^= (b & 0xFF);
+      h *= 0x100000001b3L;
+    }
+    return h == Long.MIN_VALUE ? 0L : h;
+  }
+
+  public boolean shouldRebuildForLight(int cx, int cy, int cz, boolean skyLayer,
+      long incomingHash, boolean hasData) {
+    if (!hasData) {
+      incomingHash = 0L;
+    }
+    long key = packChunkKey(cx, cy, cz);
+    Long2LongOpenHashMap map = skyLayer ? builtSkyLightHashByKey : builtBlockLightHashByKey;
+    synchronized (variantLock) {
+      return map.get(key) != incomingHash;
+    }
+  }
+
+  private void recordBuiltLightHashes(long key, SectionSnapshot snapshot) {
+    if (snapshot == null || !snapshot.valid || snapshot.empty) {
+      return;
+    }
+    synchronized (variantLock) {
+      builtBlockLightHashByKey.put(key, snapshot.blockLightHash);
+      builtSkyLightHashByKey.put(key, snapshot.skyLightHash);
+    }
+  }
+
+  private void forgetLightHashes(long key) {
+    synchronized (variantLock) {
+      builtBlockLightHashByKey.remove(key);
+      builtSkyLightHashByKey.remove(key);
+    }
+  }
+
 
   public boolean tryTierSwap(int cx, int cy, int cz, int targetTier) {
     if (targetTier < 0 || targetTier > 2) {
@@ -717,6 +766,7 @@ public class CustomChunkMesher {
 
   public void removeMesh(int cx, int cy, int cz) {
     long key = packChunkKey(cx, cy, cz);
+    forgetLightHashes(key);
     synchronized (variantLock) {
       destroyStashForKeyLocked(key);
       meshEpochByKey.remove(key);
@@ -749,6 +799,8 @@ public class CustomChunkMesher {
     synchronized (variantLock) {
       meshEpochByKey.clear();
       contentEpochByKey.clear();
+      builtBlockLightHashByKey.clear();
+      builtSkyLightHashByKey.clear();
     }
     int count;
     synchronized (meshCache) {
@@ -1046,6 +1098,7 @@ public class CustomChunkMesher {
 
   private void removeEmptyMesh(long key, int chunkX, int chunkY, int chunkZ,
       long generation, long globalGeneration) {
+    forgetLightHashes(key);
     synchronized (variantLock) {
       destroyStashForKeyLocked(key);
       meshEpochByKey.remove(key);
@@ -1085,10 +1138,20 @@ public class CustomChunkMesher {
     final byte[] paddedShade;
     final byte[] paddedEmission;
     final int[] biomeTints;
+    final long blockLightHash;
+    final long skyLightHash;
 
     SectionSnapshot(boolean valid, boolean empty,
         int[] paddedBlockStates, byte[] paddedLight, byte[] paddedOcclusion,
         byte[] paddedShade, byte[] paddedEmission, int[] biomeTints) {
+      this(valid, empty, paddedBlockStates, paddedLight, paddedOcclusion,
+          paddedShade, paddedEmission, biomeTints, 0L, 0L);
+    }
+
+    SectionSnapshot(boolean valid, boolean empty,
+        int[] paddedBlockStates, byte[] paddedLight, byte[] paddedOcclusion,
+        byte[] paddedShade, byte[] paddedEmission, int[] biomeTints,
+        long blockLightHash, long skyLightHash) {
       this.valid = valid;
       this.empty = empty;
       this.paddedBlockStates = paddedBlockStates;
@@ -1097,6 +1160,8 @@ public class CustomChunkMesher {
       this.paddedShade = paddedShade;
       this.paddedEmission = paddedEmission;
       this.biomeTints = biomeTints;
+      this.blockLightHash = blockLightHash;
+      this.skyLightHash = skyLightHash;
     }
   }
 
@@ -1535,8 +1600,16 @@ public class CustomChunkMesher {
       return new SectionSnapshot(true, true, null, null, null, null, null, null);
     }
 
+    long centerBlockLightHash = 0L;
+    long centerSkyLightHash = 0L;
+    if (blockLightLayers != null && skyLightLayers != null) {
+      centerBlockLightHash = hashDataLayer(blockLightLayers[13]);
+      centerSkyLightHash = hashDataLayer(skyLightLayers[13]);
+    }
+
     return new SectionSnapshot(true, false, paddedBlockStates, paddedLight,
-        paddedOcclusion, paddedShade, paddedEmission, biomeTints);
+        paddedOcclusion, paddedShade, paddedEmission, biomeTints,
+        centerBlockLightHash, centerSkyLightHash);
   }
 
   private static final ThreadLocal<Object2IntOpenHashMap<BlockState>> BS_ID_CACHE = ThreadLocal.withInitial(() -> {
@@ -1660,6 +1733,10 @@ public class CustomChunkMesher {
         return;
       }
 
+      if (isTaskCancelled(key, generation, globalGeneration)) {
+        return;
+      }
+
       vertexBuffer.flip();
       int[] facingQuadCounts = bucketQuadsByFacing(vertexBuffer, opaqueQuadCount, waterQuadCount);
 
@@ -1764,6 +1841,7 @@ public class CustomChunkMesher {
       }
 
       meshUpdateGeneration.incrementAndGet();
+      recordBuiltLightHashes(key, snapshot);
       recordVisibleLatency(key);
       MetalRenderProfiler.getInstance().incrementMeshesBuilt(1);
       synchronized (dirtyKeys) {
