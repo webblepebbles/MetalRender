@@ -47,6 +47,11 @@ struct MeshPipelineEntry {
 static std::mutex g_pipelineMutex;
 static std::unordered_map<uint64_t, MeshPipelineEntry> g_meshPipelines;
 static uint64_t g_nextPipelineHandle = 0x4D534800;
+
+static void meshshader_sync_shared_counters_locked() {
+  g_meshPipelineCount = (uint32_t)g_meshPipelines.size();
+  g_meshShadersActive = g_meshPipelineCount > 0;
+}
 static id<MTLRenderPipelineState>
 buildMeshPipeline(id<MTLDevice> device, id<MTLLibrary> library,
                   NSString *objectFuncName, NSString *meshFuncName,
@@ -55,7 +60,8 @@ buildMeshPipeline(id<MTLDevice> device, id<MTLLibrary> library,
     return nil;
   bool supported = false;
   if (@available(macOS 13.0, *)) {
-    supported = [device supportsFamily:MTLGPUFamilyApple7];
+    supported = [device supportsFamily:MTLGPUFamilyApple7] ||
+                [device supportsFamily:MTLGPUFamilyMac2];
   }
   if (!supported) {
     if (outError)
@@ -64,7 +70,7 @@ buildMeshPipeline(id<MTLDevice> device, id<MTLLibrary> library,
                               code:-1
                           userInfo:@{
                             NSLocalizedDescriptionKey :
-                                @"Mesh shaders not supported on this computre"
+                                @"Mesh shaders not supported on this device"
                           }];
     return nil;
   }
@@ -109,6 +115,12 @@ buildMeshPipeline(id<MTLDevice> device, id<MTLLibrary> library,
                                                  options:0
                                               reflection:nil
                                                    error:outError];
+    if (!pipeline) {
+      NSLog(@"[MetalRender] mesh pipeline (%@/%@/%@) failed: %@",
+            objectFuncName, meshFuncName, fragmentFuncName,
+            (outError && *outError) ? [*outError localizedDescription]
+                                    : @"unknown");
+    }
     return pipeline;
   }
   return nil;
@@ -169,7 +181,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_dispatchTerrain
                               atIndex:3];
     }
     MTLSize objectThreadgroups = MTLSizeMake(regionCount, 1, 1);
-    MTLSize objectThreadsPerGroup = MTLSizeMake(256, 1, 1);
+    MTLSize objectThreadsPerGroup = MTLSizeMake(1, 1, 1);
     MTLSize meshThreadsPerGroup = MTLSizeMake(256, 1, 1);
     [g_currentEncoder drawMeshThreadgroups:objectThreadgroups
                threadsPerObjectThreadgroup:objectThreadsPerGroup
@@ -221,7 +233,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_createMeshPipel
   meshDbg("Created mesh pipeline handle=0x%llx (%s, %s, %s)\n",
           (unsigned long long)handle, [objName UTF8String],
           [meshName UTF8String], [fragName UTF8String]);
-  g_meshShadersActive = true;
+  meshshader_sync_shared_counters_locked();
   return (jlong)handle;
 }
 extern "C" JNIEXPORT void JNICALL
@@ -267,7 +279,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_drawMeshThreadg
     uint32_t meshTpg = std::max((int)meshThreadsPerGroup, 1);
     meshTpg = std::min(meshTpg, (uint32_t)256);
     MTLSize objTG = MTLSizeMake((uint32_t)objectThreadgroups, 1, 1);
-    MTLSize objTPG = MTLSizeMake(256, 1, 1);
+    MTLSize objTPG = MTLSizeMake(1, 1, 1);
     MTLSize meshTPG = MTLSizeMake(meshTpg, 1, 1);
     [g_currentEncoder drawMeshThreadgroups:objTG
                threadsPerObjectThreadgroup:objTPG
@@ -285,10 +297,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_destroyMeshPipe
             (unsigned long long)pipelineHandle);
     g_meshPipelines.erase(it);
   }
-  g_meshPipelineCount = (uint32_t)g_meshPipelines.size();
-  if (g_meshPipelines.empty()) {
-    g_meshShadersActive = false;
-  }
+  meshshader_sync_shared_counters_locked();
 }
 extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_uploadMeshletBuffer(
@@ -359,6 +368,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_createTerrainMe
       meshDbg("Failed terrain mesh pipeline[%d] (%s): %s\n", i,
               specs[i].fragmentFunc,
               error ? [[error localizedDescription] UTF8String] : "unknown");
+      NSLog(@"[MetalRender] terrain mesh pipeline[%d] (%s) failed: %@", i,
+            specs[i].fragmentFunc,
+            error ? [error localizedDescription] : nil);
     }
   }
   g_meshPipelineCount = (uint32_t)g_meshPipelines.size();
@@ -366,7 +378,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_createTerrainMe
 
   if (handles[0] != 0)
     g_pipelineMeshOpaque = g_meshPipelines[(uint64_t)handles[0]].pipeline;
-  if (handles[1] != 0)
     g_pipelineMeshCutout = g_meshPipelines[(uint64_t)handles[1]].pipeline;
   if (handles[2] != 0)
     g_pipelineMeshEmissive = g_meshPipelines[(uint64_t)handles[2]].pipeline;
