@@ -166,7 +166,7 @@ public final class MetalRenderCommands {
             wr.getChunkMesher().clearAllMeshes();
             msg(src, "§acache cleared wendewer westawting");
         } else {
-            msg(src, "§cworld wendewer not available です");
+            msg(src, "§cworld wendewer not available");
         }
     }
 
