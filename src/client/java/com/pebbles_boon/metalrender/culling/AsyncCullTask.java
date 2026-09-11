@@ -29,11 +29,16 @@ public class AsyncCullTask {
 
   public static void submitFrustumUpdate(Matrix4f proj, Matrix4f modelView, Vector3f camPos) {
     long handle = handleCounter.incrementAndGet();
+    final Matrix4f projCopy = proj == null ? null : new Matrix4f(proj);
+    final Matrix4f mvCopy = modelView == null ? null : new Matrix4f(modelView);
+    final Vector3f camCopy = camPos == null ? null : new Vector3f(camPos);
     EXECUTOR.submit(() -> {
       try {
         FrustumCuller mine = WORKER_CULLER.get();
-        mine.update(proj, modelView, camPos);
-        CullResult result = new CullResult(mine, handle);
+        mine.update(projCopy, mvCopy, camCopy);
+        FrustumCuller snapshot = new FrustumCuller();
+        snapshot.copyFrom(mine);
+        CullResult result = new CullResult(snapshot, handle);
         CullResult prev;
         do {
           prev = latestRef.get();
