@@ -68,6 +68,18 @@ public class CustomChunkMesher {
       0);
   private static final java.util.concurrent.atomic.AtomicInteger DIAG_BUILT = new java.util.concurrent.atomic.AtomicInteger(
       0);
+  private static final java.util.concurrent.atomic.AtomicInteger DIAG_SUBMIT = new java.util.concurrent.atomic.AtomicInteger(
+      0);
+  private static final java.util.concurrent.atomic.AtomicInteger DIAG_CANCEL = new java.util.concurrent.atomic.AtomicInteger(
+      0);
+  private static final java.util.concurrent.atomic.AtomicInteger DIAG_REPLACE = new java.util.concurrent.atomic.AtomicInteger(
+      0);
+  private static final java.util.concurrent.atomic.AtomicInteger DIAG_NEW = new java.util.concurrent.atomic.AtomicInteger(
+      0);
+  private static final java.util.concurrent.atomic.AtomicInteger DIAG_MARKDIRTY = new java.util.concurrent.atomic.AtomicInteger(
+      0);
+  private static final java.util.concurrent.atomic.AtomicInteger DIAG_CONTENTCHANGED = new java.util.concurrent.atomic.AtomicInteger(
+      0);
 
   private static final ThreadLocal<ByteBuffer> VERTEX_BUF_POOL = ThreadLocal
       .withInitial(() -> ByteBuffer.allocateDirect(VERTEX_BUF_SIZE)
@@ -88,7 +100,7 @@ public class CustomChunkMesher {
   public static final int NEIGHBOR_MISSING_MINUS_Z = 4;
   public static final int NEIGHBOR_MISSING_PLUS_Z = 8;
 
-  private static final int MAX_STASHED_VARIANTS = 1500;
+  private static final int MAX_STASHED_VARIANTS = 768;
 
 
   public static class ChunkMeshData {
@@ -272,7 +284,7 @@ public class CustomChunkMesher {
     final java.util.concurrent.ThreadFactory backgroundFactory = r -> {
       Thread t = new Thread(r, "MetalRender-MeshBuilder-Background");
       t.setDaemon(true);
-      t.setPriority(Thread.MIN_PRIORITY);
+      t.setPriority(Thread.NORM_PRIORITY - 2);
       return t;
     };
 
@@ -352,10 +364,12 @@ public class CustomChunkMesher {
     }
 
     int priority = interactive ? 0 : (highPriority ? 1 : 2);
+    DIAG_SUBMIT.incrementAndGet();
     boolean submitted = submitMeshTask(priority, () -> {
       long taskStart = System.nanoTime();
       try {
         if (isTaskCancelled(key, genAtSubmit, globalGenAtSubmit)) {
+          DIAG_CANCEL.incrementAndGet();
           return;
         }
         refreshThreadLocalCachesIfNeeded();
@@ -390,8 +404,10 @@ public class CustomChunkMesher {
         long acc = BUILD_WALL_ACC.getAndAdd(taskWall);
         int cnt = BUILD_WALL_CNT.incrementAndGet();
         if (cnt % 1000 == 0) {
-          MetalLogger.info("builddiag: avg_wall=%.2fms over %d tasks",
-              (double) acc / cnt / 1e6, cnt);
+          MetalLogger.info("builddiag: avg_wall=%.2fms over %d tasks sub=%d cancel=%d new=%d repl=%d inv=%d empty=%d mdirty=%d cchanged=%d",
+              (double) acc / cnt / 1e6, cnt, DIAG_SUBMIT.get(), DIAG_CANCEL.get(), DIAG_NEW.get(),
+              DIAG_REPLACE.get(), DIAG_INVALID.get(), DIAG_EMPTY.get(), DIAG_MARKDIRTY.get(),
+              DIAG_CONTENTCHANGED.get());
           BUILD_WALL_ACC.set(0);
           BUILD_WALL_CNT.set(0);
         }
@@ -430,6 +446,10 @@ public class CustomChunkMesher {
       if (dirtyKeys.contains(key))
         return false;
     }
+    synchronized (emptyKeys) {
+      if (emptyKeys.contains(key))
+        return true;
+    }
     synchronized (meshCache) {
       if (meshCache.containsKey(key))
         return true;
@@ -441,6 +461,10 @@ public class CustomChunkMesher {
 
   public boolean hasMeshIgnoreDirty(int cx, int cy, int cz) {
     long key = packChunkKey(cx, cy, cz);
+    synchronized (emptyKeys) {
+      if (emptyKeys.contains(key))
+        return true;
+    }
     synchronized (meshCache) {
       return meshCache.containsKey(key);
     }
@@ -485,6 +509,7 @@ public class CustomChunkMesher {
   }
 
   public void markDirty(int cx, int cy, int cz) {
+    DIAG_MARKDIRTY.incrementAndGet();
     long key = packChunkKey(cx, cy, cz);
     boolean newlyDirty;
     synchronized (dirtyKeys) {
@@ -505,6 +530,7 @@ public class CustomChunkMesher {
   }
 
   public void contentChanged(int cx, int cy, int cz) {
+    DIAG_CONTENTCHANGED.incrementAndGet();
     long key = packChunkKey(cx, cy, cz);
     synchronized (variantLock) {
       contentEpochByKey.put(key, contentEpochByKey.get(key) + 1L);
@@ -929,6 +955,27 @@ public class CustomChunkMesher {
     }
   }
 
+  public void pruneStaleLatencyMaps(long nowNanos, long maxAgeNanos) {
+    synchronized (pendingVisibleSectionNanos) {
+      var it = pendingVisibleSectionNanos.long2LongEntrySet().fastIterator();
+      while (it.hasNext()) {
+        var e = it.next();
+        if (nowNanos - e.getLongValue() > maxAgeNanos) {
+          it.remove();
+        }
+      }
+    }
+    synchronized (pendingBlockUpdateNanos) {
+      var it = pendingBlockUpdateNanos.long2LongEntrySet().fastIterator();
+      while (it.hasNext()) {
+        var e = it.next();
+        if (nowNanos - e.getLongValue() > maxAgeNanos) {
+          it.remove();
+        }
+      }
+    }
+  }
+
   public void flushMeshRegistrations() {
     int toFlush;
     synchronized (batchRegData) {
@@ -1206,15 +1253,31 @@ public class CustomChunkMesher {
     }
   }
 
+  private static volatile TextureAtlasSprite cachedWaterStill;
+  private static volatile TextureAtlasSprite cachedWaterFlow;
+  private static volatile TextureAtlasSprite cachedLavaStill;
+  private static volatile TextureAtlasSprite cachedLavaFlow;
+  private static volatile TextureAtlasSprite cachedGrassOverlay;
+  private static volatile long cachedSpriteStamp;
+
+  private static final ThreadLocal<IdentityHashMap<BlockState, Byte>> OCCLUSION_CACHE = ThreadLocal
+      .withInitial(IdentityHashMap::new);
+  private static final ThreadLocal<IdentityHashMap<BlockState, Byte>> SHADE_CACHE = ThreadLocal
+      .withInitial(IdentityHashMap::new);
+  private static final ThreadLocal<IdentityHashMap<BlockState, Byte>> EMISSION_CACHE = ThreadLocal
+      .withInitial(IdentityHashMap::new);
+  private static final int PROP_CACHE_CAP = 8192;
+
   private MeshBuildContext captureBuildContext(ClientLevel world, int chunkX, int chunkY, int chunkZ) {
     Minecraft mc = Minecraft.getInstance();
     BlockStateModelSet blockModels = null;
     int buildPCX = 0, buildPCY = 0, buildPCZ = 0;
-    TextureAtlasSprite waterStill = null;
-    TextureAtlasSprite waterFlow = null;
-    TextureAtlasSprite lavaStill = null;
-    TextureAtlasSprite lavaFlow = null;
-    TextureAtlasSprite grassSideOverlay = null;
+    TextureAtlasSprite waterStill = cachedWaterStill;
+    TextureAtlasSprite waterFlow = cachedWaterFlow;
+    TextureAtlasSprite lavaStill = cachedLavaStill;
+    TextureAtlasSprite lavaFlow = cachedLavaFlow;
+    TextureAtlasSprite grassSideOverlay = cachedGrassOverlay;
+    long nowMs = System.currentTimeMillis();
     if (mc != null) {
       if (mc.getModelManager() != null) {
         blockModels = mc.getModelManager().getBlockStateModelSet();
@@ -1224,12 +1287,20 @@ public class CustomChunkMesher {
         buildPCZ = mc.player.chunkPosition().z();
         buildPCY = (int) Math.floor(mc.player.getY()) >> 4;
       }
-      waterStill = getFluidSprite(mc, net.minecraft.world.level.material.Fluids.WATER, false);
-      waterFlow = getFluidSprite(mc, net.minecraft.world.level.material.Fluids.WATER, true);
-      lavaStill = getFluidSprite(mc, net.minecraft.world.level.material.Fluids.LAVA, false);
-      lavaFlow = getFluidSprite(mc, net.minecraft.world.level.material.Fluids.LAVA, true);
-      grassSideOverlay = getAtlasSprite(mc,
-          Identifier.fromNamespaceAndPath("minecraft", "block/grass_block_side_overlay"));
+      if (waterStill == null || nowMs - cachedSpriteStamp > 30000L) {
+        waterStill = getFluidSprite(mc, net.minecraft.world.level.material.Fluids.WATER, false);
+        waterFlow = getFluidSprite(mc, net.minecraft.world.level.material.Fluids.WATER, true);
+        lavaStill = getFluidSprite(mc, net.minecraft.world.level.material.Fluids.LAVA, false);
+        lavaFlow = getFluidSprite(mc, net.minecraft.world.level.material.Fluids.LAVA, true);
+        grassSideOverlay = getAtlasSprite(mc,
+            Identifier.fromNamespaceAndPath("minecraft", "block/grass_block_side_overlay"));
+        cachedWaterStill = waterStill;
+        cachedWaterFlow = waterFlow;
+        cachedLavaStill = lavaStill;
+        cachedLavaFlow = lavaFlow;
+        cachedGrassOverlay = grassSideOverlay;
+        cachedSpriteStamp = nowMs;
+      }
     }
     float[] faceShade = new float[6];
     for (Direction direction : ALL_DIRECTIONS) {
@@ -1412,6 +1483,10 @@ public class CustomChunkMesher {
     }
 
     boolean coarseTint = lodTier >= 2;
+    int[] waterColumnTint = new int[256];
+    boolean[] waterColumnInit = new boolean[256];
+    int[] grassColumnTint = new int[256];
+    boolean[] grassColumnInit = new boolean[256];
     int[] coarseTintState = coarseTint ? new int[64] : null;
     int[] coarseTint0 = coarseTint ? new int[64] : null;
     int[] coarseTint1 = coarseTint ? new int[64] : null;
@@ -1463,12 +1538,28 @@ public class CustomChunkMesher {
             paddedShade[pIdx] = (byte) 255;
             paddedEmission[pIdx] = 0;
           } else {
-            paddedOcclusion[pIdx] = (byte) (state.isViewBlocking(world, mutablePos)
-                && state.getLightDampening() != 0 ? 1 : 0);
-            float shade = Math.max(0.0f, Math.min(1.0f,
-                state.getShadeBrightness(world, mutablePos)));
-            paddedShade[pIdx] = (byte) Math.round(shade * 255.0f);
-            paddedEmission[pIdx] = (byte) (state.emissiveRendering(world, mutablePos) ? 1 : 0);
+            Byte occCached = OCCLUSION_CACHE.get().get(state);
+            if (occCached != null) {
+              paddedOcclusion[pIdx] = occCached;
+              paddedShade[pIdx] = SHADE_CACHE.get().get(state);
+              paddedEmission[pIdx] = EMISSION_CACHE.get().get(state);
+            } else {
+              byte occ = (byte) (state.isViewBlocking(world, mutablePos)
+                  && state.getLightDampening() != 0 ? 1 : 0);
+              float shade = Math.max(0.0f, Math.min(1.0f,
+                  state.getShadeBrightness(world, mutablePos)));
+              byte sh = (byte) Math.round(shade * 255.0f);
+              byte em = (byte) (state.emissiveRendering(world, mutablePos) ? 1 : 0);
+              IdentityHashMap<BlockState, Byte> occMap = OCCLUSION_CACHE.get();
+              if (occMap.size() < PROP_CACHE_CAP) {
+                occMap.put(state, occ);
+                SHADE_CACHE.get().put(state, sh);
+                EMISSION_CACHE.get().put(state, em);
+              }
+              paddedOcclusion[pIdx] = occ;
+              paddedShade[pIdx] = sh;
+              paddedEmission[pIdx] = em;
+            }
           }
 
           int sectionX = wx >> 4;
@@ -1545,25 +1636,43 @@ public class CustomChunkMesher {
                   (fluid.getType() == net.minecraft.world.level.material.Fluids.LAVA ||
                       fluid.getType() == net.minecraft.world.level.material.Fluids.FLOWING_LAVA);
               if (water) {
-                int tint = 0xFFFFFF;
-                try {
-                  tint = net.minecraft.client.renderer.BiomeColors.getAverageWaterColor(world, mutablePos);
-                } catch (Exception ignored) {
-                }
-                biomeTints[tintBase] = tint == -1 ? 0xFFFFFF : tint;
-              } else if (state.getBlock() == Blocks.GRASS_BLOCK) {
-                int tint = 0xFFFFFF;
-                try {
-                  net.minecraft.client.color.block.BlockTintSource source = getCachedTintSource(
-                      blockColors, state, 0);
-                  if (source != null) {
-                    tint = source.colorInWorld(state, world, mutablePos);
-                  } else {
-                    tint = getGrassTint(world, mutablePos);
+                int colIdx = (x * 16 + z) & 255;
+                int tint;
+                if (waterColumnInit[colIdx]) {
+                  tint = waterColumnTint[colIdx];
+                } else {
+                  tint = 0xFFFFFF;
+                  try {
+                    tint = net.minecraft.client.renderer.BiomeColors.getAverageWaterColor(world, mutablePos);
+                  } catch (Exception ignored) {
                   }
-                } catch (Exception ignored) {
+                  tint = tint == -1 ? 0xFFFFFF : tint;
+                  waterColumnTint[colIdx] = tint;
+                  waterColumnInit[colIdx] = true;
                 }
-                biomeTints[tintBase] = tint == -1 ? 0xFFFFFF : tint;
+                biomeTints[tintBase] = tint;
+              } else if (state.getBlock() == Blocks.GRASS_BLOCK) {
+                int colIdx = (x * 16 + z) & 255;
+                int tint;
+                if (grassColumnInit[colIdx]) {
+                  tint = grassColumnTint[colIdx];
+                } else {
+                  tint = 0xFFFFFF;
+                  try {
+                    net.minecraft.client.color.block.BlockTintSource source = getCachedTintSource(
+                        blockColors, state, 0);
+                    if (source != null) {
+                      tint = source.colorInWorld(state, world, mutablePos);
+                    } else {
+                      tint = getGrassTint(world, mutablePos);
+                    }
+                  } catch (Exception ignored) {
+                  }
+                  tint = tint == -1 ? 0xFFFFFF : tint;
+                  grassColumnTint[colIdx] = tint;
+                  grassColumnInit[colIdx] = true;
+                }
+                biomeTints[tintBase] = tint;
               } else if (!lava) {
                 byte mask = getTintSlotMask(state, blockColors);
                 int remaining = mask;
@@ -1617,17 +1726,17 @@ public class CustomChunkMesher {
     m.defaultReturnValue(-1);
     return m;
   });
-  private static final int BS_ID_CACHE_CAP = 32768;
+  private static final int BS_ID_CACHE_CAP = 8192;
 
   private static final ThreadLocal<RandomSource> REUSABLE_RANDOM = ThreadLocal
       .withInitial(() -> RandomSource.create(0));
 
-  private static final int STATE_BY_ID_CACHE_CAP = 65536;
+  private static final int STATE_BY_ID_CACHE_CAP = 16384;
   private static final ThreadLocal<it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<BlockState>> STATE_BY_ID_CACHE = ThreadLocal
       .withInitial(() -> new it.unimi.dsi.fastutil.ints.Int2ObjectOpenHashMap<>(4096));
   private static final ThreadLocal<IdentityHashMap<BlockState, BlockStateModel>> MODEL_CACHE = ThreadLocal
       .withInitial(IdentityHashMap::new);
-  private static final int MODEL_CACHE_CAP = 32768;
+  private static final int MODEL_CACHE_CAP = 8192;
   private static final ThreadLocal<IdentityHashMap<BlockState, net.minecraft.client.color.block.BlockTintSource[]>> TINT_SOURCE_CACHE = ThreadLocal
       .withInitial(IdentityHashMap::new);
   private static final ThreadLocal<IdentityHashMap<BlockState, Byte>> TINT_SLOT_MASK_CACHE = ThreadLocal
@@ -1651,6 +1760,9 @@ public class CustomChunkMesher {
       TINT_SLOT_MASK_CACHE.remove();
       PARTS_POOL.remove();
       BS_ID_CACHE.remove();
+      OCCLUSION_CACHE.remove();
+      SHADE_CACHE.remove();
+      EMISSION_CACHE.remove();
       THREAD_LOCAL_GEN.set(gen);
     }
   }
@@ -1665,7 +1777,7 @@ public class CustomChunkMesher {
     net.minecraft.client.color.block.BlockTintSource[] sources = cache.get(state);
     if (sources == null) {
       sources = new net.minecraft.client.color.block.BlockTintSource[BIOME_TINT_SLOTS];
-      if (cache.size() < 65536) {
+      if (cache.size() < 8192) {
         cache.put(state, sources);
       }
     }
@@ -1693,7 +1805,7 @@ public class CustomChunkMesher {
       } catch (Exception ignored) {
       }
     }
-    if (cache.size() < 65536) {
+    if (cache.size() < 8192) {
       cache.put(state, mask);
     }
     return mask;
@@ -1792,9 +1904,11 @@ public class CustomChunkMesher {
         }
       }
       if (old == null) {
+        DIAG_NEW.incrementAndGet();
         meshCountAtomic.incrementAndGet();
         vertexCountAtomic.addAndGet(mesh.quadCount * 4);
       } else {
+        DIAG_REPLACE.incrementAndGet();
         vertexCountAtomic.addAndGet(mesh.quadCount * 4 - old.quadCount * 4);
       }
 
@@ -2107,7 +2221,15 @@ public class CustomChunkMesher {
       } catch (RuntimeException ignored) {
         blockEmitsLight = false;
       }
-      boolean crossLike = isCrossLike(state, model, random, pos, lx, ly, lz);
+      boolean crossLike = false;
+      if (lodTier >= 2 && !state.isSolidRender()) {
+        crossLike = isCrossLike(state, model, random, pos, lx, ly, lz);
+        if (crossLike) {
+          return;
+        }
+      } else {
+        crossLike = isCrossLike(state, model, random, pos, lx, ly, lz);
+      }
       try {
         random.setSeed(state.getSeed(pos));
         java.util.ArrayList<BlockStateModelPart> parts = PARTS_POOL.get();
@@ -2248,7 +2370,7 @@ public class CustomChunkMesher {
         renderFluidSide(lx, ly, lz, dir, cornerHeights, r, g, b, a, light, isLava);
       }
 
-      if (downVisible) {
+      if (downVisible && lodTier < 2) {
         BlockState downState = getPaddedBlockState(lx, ly - 1, lz);
         if (downState == null || !downState.isSolidRender()) {
           renderFluidBottom(lx, ly, lz, r, g, b, a, light, isLava);
