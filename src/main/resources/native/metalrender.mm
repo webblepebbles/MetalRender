@@ -84,7 +84,22 @@ static uint64_t g_nextHandle = 1;
 static id<MTLBuffer> g_megaVB = nil;
 
 static const size_t MEGA_VB_CAPACITY = 3072ULL * 1024 * 1024;
+static size_t g_megaVBCap = MEGA_VB_CAPACITY;
 static size_t g_megaVBHead = 0;
+
+static size_t megaCapacityForSystem() {
+  size_t cap = MEGA_VB_CAPACITY;
+  @autoreleasepool {
+    unsigned long long phys = [[NSProcessInfo processInfo] physicalMemory];
+    if (phys > 0) {
+      unsigned long long quarter = phys / 4;
+      unsigned long long minCap = 1024ULL * 1024 * 1024;
+      if (quarter < cap)
+        cap = (size_t)(quarter < minCap ? minCap : quarter);
+    }
+  }
+  return cap;
+}
 struct MegaSubAlloc {
   size_t offset;
   size_t size;
@@ -171,7 +186,7 @@ static uint64_t megaAlloc(size_t size) {
     }
     return handle;
   }
-  if (g_megaVBHead + aligned > MEGA_VB_CAPACITY) {
+  if (g_megaVBHead + aligned > g_megaVBCap) {
 
     megaCoalesceFreeList();
 
@@ -223,7 +238,7 @@ static void megaFree(uint64_t handle) {
   for (const MegaSubAlloc &freeBlock : g_megaFreeList) {
     freeBytes += freeBlock.size;
   }
-  if (g_megaFreeList.size() > 64 || freeBytes > (MEGA_VB_CAPACITY / 5)) {
+  if (g_megaFreeList.size() > 64 || freeBytes > (g_megaVBCap / 5)) {
     megaTrimFreeTail();
   }
 }
@@ -830,12 +845,13 @@ static void ensure_device() {
       g_queue = [g_device newCommandQueue];
 
       if (!g_megaVB) {
-        g_megaVB = [g_device newBufferWithLength:MEGA_VB_CAPACITY
+        g_megaVBCap = megaCapacityForSystem();
+        g_megaVB = [g_device newBufferWithLength:g_megaVBCap
                                          options:MTLStorageModeShared];
         g_megaVBHead = 0;
         if (g_megaVB) {
           dbg("Mega vertex buffer created: %zuMB\n",
-              MEGA_VB_CAPACITY / (1024 * 1024));
+              g_megaVBCap / (1024 * 1024));
         } else {
           dbg("WARN: Failed to create mega vertex buffer, falling back to "
               "individual buffers\n");
@@ -3386,13 +3402,20 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
     }
 
     if (g_cpuFrustumCullEnabled && validCount > 0) {
+      static uint8_t *s_cullKeep = nullptr;
+      static int s_cullKeepCap = 0;
+      if (s_cullKeepCap < validCount) {
+        delete[] s_cullKeep;
+        s_cullKeepCap = validCount * 2;
+        s_cullKeep = new uint8_t[s_cullKeepCap];
+      }
       int kept = 0;
       for (int si = 0; si < validCount; si++) {
         const DrawCmd &cmd = s_cmds[si];
-        if (frustumTestAABB(frustumPlanes, cmd.ox, cmd.oy, cmd.oz,
-                            cmd.ox + 16.0f, cmd.oy + 16.0f, cmd.oz + 16.0f)) {
-          kept++;
-        }
+        uint8_t vis = frustumTestAABB(frustumPlanes, cmd.ox, cmd.oy, cmd.oz,
+                            cmd.ox + 16.0f, cmd.oy + 16.0f, cmd.oz + 16.0f) ? 1 : 0;
+        s_cullKeep[si] = vis;
+        kept += vis;
       }
       if (kept == 0 || (validCount >= 96 && kept * 24 < validCount)) {
         if (g_frameCount < 5 || (g_frameCount % 600 == 0)) {
@@ -3401,21 +3424,18 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         }
       } else {
         int write = 0;
+        int writeMega = 0;
         for (int si = 0; si < validCount; si++) {
-          const DrawCmd &cmd = s_cmds[si];
-          if (frustumTestAABB(frustumPlanes, cmd.ox, cmd.oy, cmd.oz,
-                              cmd.ox + 16.0f, cmd.oy + 16.0f, cmd.oz + 16.0f)) {
-            if (write != si)
-              s_cmds[write] = s_cmds[si];
-            write++;
-          }
+          if (!s_cullKeep[si])
+            continue;
+          if (write != si)
+            s_cmds[write] = s_cmds[si];
+          if (s_cmds[write].isMega)
+            writeMega++;
+          write++;
         }
         validCount = kept;
-        megaCount = 0;
-        for (int i = 0; i < validCount; i++) {
-          if (s_cmds[i].isMega)
-            megaCount++;
-        }
+        megaCount = writeMega;
       }
     }
 
