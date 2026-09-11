@@ -63,6 +63,10 @@ public final class LodPolicy {
     } else {
       scanIndex++;
     }
+    if (++pruneCounter >= PRUNE_INTERVAL_SCANS) {
+      pruneCounter = 0;
+      pruneStaleState();
+    }
     return scanIndex;
   }
 
@@ -133,10 +137,6 @@ public final class LodPolicy {
       state.lastUpgradeScan = scanIndex;
     }
 
-    if (--pruneCounter <= 0) {
-      pruneCounter = PRUNE_INTERVAL_SCANS;
-      pruneStaleState();
-    }
     return decision;
   }
 
