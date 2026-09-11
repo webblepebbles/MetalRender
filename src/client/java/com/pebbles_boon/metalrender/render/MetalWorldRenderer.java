@@ -79,7 +79,7 @@ public class MetalWorldRenderer {
   private static final float TURN_PRIORITY_SCAN_COS_THRESHOLD = 0.45f;
   private static final int IMMEDIATE_LOADED_CHUNK_BUILD_RANGE = 8;
   private static final int IMPORTANT_REBUILD_CHUNK_RANGE = 2;
-  private static final int LOD_REFRESH_FRAME_INTERVAL = 2;
+  private static final int LOD_REFRESH_FRAME_INTERVAL = 6;
   private static final int MAX_LOD_REFRESH_SUBMITS_PER_PASS = 32;
   private static final int MAX_LOD_SCAN_PER_PASS = 2048;
   private static final int LOD_REFRESH_PENDING_LIMIT = 64;
@@ -156,6 +156,19 @@ public class MetalWorldRenderer {
   private int lastCullCount = 0;
   private final float[] lastCullFrustum = new float[24];
   private final CullingOrcreator cullingOrcreator = new CullingOrcreator();
+  private final Matrix4f asyncProjScratch = new Matrix4f();
+  private final Matrix4f asyncMVScratch = new Matrix4f();
+  private final Vector3f asyncCamScratch = new Vector3f();
+  private final Matrix4f vpScratch = new Matrix4f();
+  private int lodRingRunFrame = -1000;
+  private final java.util.ArrayList<LodCandidate> lodUpgradeScratch = new java.util.ArrayList<>(64);
+  private final java.util.ArrayList<LodCandidate> lodDemotionScratch = new java.util.ArrayList<>(16);
+  private long outlineCachePos = Long.MIN_VALUE;
+  private int outlineCacheCount;
+  private int outlineCacheDataLen;
+  private float[] outlineLocalVerts = new float[72 * 3];
+  private int outlineLocalCount;
+  private BlockState outlineCacheState;
   private final TranslucencySorter translucencySorter = new TranslucencySorter();
   private final float[] gpuFrustumPlanes = new float[24];
   private double frameCameraX;
@@ -194,6 +207,10 @@ public class MetalWorldRenderer {
   public void onWorldLoad() {
     AsyncCullTask.reset();
     lodPolicy.clear();
+    scanDirty = true;
+    nextOcclusionFrame = 0;
+    occlusionBackoffMult = 1;
+    occlusionLowYieldStreak = 0;
     worldLoaded = true;
     MetalRenderConfig gpuConfig = MetalRenderClient.getConfig();
     boolean clusterEnabled = gpuConfig != null && gpuConfig.enableClusterFrustumCulling;
@@ -407,6 +424,12 @@ public class MetalWorldRenderer {
       }
       releaseDelayedBlockRebuilds();
       buildPendingChunkMeshes(mc);
+      if ((frameCount % 240) == 0) {
+        try {
+          chunkMesher.pruneStaleLatencyMaps(System.nanoTime(), 30_000_000_000L);
+        } catch (Exception ignored) {
+        }
+      }
       jBuildAcc += System.nanoTime() - buildStart;
       jProfCount++;
       if (jProfCount >= 120) {
@@ -447,7 +470,7 @@ public class MetalWorldRenderer {
     }
     projectionMatrix.set(projection);
     modelViewMatrix.set(modelView);
-    Vector3f camPos = new Vector3f((float) cameraX, (float) cameraY,
+    Vector3f camPos = asyncCamScratch.set((float) cameraX, (float) cameraY,
         (float) cameraZ);
 
     long cullStart = System.nanoTime();
@@ -457,16 +480,15 @@ public class MetalWorldRenderer {
     } else {
       frustumCuller.update(projectionMatrix, modelViewMatrix, camPos);
     }
-    final Matrix4f asyncProj = new Matrix4f(projectionMatrix);
-    final Matrix4f asyncMV = new Matrix4f(modelViewMatrix);
-    final Vector3f asyncCam = new Vector3f(camPos);
-    AsyncCullTask.submitFrustumUpdate(asyncProj, asyncMV, asyncCam);
+    asyncProjScratch.set(projectionMatrix);
+    asyncMVScratch.set(modelViewMatrix);
+    AsyncCullTask.submitFrustumUpdate(asyncProjScratch, asyncMVScratch, camPos);
     MetalRenderProfiler.getInstance().recordCullTime(System.nanoTime() - cullStart);
 
     boolean frustumStable = !cullingOrcreator.isActive();
     if (cullingOrcreator.isActive()) {
-      Matrix4f vp = new Matrix4f(projectionMatrix).mul(modelViewMatrix);
-      extractFrustumPlanes(vp, gpuFrustumPlanes);
+      vpScratch.set(projectionMatrix).mul(modelViewMatrix);
+      extractFrustumPlanes(vpScratch, gpuFrustumPlanes);
       int chunkRadius = Minecraft.getInstance().options.renderDistance().get();
       cullingOrcreator.rebuildFromFrustumCpu(frustumCuller, chunkRadius,
           camPos.x, camPos.y, camPos.z);
@@ -659,44 +681,81 @@ public class MetalWorldRenderer {
       }
       BlockHitResult hit = (BlockHitResult) mc.hitResult;
       BlockPos pos = hit.getBlockPos();
-      BlockState state = mc.level.getBlockState(pos);
-      if (state.isAir() || !mc.level.getWorldBorder().isWithinBounds(pos)) {
-        return;
-      }
-
-      CollisionContext context = mc.getCameraEntity() != null
-          ? CollisionContext.of(mc.getCameraEntity())
-          : CollisionContext.empty();
-      VoxelShape shape = state.getShape(mc.level, pos, context);
-      if (shape.isEmpty()) {
-        return;
-      }
-
+      long posKey = pos.asLong();
       float bx = (float) (pos.getX() - frameCameraX);
       float by = (float) (pos.getY() - frameCameraY);
       float bz = (float) (pos.getZ() - frameCameraZ);
-      outlineEdges.clear();
-      shape.forAllEdges((x0, y0, z0, x1, y1, z1) -> outlineEdges.add(new float[] {
-          bx + (float) x0, by + (float) y0, bz + (float) z0,
-          bx + (float) x1, by + (float) y1, bz + (float) z1
-      }));
-      if (outlineEdges.isEmpty()) {
-        return;
-      }
+      int lineVertexCount;
+      int drawVertexCount;
+      int scalarCount;
+      if (posKey == outlineCachePos && outlineLocalCount > 0
+          && mc.level.getBlockState(pos) == outlineCacheState) {
+        lineVertexCount = outlineLocalCount;
+        drawVertexCount = outlineCacheCount;
+        scalarCount = lineVertexCount * 3;
+        if (outlineVerts.length < scalarCount) {
+          outlineVerts = new float[Math.max(scalarCount, outlineVerts.length * 2)];
+        }
+        float[] local = outlineLocalVerts;
+        float[] out = outlineVerts;
+        int vi = 0;
+        for (int i = 0; i < scalarCount; i += 3) {
+          out[vi++] = local[i] + bx;
+          out[vi++] = local[i + 1] + by;
+          out[vi++] = local[i + 2] + bz;
+        }
+      } else {
+        BlockState state = mc.level.getBlockState(pos);
+        if (state.isAir() || !mc.level.getWorldBorder().isWithinBounds(pos)) {
+          return;
+        }
 
-      int lineVertexCount = outlineEdges.size() * 2;
-      int drawVertexCount = outlineEdges.size() * 6;
-      int scalarCount = lineVertexCount * 3;
-      if (outlineVerts.length < scalarCount) {
-        outlineVerts = new float[Math.max(scalarCount, outlineVerts.length * 2)];
-      }
-      int vertexIndex = 0;
-      for (float[] edge : outlineEdges) {
-        for (int point = 0; point < 2; point++) {
-          int edgeOffset = point * 3;
-          outlineVerts[vertexIndex++] = edge[edgeOffset];
-          outlineVerts[vertexIndex++] = edge[edgeOffset + 1];
-          outlineVerts[vertexIndex++] = edge[edgeOffset + 2];
+        CollisionContext context = mc.getCameraEntity() != null
+            ? CollisionContext.of(mc.getCameraEntity())
+            : CollisionContext.empty();
+        VoxelShape shape = state.getShape(mc.level, pos, context);
+        if (shape.isEmpty()) {
+          return;
+        }
+
+        outlineEdges.clear();
+        shape.forAllEdges((x0, y0, z0, x1, y1, z1) -> outlineEdges.add(new float[] {
+            (float) x0, (float) y0, (float) z0,
+            (float) x1, (float) y1, (float) z1
+        }));
+        if (outlineEdges.isEmpty()) {
+          return;
+        }
+
+        lineVertexCount = outlineEdges.size() * 2;
+        drawVertexCount = outlineEdges.size() * 6;
+        scalarCount = lineVertexCount * 3;
+        if (outlineLocalVerts.length < scalarCount) {
+          outlineLocalVerts = new float[Math.max(scalarCount, outlineLocalVerts.length * 2)];
+        }
+        int li = 0;
+        for (float[] edge : outlineEdges) {
+          outlineLocalVerts[li++] = edge[0];
+          outlineLocalVerts[li++] = edge[1];
+          outlineLocalVerts[li++] = edge[2];
+          outlineLocalVerts[li++] = edge[3];
+          outlineLocalVerts[li++] = edge[4];
+          outlineLocalVerts[li++] = edge[5];
+        }
+        outlineLocalCount = lineVertexCount;
+        outlineCachePos = posKey;
+        outlineCacheCount = drawVertexCount;
+        outlineCacheState = state;
+        if (outlineVerts.length < scalarCount) {
+          outlineVerts = new float[Math.max(scalarCount, outlineVerts.length * 2)];
+        }
+        float[] local = outlineLocalVerts;
+        float[] out = outlineVerts;
+        int vi = 0;
+        for (int i = 0; i < scalarCount; i += 3) {
+          out[vi++] = local[i] + bx;
+          out[vi++] = local[i + 1] + by;
+          out[vi++] = local[i + 2] + bz;
         }
       }
 
@@ -766,7 +825,7 @@ public class MetalWorldRenderer {
       new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
   private final LodPolicy lodPolicy = new LodPolicy();
 
-  private static final int OCCLUSION_INTERVAL_FRAMES = 15;
+  private static final int OCCLUSION_INTERVAL_FRAMES = 30;
   private static final int OCCLUSION_MAX_VISITS = 120000;
   private final it.unimi.dsi.fastutil.longs.LongOpenHashSet occlusionHidden =
       new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
@@ -780,6 +839,10 @@ public class MetalWorldRenderer {
   private int lastOcclusionMeshGen = Integer.MIN_VALUE;
   private int lastOcclusionHiddenCount = 0;
   private long occlusionSuspendCamKey = Long.MIN_VALUE;
+  private int nextOcclusionFrame;
+  private int occlusionBackoffMult = 1;
+  private int occlusionLowYieldStreak;
+  private boolean scanDirty = true;
 
   private int lastResizeW = -1;
   private int lastResizeH = -1;
@@ -980,9 +1043,8 @@ public class MetalWorldRenderer {
     int playerChunkX = mc.player.chunkPosition().x();
     int playerChunkZ = mc.player.chunkPosition().z();
     int playerSectionY = mc.player.getBlockY() >> 4;
-    if (scanPressured) {
-      if (visibleBacklog < CHUNK_SCAN_SATURATED_THRESHOLD ||
-          (frameCount % 10) == 0) {
+    if (scanSaturated) {
+      if ((frameCount % 10) == 0) {
         trimPendingBuildSet(playerChunkX, playerChunkZ, closeRange);
         visibleBacklog = pendingBuildSet.size() + mesherPending;
         scanPressured = visibleBacklog >= CHUNK_SCAN_PRESSURE_THRESHOLD;
@@ -1014,12 +1076,21 @@ public class MetalWorldRenderer {
     scanFrameCounter++;
     if (fullRescanDue) {
       scanRingsInRange(world, playerChunkX, playerChunkZ, playerSectionY, 0,
-          renderDist);
+          closeRange);
       lastFullRescanNs = nowNs;
       scanFrameCounter = 0;
       scanFrontierRing = closeRange + 1;
+      scanDirty = false;
     } else {
       boolean queuePressure = !pendingBuildSet.isEmpty() || chunkMesher.getPendingCount() > 0;
+      boolean needScan = scanDirty || playerMovedChunk || queuePressure;
+      if (!needScan) {
+        if (turnPriorityFrames > 0 && !scanPressured) {
+          scanForwardSector(world, playerChunkX, playerChunkZ, playerSectionY,
+              renderDist);
+        }
+        return;
+      }
       int closeRangeRescanInterval = queuePressure
           ? ACTIVE_CLOSE_RANGE_RESCAN_INTERVAL
           : IDLE_CLOSE_RANGE_RESCAN_INTERVAL;
@@ -1044,6 +1115,7 @@ public class MetalWorldRenderer {
           scanFrontierRing = closeRange + 1;
         }
       }
+      scanDirty = false;
     }
     if (turnPriorityFrames > 0 && !scanPressured) {
       scanForwardSector(world, playerChunkX, playerChunkZ, playerSectionY,
@@ -1222,7 +1294,7 @@ public class MetalWorldRenderer {
           Math.abs(playerChunkX - lastSortedPlayerCX),
           Math.abs(playerChunkZ - lastSortedPlayerCZ));
       boolean shouldSort = turnPriorityFrames == TURN_PRIORITY_SCAN_FRAMES
-          || currentSize > lastSortedSize + 64
+          || currentSize > lastSortedSize + 256
           || currentSize < lastSortedSize * 3 / 4
           || framesSinceLastSort >= sortInterval
           || playerMovedSinceSort > 4
@@ -1503,7 +1575,15 @@ public class MetalWorldRenderer {
       if (!lodRingBacklog && meshGen == lodRingMeshGen) {
         return;
       }
+      if (frameCount - lodRingRunFrame < 3) {
+        return;
+      }
+      if (pendingBuildSet.size() + chunkMesher.getPendingCount() >= CHUNK_BACKLOG_PRESSURE_THRESHOLD) {
+        lodRingMeshGen = meshGen;
+        return;
+      }
     }
+    lodRingRunFrame = frameCount;
     lodRingPlayerCX = playerChunkX;
     lodRingPlayerCZ = playerChunkZ;
     lodRingMeshGen = meshGen;
@@ -1539,8 +1619,10 @@ public class MetalWorldRenderer {
       haveCam = true;
     }
 
-    java.util.ArrayList<LodCandidate> upgrades = new java.util.ArrayList<>(64);
-    java.util.ArrayList<LodCandidate> demotions = new java.util.ArrayList<>(16);
+    java.util.ArrayList<LodCandidate> upgrades = lodUpgradeScratch;
+    java.util.ArrayList<LodCandidate> demotions = lodDemotionScratch;
+    upgrades.clear();
+    demotions.clear();
     int meshCount = chunkMesher.getMeshSnapshotSize();
     for (int i = 0; i < meshCount; i++) {
       CustomChunkMesher.ChunkMeshData mesh = chunkMesher.getMeshSnapshotAt(i);
@@ -1677,6 +1759,11 @@ public class MetalWorldRenderer {
     int playerChunkX = mc.player.chunkPosition().x();
     int playerChunkZ = mc.player.chunkPosition().z();
 
+    if (playerChunkX == lodRefreshPlayerCX && playerChunkZ == lodRefreshPlayerCZ
+        && thermalBias == lodRefreshThermalBias
+        && pendingBuildSet.size() + chunkMesher.getPendingCount() >= CHUNK_BACKLOG_PRESSURE_THRESHOLD) {
+      return;
+    }
     lodRefreshPlayerCX = playerChunkX;
     lodRefreshPlayerCZ = playerChunkZ;
     lodRefreshThermalBias = thermalBias;
@@ -1727,8 +1814,10 @@ public class MetalWorldRenderer {
       return;
     }
 
-    java.util.ArrayList<LodCandidate> upgrades = new java.util.ArrayList<>(64);
-    java.util.ArrayList<LodCandidate> demotions = new java.util.ArrayList<>(16);
+    java.util.ArrayList<LodCandidate> upgrades = lodUpgradeScratch;
+    java.util.ArrayList<LodCandidate> demotions = lodDemotionScratch;
+    upgrades.clear();
+    demotions.clear();
 
     int inspected = 0;
     int scanLimit = Math.min(meshCount, MAX_LOD_SCAN_PER_PASS);
@@ -1949,6 +2038,9 @@ public class MetalWorldRenderer {
     lastOcclusionMeshGen = Integer.MIN_VALUE;
     lastOcclusionHiddenCount = 0;
     occlusionSuspendCamKey = Long.MIN_VALUE;
+    nextOcclusionFrame = 0;
+    occlusionBackoffMult = 1;
+    occlusionLowYieldStreak = 0;
   }
 
   private void restoreAllOcclusionHidden() {
@@ -1980,8 +2072,21 @@ public class MetalWorldRenderer {
       restoreAllOcclusionHidden();
       return;
     }
-    if (frameCount % OCCLUSION_INTERVAL_FRAMES != 0) {
-      return;
+    if (frameCount < nextOcclusionFrame) {
+      double qx = frameCameraX;
+      double qy = frameCameraY;
+      double qz = frameCameraZ;
+      if (frameCount > 0 && (qx != 0.0 || qy != 0.0 || qz != 0.0)) {
+        long qKey = packChunkKey((int) Math.floor(qx) >> 4,
+            (int) Math.floor(qy) >> 4, (int) Math.floor(qz) >> 4);
+        if (qKey == lastOcclusionCamSectionKey || qKey == occlusionSuspendCamKey) {
+          return;
+        }
+        occlusionBackoffMult = 1;
+        occlusionLowYieldStreak = 0;
+      } else {
+        return;
+      }
     }
     double camX = frameCameraX;
     double camY = frameCameraY;
@@ -1997,9 +2102,11 @@ public class MetalWorldRenderer {
     long camKey = packChunkKey(camSX, camSY, camSZ);
     int meshGen = chunkMesher.getMeshUpdateGeneration();
     if (camKey == lastOcclusionCamSectionKey && meshGen == lastOcclusionMeshGen) {
+      nextOcclusionFrame = frameCount + OCCLUSION_INTERVAL_FRAMES * occlusionBackoffMult;
       return;
     }
     if (camKey == occlusionSuspendCamKey) {
+      nextOcclusionFrame = frameCount + OCCLUSION_INTERVAL_FRAMES * occlusionBackoffMult;
       return;
     }
 
@@ -2119,6 +2226,7 @@ public class MetalWorldRenderer {
       lastOcclusionCamSectionKey = camKey;
       lastOcclusionMeshGen = meshGen;
       occlusionSuspendCamKey = camKey;
+      nextOcclusionFrame = frameCount + OCCLUSION_INTERVAL_FRAMES * occlusionBackoffMult;
       MetalLogger.info(
           "occlusion: pass over budget (%d visits); suspending until camera leaves section [%d,%d,%d]",
           visits, camSX, camSY, camSZ);
@@ -2160,6 +2268,18 @@ public class MetalWorldRenderer {
     lastOcclusionCamSectionKey = camKey;
     lastOcclusionMeshGen = meshGen;
     lastOcclusionHiddenCount = occlusionHidden.size();
+    if (meshTotal > 512 && lastOcclusionHiddenCount * 200L < meshTotal) {
+      occlusionLowYieldStreak++;
+      int cap = (unregistered + reregistered) == 0 ? 32 : 8;
+      if (occlusionLowYieldStreak >= 3 && occlusionBackoffMult < cap) {
+        occlusionBackoffMult *= 2;
+        occlusionLowYieldStreak = 0;
+      }
+    } else {
+      occlusionLowYieldStreak = 0;
+      occlusionBackoffMult = 1;
+    }
+    nextOcclusionFrame = frameCount + OCCLUSION_INTERVAL_FRAMES * occlusionBackoffMult;
     if ((unregistered + reregistered) > 0 || MetalRenderConfig.isDeepDebugActive()) {
       MetalLogger.info("occlusion: hidden=%d (+%d -%d) visited=%d/%d meshes=%d",
           occlusionHidden.size(), unregistered, reregistered,
@@ -2562,6 +2682,7 @@ public class MetalWorldRenderer {
     if (!chunkMesher.hasMesh(chunkX, worldY, chunkZ)) {
       if (pendingBuildSet.add(packChunkKey(chunkX, worldY, chunkZ))) {
         sortedListDirty = true;
+        scanDirty = true;
       }
     }
   }
@@ -2669,6 +2790,7 @@ public class MetalWorldRenderer {
       delayedBlockRebuildFrames.remove(key);
       if (pendingBuildSet.add(key)) {
         sortedListDirty = true;
+        scanDirty = true;
       }
     }
   }
