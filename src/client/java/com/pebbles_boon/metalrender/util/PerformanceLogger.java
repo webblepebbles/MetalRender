@@ -12,6 +12,11 @@ public final class PerformanceLogger {
   private double avgFrameTime;
   private double currentFPS;
   private long lastLogTime = System.currentTimeMillis();
+  private final double[] peakWindow = new double[120];
+  private int peakWrite;
+  private int peakSamples;
+  private double peakWindowSum;
+  private double bestWindowMs = Double.MAX_VALUE;
 
   public void startFrame() {
     frameStartTime = System.nanoTime();
@@ -30,6 +35,32 @@ public final class PerformanceLogger {
     avgFrameTime = avgFrameTime * 0.95 + frameTime * 0.05;
     currentFPS = 1000.0 / Math.max(avgFrameTime, 0.1);
 
+    if (frameTime > 0.0 && frameTime < 250.0) {
+      if (peakSamples < peakWindow.length) {
+        peakWindow[peakWrite] = frameTime;
+        peakWindowSum += frameTime;
+        peakWrite = (peakWrite + 1) % peakWindow.length;
+        peakSamples++;
+      } else {
+        peakWindowSum -= peakWindow[peakWrite];
+        peakWindow[peakWrite] = frameTime;
+        peakWindowSum += frameTime;
+        peakWrite = (peakWrite + 1) % peakWindow.length;
+      }
+      if (peakSamples >= 60) {
+        int n = Math.min(peakSamples, 60);
+        double sum = 0.0;
+        for (int i = 1; i <= n; i++) {
+          int idx = (peakWrite - i + peakWindow.length * 2) % peakWindow.length;
+          sum += peakWindow[idx];
+        }
+        double mean = sum / n;
+        if (mean < bestWindowMs) {
+          bestWindowMs = mean;
+        }
+      }
+    }
+
     long currentTime = System.currentTimeMillis();
     long interval = MetalRenderConfig.isDeepDebugActive()
         ? DEBUG_LOG_INTERVAL
@@ -42,8 +73,13 @@ public final class PerformanceLogger {
 
   private void logPerformanceStats() {
     if (!MetalRenderConfig.isDeepDebugActive()) {
-      MetalLogger.info("[perf] fps %.1f ft %.2fms", currentFPS,
-          avgFrameTime);
+      if (bestWindowMs < Double.MAX_VALUE) {
+        MetalLogger.info("[perf] fps %.1f ft %.2fms peak %.0f", currentFPS,
+            avgFrameTime, 1000.0 / Math.max(bestWindowMs, 0.1));
+      } else {
+        MetalLogger.info("[perf] fps %.1f ft %.2fms", currentFPS,
+            avgFrameTime);
+      }
       return;
     }
     MetalLogger.info("[perf] fps %.1f ft %.2fms", currentFPS, avgFrameTime);
