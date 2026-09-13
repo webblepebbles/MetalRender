@@ -10,6 +10,9 @@
   "description": "funny MacOS mod",
   "environment": "client",
   "entrypoints": {
+    "preLaunch": [
+      "com.pebbles_boon.metalrender.MetalRenderPreLaunch"
+    ],
     "client": [
       "com.pebbles_boon.metalrender.MetalRenderClient"
     ]

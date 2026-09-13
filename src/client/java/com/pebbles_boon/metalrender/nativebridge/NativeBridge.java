@@ -4,8 +4,14 @@ public final class NativeBridge {
   private static volatile boolean libLoaded;
   static {
     try {
-      System.loadLibrary("metalrender");
-      libLoaded = true;
+      NativeLoader.load();
+      java.nio.file.Path extracted = NativeLoader.getLoadedPath();
+      if (extracted != null) {
+        libLoaded = true;
+      } else {
+        System.loadLibrary("metalrender");
+        libLoaded = true;
+      }
     } catch (UnsatisfiedLinkError e) {
       System.err.println("[MetalRender] native metalrender library unavailable: "
           + e.getMessage());
@@ -22,6 +28,16 @@ public final class NativeBridge {
 
   public static void loadLibrary() {
     if (!libLoaded) {
+      try {
+        NativeLoader.load();
+      } catch (RuntimeException e) {
+        System.err.println("[MetalRender] NativeLoader failed, trying loadLibrary: "
+            + e.getMessage());
+      }
+      if (NativeLoader.getLoadedPath() != null) {
+        libLoaded = true;
+        return;
+      }
       System.loadLibrary("metalrender");
       libLoaded = true;
     }

@@ -8,6 +8,7 @@ import com.pebbles_boon.metalrender.gui.MetalRenderProfilerOverlay;
 import com.pebbles_boon.metalrender.gui.MetalRenderSettingsScreen;
 import com.pebbles_boon.metalrender.nativebridge.MetalHardwareChecker;
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
+import com.pebbles_boon.metalrender.nativebridge.NativeLoader;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
 import com.pebbles_boon.metalrender.util.MetalLogger;
 import net.fabricmc.api.ClientModInitializer;
@@ -30,6 +31,11 @@ public class MetalRenderClient implements ClientModInitializer {
 
   @Override
   public void onInitializeClient() {
+    try {
+      NativeLoader.load();
+    } catch (RuntimeException e) {
+      MetalLogger.warn("native pre-sign fail: %s", e.getMessage());
+    }
     if (StartupBlocker.shouldBlockStartup()) {
       return;
     }
