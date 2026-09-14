@@ -8,10 +8,8 @@ import net.minecraft.network.chat.Component;
 
 public class MetalOptionSlider extends AbstractSliderButton {
 
-  private static final int C_TRACK = 0xFF48484A;
-  private static final int C_FILL = 0xFF007AFF;
   private static final int C_KNOB = 0xFFFFFFFF;
-  private static final int C_KNOB_EDGE = 0xFF636366;
+  private static final int C_KNOB_SHADOW = 0x40000000;
 
   private final float minValue;
   private final float maxValue;
@@ -69,21 +67,42 @@ public class MetalOptionSlider extends AbstractSliderButton {
   public void extractWidgetRenderState(GuiGraphicsExtractor ctx, int mx, int my,
       float delta) {
     int x = getX(), y = getY(), w = getWidth(), h = getHeight();
+    com.pebbles_boon.metalrender.gui.UiTheme th = com.pebbles_boon.metalrender.gui.MetalRenderSettingsScreen.getActiveTheme();
+    int C_TRACK = th.isLight ? 0xFFE8DED8 : 0xFF3A3A40;
+    int C_TRACK_HI = th.isLight ? 0xFFFFFFFF : 0xFF4A4A54;
+    int C_FILL = th.accent;
+    int C_FILL_GRAD = th.accentGrad;
 
-    int trackY = y + h / 2 - 2;
-    int trackH = 4;
-    ctx.fill(x, trackY, x + w, trackY + trackH, C_TRACK);
-
+    int trackH = 6;
+    int trackY = y + h / 2 - 3;
+    int r = 3;
+    fillRoundedTrack(ctx, x, trackY, w, trackH, C_TRACK, r);
+    ctx.fill(x + r, trackY, x + w - r, trackY + 1, C_TRACK_HI);
     int fillW = (int) (this.value * w);
     if (fillW > 0) {
-      ctx.fill(x, trackY, x + fillW, trackY + trackH, C_FILL);
+      int fw = Math.max(r * 2, fillW);
+      ctx.fillGradient(x, trackY, x + fw, trackY + trackH, C_FILL, C_FILL_GRAD);
+      ctx.fill(x + r, trackY, x + fw - r, trackY + 1, 0x55FFFFFF);
+      if (fillW >= w - 1) ctx.fill(x + w - r, trackY + 1, x + w, trackY + trackH - 1, C_FILL_GRAD);
     }
-
-    int kw = 8, kh = h;
+    int knob = 12;
+    int kw = knob, kh = knob;
     int kx = x + fillW - kw / 2;
     kx = Math.max(x, Math.min(x + w - kw, kx));
-    int ky = y;
-    ctx.fill(kx, ky, kx + kw, ky + kh, C_KNOB_EDGE);
-    ctx.fill(kx + 1, ky + 1, kx + kw - 1, ky + kh - 1, C_KNOB);
+    int ky = y + h / 2 - kh / 2;
+    ctx.fill(kx + 1, ky + kh - 1, kx + kw - 1, ky + kh + 1, C_KNOB_SHADOW);
+    ctx.fill(kx + 2, ky + kh, kx + kw - 2, ky + kh + 1, 0x30000000);
+    fillRoundedTrack(ctx, kx, ky, kw, kh, C_KNOB, 6);
+    ctx.fill(kx + 3, ky + 2, kx + kw - 3, ky + 4, 0xFFFFFFFF);
+  }
+
+  private static void fillRoundedTrack(GuiGraphicsExtractor ctx, int x, int y, int w, int h, int col, int r) {
+    if (w <= 0 || h <= 0) return;
+    ctx.fill(x + r, y, x + w - r, y + h, col);
+    ctx.fill(x, y + r, x + w, y + h - r, col);
+    ctx.fill(x + 1, y + 1, x + r, y + r, col);
+    ctx.fill(x + w - r, y + 1, x + w - 1, y + r, col);
+    ctx.fill(x + 1, y + h - r, x + r, y + h - 1, col);
+    ctx.fill(x + w - r, y + h - r, x + w - 1, y + h - 1, col);
   }
 }

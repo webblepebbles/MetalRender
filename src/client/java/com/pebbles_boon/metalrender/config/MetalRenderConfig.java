@@ -36,6 +36,11 @@ public final class MetalRenderConfig {
   public boolean enableIndirectCommandBuffers = true;
   public boolean enableCameraFacingCulling = true;
   public boolean enableOcclusionCulling = true;
+  public String uiTheme = "LIQUID_GLASS";
+  public String customHexBg = "0A0E16";
+  public String customHexPanel = "1E242E";
+  public String customHexAccent = "5AC8FF";
+  public String customHexText = "E8F0FF";
   private static volatile float resolutionScale = 1.0f;
   private static volatile boolean adaptiveResolutionEnabled = true;
   private static volatile boolean metalFXTemporalEnabled = true;
@@ -138,6 +143,12 @@ public final class MetalRenderConfig {
           cfg.lodViewImpact = obj.get("lodViewImpact").getAsBoolean();
         if (obj.has("lodSkeletonFirst"))
           cfg.lodSkeletonFirst = obj.get("lodSkeletonFirst").getAsBoolean();
+        if (obj.has("uiTheme"))
+          cfg.uiTheme = obj.get("uiTheme").getAsString();
+        if (obj.has("customHexBg")) cfg.customHexBg = obj.get("customHexBg").getAsString();
+        if (obj.has("customHexPanel")) cfg.customHexPanel = obj.get("customHexPanel").getAsString();
+        if (obj.has("customHexAccent")) cfg.customHexAccent = obj.get("customHexAccent").getAsString();
+        if (obj.has("customHexText")) cfg.customHexText = obj.get("customHexText").getAsString();
 
         if (obj.has("savedResolutionScale"))
           resolutionScale = clamp(obj.get("savedResolutionScale").getAsFloat(), 0.20f, 1.5f);
@@ -204,6 +215,11 @@ public final class MetalRenderConfig {
       obj.addProperty("lodStickyTiers", lodStickyTiers);
       obj.addProperty("lodViewImpact", lodViewImpact);
       obj.addProperty("lodSkeletonFirst", lodSkeletonFirst);
+      obj.addProperty("uiTheme", uiTheme);
+      obj.addProperty("customHexBg", customHexBg);
+      obj.addProperty("customHexPanel", customHexPanel);
+      obj.addProperty("customHexAccent", customHexAccent);
+      obj.addProperty("customHexText", customHexText);
 
       obj.addProperty("savedResolutionScale", resolutionScale);
       obj.addProperty("enableAdaptiveResolution", adaptiveResolutionEnabled);
