@@ -89,6 +89,7 @@ public class MetalWorldRenderer {
   private static final int LOD_RING_COLLECT_CAP = 128;
   private static final int LOD_RING_UPGRADES_PER_FRAME = 24;
   private static final int LOD_RING_DEMOTIONS_PER_FRAME = 6;
+  private static final int LOD_RING_SLICE_SIZE = 4096;
   private static final int LOD_RECENCY_PULL_INTERVAL = 30;
   private static final int MAX_LOD_RECENCY_DEMOTIONS_PER_PASS = 8;
   private static final int LOD_RECENCY_SCRATCH_SIZE = 32768;
@@ -160,6 +161,28 @@ public class MetalWorldRenderer {
   private final Matrix4f asyncMVScratch = new Matrix4f();
   private final Vector3f asyncCamScratch = new Vector3f();
   private final Matrix4f vpScratch = new Matrix4f();
+  private final Matrix4f metalProjScratch = new Matrix4f();
+  private final Vector3f camDirScratch = new Vector3f();
+  private final Vector3f camFwdScratch = new Vector3f();
+  private float lastFogAppliedR = Float.NaN;
+  private float lastFogAppliedG = Float.NaN;
+  private float lastFogAppliedB = Float.NaN;
+  private float lastFogAppliedEnvStart = Float.NaN;
+  private float lastFogAppliedEnvEnd = Float.NaN;
+  private float lastFogAppliedRenderStart = Float.NaN;
+  private float lastFogAppliedRenderEnd = Float.NaN;
+  private float lastSkyApplied = Float.NaN;
+  private long lastAtlasApplied;
+  private long lastLightmapApplied;
+  private long lastPipelineApplied;
+  private boolean lastFaceCullApplied = true;
+  private int lastRenderDistApplied = Integer.MIN_VALUE;
+  private java.nio.ByteBuffer outlineDirectBuf;
+  private double lastOutlineBx;
+  private double lastOutlineBy;
+  private double lastOutlineBz;
+  private int lastOutlineDrawCount = -1;
+  private long lastOutlineUploadPos = Long.MIN_VALUE;
   private int lodRingRunFrame = -1000;
   private final java.util.ArrayList<LodCandidate> lodUpgradeScratch = new java.util.ArrayList<>(64);
   private final java.util.ArrayList<LodCandidate> lodDemotionScratch = new java.util.ArrayList<>(16);
@@ -207,6 +230,14 @@ public class MetalWorldRenderer {
   public void onWorldLoad() {
     AsyncCullTask.reset();
     lodPolicy.clear();
+    lastAtlasApplied = 0;
+    lastLightmapApplied = 0;
+    lastPipelineApplied = 0;
+    lastRenderDistApplied = Integer.MIN_VALUE;
+    lastSkyApplied = Float.NaN;
+    lastFogAppliedR = Float.NaN;
+    lastOutlineUploadPos = Long.MIN_VALUE;
+    lastOutlineDrawCount = -1;
     scanDirty = true;
     nextOcclusionFrame = 0;
     occlusionBackoffMult = 1;
@@ -283,6 +314,7 @@ public class MetalWorldRenderer {
     lodRingPlayerCZ = Integer.MIN_VALUE;
     lodRingMeshGen = Integer.MIN_VALUE;
     lodRingThermalBias = Integer.MIN_VALUE;
+    lodRingCursor = 0;
     lodRingBacklog = false;
     lodRingBoostKeys.clear();
     lastResizeW = -1;
@@ -474,15 +506,7 @@ public class MetalWorldRenderer {
         (float) cameraZ);
 
     long cullStart = System.nanoTime();
-    FrustumCuller latest = AsyncCullTask.getCurrentCull();
-    if (latest != null) {
-      frustumCuller.copyFrom(latest);
-    } else {
-      frustumCuller.update(projectionMatrix, modelViewMatrix, camPos);
-    }
-    asyncProjScratch.set(projectionMatrix);
-    asyncMVScratch.set(modelViewMatrix);
-    AsyncCullTask.submitFrustumUpdate(asyncProjScratch, asyncMVScratch, camPos);
+    frustumCuller.update(projectionMatrix, modelViewMatrix, camPos);
     MetalRenderProfiler.getInstance().recordCullTime(System.nanoTime() - cullStart);
 
     boolean frustumStable = !cullingOrcreator.isActive();
@@ -503,34 +527,46 @@ public class MetalWorldRenderer {
       }
     }
     lastDrawnChunkCount = 0;
-    Matrix4f metalProj = new Matrix4f(projectionMatrix);
-    metalProj.m02(0.5f * metalProj.m02() + 0.5f * metalProj.m03());
-    metalProj.m12(0.5f * metalProj.m12() + 0.5f * metalProj.m13());
-    metalProj.m22(0.5f * metalProj.m22() + 0.5f * metalProj.m23());
-    metalProj.m32(0.5f * metalProj.m32() + 0.5f * metalProj.m33());
-    renderer.setProjectionMatrix(metalProj);
+    metalProjScratch.set(projectionMatrix);
+    metalProjScratch.m02(0.5f * metalProjScratch.m02() + 0.5f * metalProjScratch.m03());
+    metalProjScratch.m12(0.5f * metalProjScratch.m12() + 0.5f * metalProjScratch.m13());
+    metalProjScratch.m22(0.5f * metalProjScratch.m22() + 0.5f * metalProjScratch.m23());
+    metalProjScratch.m32(0.5f * metalProjScratch.m32() + 0.5f * metalProjScratch.m33());
+    renderer.setProjectionMatrix(metalProjScratch);
     renderer.setModelViewMatrix(modelViewMatrix);
     renderer.setCameraPosition(cameraX, cameraY, cameraZ);
-    Vector3f cameraDirection = camera.rotation().transform(new Vector3f(0.0f, 0.0f, 1.0f)).normalize();
+    camDirScratch.set(0.0f, 0.0f, 1.0f);
+    camera.rotation().transform(camDirScratch);
+    float invLen = 1.0f / Math.max(1e-6f, camDirScratch.length());
+    camDirScratch.mul(invLen);
     if (NativeBridge.isLibLoaded()) {
-      NativeBridge.nSetCameraDirection(renderer.getHandle(), cameraDirection.x,
-          cameraDirection.y, cameraDirection.z);
+      NativeBridge.nSetCameraDirection(renderer.getHandle(), camDirScratch.x,
+          camDirScratch.y, camDirScratch.z);
       MetalRenderConfig config = MetalRenderClient.getConfig();
-      NativeBridge.nSetCameraFacingCulling(
-          config != null && config.enableCameraFacingCulling);
+      boolean wantFaceCull = config != null && config.enableCameraFacingCulling;
+      if (wantFaceCull != lastFaceCullApplied) {
+        NativeBridge.nSetCameraFacingCulling(wantFaceCull);
+        lastFaceCullApplied = wantFaceCull;
+      }
     }
     if (NativeBridge.isLibLoaded()) {
-      NativeBridge.nSetRenderDistance(
-          Minecraft.getInstance().options.getEffectiveRenderDistance() * 16);
+      int wantRenderDistBlocks =
+          Minecraft.getInstance().options.getEffectiveRenderDistance() * 16;
+      if (wantRenderDistBlocks != lastRenderDistApplied) {
+        NativeBridge.nSetRenderDistance(wantRenderDistBlocks);
+        lastRenderDistApplied = wantRenderDistBlocks;
+      }
     }
     if (texturesReady) {
       long blockAtlas = textureManager.getBlockAtlasTexture();
-      if (blockAtlas != 0) {
+      if (blockAtlas != 0 && blockAtlas != lastAtlasApplied) {
         renderer.bindTexture(blockAtlas, 0);
+        lastAtlasApplied = blockAtlas;
       }
       long lightmap = textureManager.getLightmapTexture();
-      if (lightmap != 0) {
+      if (lightmap != 0 && lightmap != lastLightmapApplied) {
         renderer.bindTexture(lightmap, 1);
+        lastLightmapApplied = lightmap;
       }
     }
     NativeBridge.nSetReuseTerrainFrame(false);
@@ -540,13 +576,28 @@ public class MetalWorldRenderer {
         long inhousePipeline = renderer.getBackend().getInhousePipelineHandle();
         if (inhousePipeline != 0) {
           NativeBridge.nSetPipelineState(frameCtx, inhousePipeline);
+          lastPipelineApplied = inhousePipeline;
         }
         float skyFactor = resolveSkyLightFactor(camera, tickDelta);
-        NativeBridge.nSetSkyBrightness(frameCtx, skyFactor);
+        if (Float.floatToRawIntBits(skyFactor) != Float.floatToRawIntBits(lastSkyApplied)) {
+          NativeBridge.nSetSkyBrightness(frameCtx, skyFactor);
+          lastSkyApplied = skyFactor;
+        }
 
         try {
-          NativeBridge.nSetFog(fogR, fogG, fogB,
-              fogEnvStart, fogEnvEnd, fogRenderStart, fogRenderEnd);
+          if (fogR != lastFogAppliedR || fogG != lastFogAppliedG || fogB != lastFogAppliedB
+              || fogEnvStart != lastFogAppliedEnvStart || fogEnvEnd != lastFogAppliedEnvEnd
+              || fogRenderStart != lastFogAppliedRenderStart || fogRenderEnd != lastFogAppliedRenderEnd) {
+            NativeBridge.nSetFog(fogR, fogG, fogB,
+                fogEnvStart, fogEnvEnd, fogRenderStart, fogRenderEnd);
+            lastFogAppliedR = fogR;
+            lastFogAppliedG = fogG;
+            lastFogAppliedB = fogB;
+            lastFogAppliedEnvStart = fogEnvStart;
+            lastFogAppliedEnvEnd = fogEnvEnd;
+            lastFogAppliedRenderStart = fogRenderStart;
+            lastFogAppliedRenderEnd = fogRenderEnd;
+          }
         } catch (Exception ignored) {
         }
         if (argumentBufferHandle == 0 && meshShaderBackend != null &&
@@ -760,18 +811,15 @@ public class MetalWorldRenderer {
       }
 
       int dataLen = scalarCount * Float.BYTES;
-      if (outlineDataBuf.length < dataLen) {
-        outlineDataBuf = new byte[dataLen];
+      if (outlineDirectBuf == null || outlineDirectBuf.capacity() < dataLen) {
+        outlineDirectBuf = java.nio.ByteBuffer.allocateDirect(Math.max(dataLen, 4096))
+            .order(java.nio.ByteOrder.nativeOrder());
       }
-      byte[] data = outlineDataBuf;
-      int dataIndex = 0;
-      for (int index = 0; index < scalarCount; index++) {
-        int bits = Float.floatToRawIntBits(outlineVerts[index]);
-        data[dataIndex++] = (byte) bits;
-        data[dataIndex++] = (byte) (bits >>> 8);
-        data[dataIndex++] = (byte) (bits >>> 16);
-        data[dataIndex++] = (byte) (bits >>> 24);
-      }
+      outlineDirectBuf.clear();
+      outlineDirectBuf.limit(dataLen);
+      java.nio.FloatBuffer fb = outlineDirectBuf.asFloatBuffer();
+      fb.put(outlineVerts, 0, scalarCount);
+      outlineDirectBuf.position(0);
       MetalRenderer renderer = MetalRenderClient.getRenderer();
       if (renderer == null) {
         return;
@@ -785,7 +833,7 @@ public class MetalWorldRenderer {
             device, dataLen, NativeMemory.STORAGE_MODE_SHARED);
         outlineBufferSize = dataLen;
       }
-      NativeBridge.nUploadBufferData(outlineBufferHandle, data, 0, dataLen);
+      NativeBridge.nUploadBufferDataDirect(outlineBufferHandle, outlineDirectBuf, 0, dataLen);
       NativeBridge.nSetDebugColor(frameCtx, 0.0f, 0.0f, 0.0f, 0.4f);
       NativeBridge.nDrawTriangleBuffer(frameCtx, outlineBufferHandle, drawVertexCount);
     } catch (Exception e) {
@@ -820,9 +868,12 @@ public class MetalWorldRenderer {
   private int lodRingPlayerCZ = Integer.MIN_VALUE;
   private int lodRingMeshGen = Integer.MIN_VALUE;
   private int lodRingThermalBias = Integer.MIN_VALUE;
+  private int lodRingCursor;
   private boolean lodRingBacklog = false;
   private final it.unimi.dsi.fastutil.longs.LongOpenHashSet lodRingBoostKeys =
       new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+  private final it.unimi.dsi.fastutil.longs.LongArrayList pruneScratch =
+      new it.unimi.dsi.fastutil.longs.LongArrayList(256);
   private final LodPolicy lodPolicy = new LodPolicy();
 
   private static final int OCCLUSION_INTERVAL_FRAMES = 30;
@@ -1575,7 +1626,7 @@ public class MetalWorldRenderer {
       if (!lodRingBacklog && meshGen == lodRingMeshGen) {
         return;
       }
-      if (frameCount - lodRingRunFrame < 3) {
+      if (!lodRingBacklog && frameCount - lodRingRunFrame < 3) {
         return;
       }
       if (pendingBuildSet.size() + chunkMesher.getPendingCount() >= CHUNK_BACKLOG_PRESSURE_THRESHOLD) {
@@ -1624,7 +1675,19 @@ public class MetalWorldRenderer {
     upgrades.clear();
     demotions.clear();
     int meshCount = chunkMesher.getMeshSnapshotSize();
-    for (int i = 0; i < meshCount; i++) {
+    if (lodRingCursor < 0 || lodRingCursor >= meshCount) {
+      lodRingCursor = 0;
+    }
+    int slice = Math.min(meshCount, LOD_RING_SLICE_SIZE);
+    boolean sliced = meshCount > LOD_RING_SLICE_SIZE;
+    if (moved) {
+      lodRingCursor = 0;
+      if (!sliced) {
+        slice = meshCount;
+      }
+    }
+    for (int n = 0; n < slice; n++) {
+      int i = (lodRingCursor + n) % Math.max(1, meshCount);
       CustomChunkMesher.ChunkMeshData mesh = chunkMesher.getMeshSnapshotAt(i);
       if (mesh == null) {
         continue;
@@ -1684,6 +1747,12 @@ public class MetalWorldRenderer {
         }
         float impact = distSq * (1.0f - Math.min(1.0f, Math.max(0.0f, viewScore)));
         demotions.add(new LodCandidate(key, impact, mesh.chunkX, mesh.chunkY, mesh.chunkZ, targetLod));
+      }
+    }
+    if (meshCount > 0) {
+      lodRingCursor = (lodRingCursor + slice) % meshCount;
+      if (slice < meshCount) {
+        lodRingBacklog = true;
       }
     }
 
@@ -2007,25 +2076,20 @@ public class MetalWorldRenderer {
     float maxDist = (renderDist + extraMarginChunks) * 16.0f;
     float maxDistSq = maxDist * maxDist;
     var iter = chunkMesher.getAllMeshes().iterator();
-    java.util.ArrayList<long[]> toRemove = null;
+    pruneScratch.clear();
     while (iter.hasNext()) {
       CustomChunkMesher.ChunkMeshData mesh = iter.next();
       float dx = mesh.chunkX * 16.0f + 8.0f - camPos.x;
       float dz = mesh.chunkZ * 16.0f + 8.0f - camPos.z;
       if (dx * dx + dz * dz > maxDistSq) {
-        if (toRemove == null) {
-          toRemove = new java.util.ArrayList<>(64);
-        }
-        toRemove.add(new long[] { mesh.chunkX, mesh.chunkY, mesh.chunkZ });
+        pruneScratch.add(packChunkKey(mesh.chunkX, mesh.chunkY, mesh.chunkZ));
       }
     }
-    if (toRemove != null) {
-      for (long[] c : toRemove) {
-        chunkMesher.removeMesh((int) c[0], (int) c[1], (int) c[2]);
-        long prunedKey = packChunkKey((int) c[0], (int) c[1], (int) c[2]);
-        occlusionHidden.remove(prunedKey);
-        lodRingBoostKeys.remove(prunedKey);
-      }
+    for (int i = 0; i < pruneScratch.size(); i++) {
+      long prunedKey = pruneScratch.getLong(i);
+      chunkMesher.removeMesh(unpackChunkX(prunedKey), unpackChunkY(prunedKey), unpackChunkZ(prunedKey));
+      occlusionHidden.remove(prunedKey);
+      lodRingBoostKeys.remove(prunedKey);
     }
   }
 
@@ -2410,6 +2474,7 @@ public class MetalWorldRenderer {
     lodRingPlayerCZ = Integer.MIN_VALUE;
     lodRingMeshGen = Integer.MIN_VALUE;
     lodRingThermalBias = Integer.MIN_VALUE;
+    lodRingCursor = 0;
     lodRingBacklog = false;
     lodRingBoostKeys.clear();
     pendingBuildSet.clear();
