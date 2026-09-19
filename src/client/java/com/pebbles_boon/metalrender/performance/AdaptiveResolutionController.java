@@ -8,7 +8,7 @@ public final class AdaptiveResolutionController {
   private static final long CHANGE_COOLDOWN_MS = 1500;
   private static final double DOWN_STEP = 0.85;
   private static final double UP_STEP = 1.12;
-  private static final double MIN_SCALE = 0.50;
+  private static final double MIN_SCALE = 0.70;
   private static final double MAX_SCALE = 1.0;
   private static final double HIGH_WATERMARK_RATIO = 0.80;
   private static final double LOW_WATERMARK_RATIO = 0.62;
@@ -22,7 +22,7 @@ public final class AdaptiveResolutionController {
   private int sampleCount;
   private long lastCheckMs;
   private long lastChangeMs;
-  private volatile double frameBudgetMs = 1700.666;
+  private volatile double frameBudgetMs = 16.666;
 
   private AdaptiveResolutionController() {
   }
@@ -32,7 +32,7 @@ public final class AdaptiveResolutionController {
   }
 
   public void setFrameBudgetMs(double budgetMs) {
-    if (budgetMs > 4.0 && budgetMs < 100.0) {
+    if (budgetMs >= 2.0 && budgetMs < 100.0) {
       frameBudgetMs = budgetMs;
     }
   }
