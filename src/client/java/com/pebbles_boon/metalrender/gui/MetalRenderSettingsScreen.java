@@ -610,7 +610,7 @@ public class MetalRenderSettingsScreen extends Screen {
       int maxThemeTextW = stateX - tx - 10;
       if (maxThemeTextW < 40) maxThemeTextW = 40;
       String themeName = truncateLabel(font, th.displayName, maxThemeTextW);
-      String themeSub = truncateLabel(font, th.displayLabel, maxThemeTextW);
+      String themeSub = truncateLabel(font, th.displayName, maxThemeTextW);
       ctx.text(font, Component.literal(themeName), tx, y + 14, C_TEXT_PRI, false);
       ctx.text(font, Component.literal(themeSub), tx, y + 28, C_TEXT_SEC, false);
       if (th.isLight) {
