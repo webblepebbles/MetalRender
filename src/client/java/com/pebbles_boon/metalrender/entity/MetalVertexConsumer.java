@@ -209,8 +209,4 @@ public class MetalVertexConsumer implements VertexConsumer {
     quadVertexIndex = 0;
     buffer.clear();
   }
-
-  public static int getVertexStride() {
-    return VERTEX_STRIDE;
-  }
 }

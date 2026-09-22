@@ -61,7 +61,6 @@ public final class MetalRenderProfiler {
   private volatile double latestGpuMs;
   private volatile double lastMeshMs;
   private volatile double lastUploadMs;
-  private volatile double lastCullMs;
   private volatile double lastGpuMs;
 
   private long lastLogTimeMs;
@@ -87,10 +86,6 @@ public final class MetalRenderProfiler {
 
   public double getLastUploadMs() {
     return lastUploadMs;
-  }
-
-  public double getLastCullMs() {
-    return lastCullMs;
   }
 
   public double getLastGpuMs() {
@@ -202,7 +197,6 @@ public final class MetalRenderProfiler {
     latestGpuMs = gpuMs;
     lastMeshMs = meshMs;
     lastUploadMs = uploadMs;
-    lastCullMs = cullMs;
     lastGpuMs = gpuMs;
 
     int meshesBuilt = meshesBuiltAcc.getAndSet(0);

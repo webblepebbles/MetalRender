@@ -103,19 +103,6 @@ public final class IOSurfaceBlitter {
           fragColor = texColor;
       }
       """;
-  private static final String RECT_FRAGMENT_SHADER = """
-      #version 150 core
-      in vec2 vTexCoord;
-      out vec4 fragColor;
-      uniform sampler2DRect uTextureRect;
-      uniform vec2 uTexSize;
-      void main() {
-          vec2 rc = vec2(vTexCoord.x * uTexSize.x, (1.0 - vTexCoord.y) * uTexSize.y);
-          vec4 texColor = texture(uTextureRect, rc);
-          if (texColor.a < 0.001) discard;
-          fragColor = texColor;
-      }
-      """;
   private static final String DEPTH_FRAGMENT_SHADER = """
       #version 150 core
       in vec2 vTexCoord;
@@ -458,96 +445,6 @@ public final class IOSurfaceBlitter {
     GL11.glPixelStorei(GL11.GL_UNPACK_ALIGNMENT, 4);
     GL11.glTexSubImage2D(GL11.GL_TEXTURE_2D, 0, 0, 0, width, height, GL_BGRA,
         GL11.GL_UNSIGNED_BYTE, pixelBuffer);
-  }
-
-  private boolean drawDirectRect(int width, int height) {
-    if (rectShaderProgram == 0) {
-      rectShaderProgram = createRectShaderProgram();
-      if (rectShaderProgram == 0) {
-        return false;
-      }
-      GL20.glUseProgram(rectShaderProgram);
-      int texLoc = GL20.glGetUniformLocation(rectShaderProgram, "uTextureRect");
-      if (texLoc >= 0)
-        GL20.glUniform1i(texLoc, 0);
-      rectTexSizeLoc = GL20.glGetUniformLocation(rectShaderProgram, "uTexSize");
-      GL20.glUseProgram(0);
-    }
-    int prevProgram = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
-    int prevVao = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING);
-    boolean wasDepth = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
-    boolean wasBlend = GL11.glIsEnabled(GL11.GL_BLEND);
-    boolean wasScissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
-    boolean wasDepthMask = GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK);
-    int[] prevViewport = blitViewportBuf;
-    GL11.glGetIntegerv(GL11.GL_VIEWPORT, prevViewport);
-    try {
-      GL11.glViewport(0, 0, width, height);
-      GL11.glDisable(GL11.GL_DEPTH_TEST);
-      GL11.glDepthMask(false);
-      GL11.glEnable(GL11.GL_BLEND);
-      GL14.glBlendFuncSeparate(GL11.GL_SRC_ALPHA, GL11.GL_ONE_MINUS_SRC_ALPHA,
-          GL11.GL_ONE, GL11.GL_ONE_MINUS_SRC_ALPHA);
-      GL11.glDisable(GL11.GL_CULL_FACE);
-      GL11.glDisable(GL11.GL_SCISSOR_TEST);
-      GL11.glDisable(GL11.GL_STENCIL_TEST);
-      GL11.glColorMask(true, true, true, true);
-      GL20.glUseProgram(rectShaderProgram);
-      if (rectTexSizeLoc >= 0) {
-        GL20.glUniform2f(rectTexSizeLoc, (float) width, (float) height);
-      }
-      GL13.glActiveTexture(GL13.GL_TEXTURE0);
-      GL11.glBindTexture(GL_TEXTURE_RECTANGLE, glTextureRect);
-      GL30.glBindVertexArray(vao);
-      GL11.glDrawArrays(GL11.GL_TRIANGLES, 0, 6);
-      GL30.glBindVertexArray(0);
-      GL11.glBindTexture(GL_TEXTURE_RECTANGLE, 0);
-      return true;
-    } finally {
-      GL11.glViewport(prevViewport[0], prevViewport[1], prevViewport[2],
-          prevViewport[3]);
-      GL20.glUseProgram(prevProgram);
-      GL30.glBindVertexArray(prevVao);
-      GL11.glDepthMask(wasDepthMask);
-      if (wasDepth)
-        GL11.glEnable(GL11.GL_DEPTH_TEST);
-      else
-        GL11.glDisable(GL11.GL_DEPTH_TEST);
-      if (wasBlend)
-        GL11.glEnable(GL11.GL_BLEND);
-      else
-        GL11.glDisable(GL11.GL_BLEND);
-      if (wasScissor)
-        GL11.glEnable(GL11.GL_SCISSOR_TEST);
-      else
-        GL11.glDisable(GL11.GL_SCISSOR_TEST);
-    }
-  }
-
-  private int createRectShaderProgram() {
-    int vs = compileShader(GL20.GL_VERTEX_SHADER, VERTEX_SHADER);
-    if (vs == 0)
-      return 0;
-    int fs = compileShader(GL20.GL_FRAGMENT_SHADER, RECT_FRAGMENT_SHADER);
-    if (fs == 0) {
-      GL20.glDeleteShader(vs);
-      return 0;
-    }
-    int prog = GL20.glCreateProgram();
-    GL20.glAttachShader(prog, vs);
-    GL20.glAttachShader(prog, fs);
-    GL20.glBindAttribLocation(prog, 0, "aPos");
-    GL20.glBindAttribLocation(prog, 1, "aTexCoord");
-    GL20.glLinkProgram(prog);
-    GL20.glDeleteShader(vs);
-    GL20.glDeleteShader(fs);
-    if (GL20.glGetProgrami(prog, GL20.GL_LINK_STATUS) == GL11.GL_FALSE) {
-      MetalLogger.error("[iosurface] rect shader fail: %s",
-          GL20.glGetProgramInfoLog(prog));
-      GL20.glDeleteProgram(prog);
-      return 0;
-    }
-    return prog;
   }
 
   private boolean drawFullscreenQuad(int width, int height) {
@@ -1155,10 +1052,5 @@ public final class IOSurfaceBlitter {
       GL11.glDeleteTextures(intermediateTexture);
       intermediateTexture = 0;
     }
-  }
-
-  public void invalidate() {
-    boundWidth = 0;
-    boundHeight = 0;
   }
 }
