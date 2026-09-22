@@ -18,14 +18,6 @@ public final class CapturedMatrices {
     valid = true;
   }
 
-  public static Matrix4f getProjection() {
-    return projection;
-  }
-
-  public static Matrix4f getModelView() {
-    return modelView;
-  }
-
   public static double getCamX() {
     return camX;
   }

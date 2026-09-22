@@ -553,14 +553,6 @@ public class MetalParticleRenderer {
     MetalLogger.info("particle tex cache cleared");
   }
 
-  public int getLastParticleCount() {
-    return count;
-  }
-
-  public int getLastVertexCount() {
-    return vtxCount;
-  }
-
   public void shutdown() {
     active = false;
     cachedParticlePipeline = 0;

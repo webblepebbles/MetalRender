@@ -10,11 +10,6 @@ public final class VanillaFog {
       float r, float g, float b,
       float envStart, float envEnd,
       float renderStart, float renderEnd) {
-    public static FogState none() {
-      return new FogState(0.0f, 0.0f, 0.0f,
-          NO_FOG_DIST, NO_FOG_DIST, NO_FOG_DIST, NO_FOG_DIST);
-    }
-
     public boolean isFinite() {
       return Float.isFinite(r) && Float.isFinite(g) && Float.isFinite(b)
           && Float.isFinite(envStart) && Float.isFinite(envEnd)

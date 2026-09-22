@@ -6,10 +6,6 @@ public final class VanillaRenderState {
   private VanillaRenderState() {
   }
 
-  public static boolean isIOSurfaceBlitting() {
-    return ioSurfaceBlitting.get();
-  }
-
   public static void setIOSurfaceBlitting(boolean v) {
     ioSurfaceBlitting.set(v);
   }

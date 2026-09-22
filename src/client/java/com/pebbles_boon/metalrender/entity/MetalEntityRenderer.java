@@ -108,15 +108,6 @@ public class MetalEntityRenderer {
     return active;
   }
 
-  public boolean hasVisibleSubmergedEntities() {
-    for (int index = 0; index < count; index++) {
-      if (capturedEntityPool.get(index).isSubmerged) {
-        return true;
-      }
-    }
-    return false;
-  }
-
   public void captureEntity(Entity entity, float delta, Matrix4f model) {
     if (!active || entity == null || count >= MAX_ENTITIES_PER_FRAME) {
       return;
@@ -1051,21 +1042,6 @@ public class MetalEntityRenderer {
     }
     java.util.Arrays.fill(textureCache, TEXTURE_UNCACHED);
     MetalLogger.info("entity tex cache cleared");
-  }
-
-  public int getLastEntityCount() {
-    return pendingDrawCount;
-  }
-
-  public int getLastVertexCount() {
-    return vtxCount;
-  }
-
-  public void clearCapturedEntities() {
-    for (int entityIndex = 0; entityIndex < count; entityIndex++) {
-      capturedEntityPool.get(entityIndex).entity = null;
-    }
-    count = 0;
   }
 
   public void shutdown() {

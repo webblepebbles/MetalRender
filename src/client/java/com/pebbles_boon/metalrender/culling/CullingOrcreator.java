@@ -88,22 +88,6 @@ public class CullingOrcreator {
     return visibleClusterCount;
   }
 
-  public boolean isClusterVisible(int chunkX, int chunkZ) {
-    if (!active || visibleClusterCount == 0) {
-      return true;
-    }
-    return visibleClusterSet.contains(clusterKey(
-        floorDiv(chunkX, CLUSTER_X), floorDiv(chunkZ, CLUSTER_Z)));
-  }
-
-  public long getLastUploadNs() {
-    return lastUploadNs;
-  }
-
-  public int getCurrentClusterVisibleCount() {
-    return visibleClusterCount;
-  }
-
   public void setActive(boolean v) {
     active = v;
     if (!v) {

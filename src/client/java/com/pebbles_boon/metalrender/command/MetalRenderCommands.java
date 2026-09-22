@@ -209,10 +209,6 @@ public final class MetalRenderCommands {
         msg(src, "§esettings wreturned to default");
     }
 
-    private static String fmtPx(float value) {
-        return String.format(java.util.Locale.ROOT, "%.1f", value);
-    }
-
     private static void invalidateAllMeshes() {
         MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
         if (wr != null) {

@@ -70,14 +70,6 @@ public final class NativeLoader {
     return loadedPath;
   }
 
-  public static Path getMetallibPath() {
-    return metallibPath;
-  }
-
-  public static boolean isLoaded() {
-    return loaded;
-  }
-
   private static void extractResource(String resourcePath, Path target) throws IOException {
     try (InputStream in = NativeLoader.class.getResourceAsStream(resourcePath)) {
       if (in == null) {

@@ -96,17 +96,6 @@ public final class LodPolicy {
     return budget;
   }
 
-  public int computeSkeletonTierCap(int pending, int inFlight) {
-    int backlog = pending + inFlight;
-    if (backlog >= SKELETON_BACKLOG_HEAVY) {
-      return 2;
-    }
-    if (backlog >= SKELETON_BACKLOG_MEDIUM) {
-      return 1;
-    }
-    return 0;
-  }
-
   public Decision observeAndDecide(long key, int currentTier, int ringTier,
       boolean visible, float viewScore, boolean demotionIdle) {
     ChunkState state = states.get(key);

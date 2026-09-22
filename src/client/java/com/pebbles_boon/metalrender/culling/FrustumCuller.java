@@ -63,14 +63,6 @@ public class FrustumCuller {
     return true;
   }
 
-  public boolean isRegionVisible(int regionX, int regionZ, int minY, int maxY) {
-    float minX = regionX * 16.0f;
-    float minZ = regionZ * 16.0f;
-    float maxX = minX + 16.0f;
-    float maxZ = minZ + 16.0f;
-    return testBoundingBox(minX, (float) minY, minZ, maxX, (float) maxY, maxZ);
-  }
-
   public void copyFrom(FrustumCuller other) {
     for (int i = 0; i < 6; i++) {
       System.arraycopy(other.planes[i], 0, this.planes[i], 0, 4);

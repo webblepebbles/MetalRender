@@ -52,15 +52,6 @@ public class AsyncCullTask {
     });
   }
 
-  public static FrustumCuller getCurrentCull() {
-    CullResult r = latestRef.get();
-    return r != null ? r.culler : null;
-  }
-
-  public static long getCurrentHandle() {
-    CullResult r = latestRef.get();
-    return r != null ? r.handle : 0L;
-  }
   public static void reset() {
     latestRef.set(null);
     handleCounter.set(0);
