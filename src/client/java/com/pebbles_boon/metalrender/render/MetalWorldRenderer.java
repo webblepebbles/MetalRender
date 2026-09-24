@@ -122,6 +122,8 @@ public class MetalWorldRenderer {
   private final FrustumCuller frustumCuller;
   private final MetalEntityRenderer entityRenderer;
   private final MetalParticleRenderer particleRenderer;
+  private final MetalCloudRenderer cloudRenderer;
+  private final MetalWeatherRenderer weatherRenderer;
   private final CustomChunkMesher chunkMesher;
   private final MetalTextureManager textureManager;
   private final IOSurfaceBlitter ioSurfaceBlitter;
@@ -210,6 +212,8 @@ public class MetalWorldRenderer {
     this.frustumCuller = new FrustumCuller();
     this.entityRenderer = new MetalEntityRenderer();
     this.particleRenderer = new MetalParticleRenderer();
+    this.cloudRenderer = new MetalCloudRenderer();
+    this.weatherRenderer = new MetalWeatherRenderer();
     this.chunkMesher = new CustomChunkMesher();
     this.readinessCache = new it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap();
     this.lightReadinessCache = new it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap();
@@ -262,9 +266,13 @@ public class MetalWorldRenderer {
       chunkMesher.initialize(renderer.getBackend().getDeviceHandle());
       entityRenderer.setup(renderer.getBackend().getDeviceHandle(), 0);
       particleRenderer.setup(renderer.getBackend().getDeviceHandle());
+      cloudRenderer.setup(renderer.getBackend().getDeviceHandle());
+      weatherRenderer.setup(renderer.getBackend().getDeviceHandle());
       renderingActive = true;
       entityRenderer.setActive(true);
       particleRenderer.setActive(true);
+      cloudRenderer.setActive(true);
+      weatherRenderer.setActive(true);
       texturesReady = false;
       long handle = renderer.getBackend().getDeviceHandle();
       meshShaderBackend = new MeshShaderBackend();
@@ -305,6 +313,8 @@ public class MetalWorldRenderer {
     texturesReady = false;
     entityRenderer.shutdown();
     particleRenderer.shutdown();
+    cloudRenderer.shutdown();
+    weatherRenderer.shutdown();
     textureManager.destroy();
     ioSurfaceBlitter.destroy();
     chunkMesher.clear();
@@ -710,10 +720,31 @@ public class MetalWorldRenderer {
     if (frameCtx != 0) {
       boolean inWater = false;
       Minecraft mc = Minecraft.getInstance();
-      if (mc != null && mc.getCameraEntity() != null) {
-        inWater = mc.getCameraEntity().isUnderWater();
+      net.minecraft.client.Camera camera = null;
+      float tickDelta = 0.0f;
+      if (mc != null) {
+        if (mc.getCameraEntity() != null) {
+          inWater = mc.getCameraEntity().isUnderWater();
+        }
+        try {
+          camera = mc.gameRenderer.getMainCamera();
+          tickDelta = mc.getDeltaTracker().getGameTimeDeltaPartialTick(true);
+        } catch (Exception ignored) {
+        }
       }
       entityRenderer.renderCapturedEntities(frameCtx, inWater);
+      if (camera != null) {
+
+
+        try {
+          cloudRenderer.render(frameCtx, camera, tickDelta);
+        } catch (Exception ignored) {
+        }
+        try {
+          weatherRenderer.render(frameCtx, camera, tickDelta);
+        } catch (Exception ignored) {
+        }
+      }
       NativeBridge.nDrawDeferredWaterPass(frameCtx);
       NativeBridge.nDrawOITPass(frameCtx);
       particleRenderer.render(frameCtx);
@@ -721,6 +752,14 @@ public class MetalWorldRenderer {
     }
     renderer.endFrame();
     frameCount++;
+  }
+
+  public MetalCloudRenderer getCloudRenderer() {
+    return cloudRenderer;
+  }
+
+  public MetalWeatherRenderer getWeatherRenderer() {
+    return weatherRenderer;
   }
 
   private void renderBlockOutline(long frameCtx) {
