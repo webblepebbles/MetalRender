@@ -180,12 +180,39 @@ fragment float4 fragment_particle(
     constant float4& overlayParams [[buffer(5)]],
     constant FogUniforms& fog [[buffer(6)]]
 ) {
-    constexpr sampler texSampler(filter::nearest, mip_filter::nearest, address::clamp_to_edge);
-    float4 texColor = entityTex.sample(texSampler, in.texCoord);
 
-    if (texColor.a < 0.01) discard_fragment();
+
+    constexpr sampler texSampler(filter::linear, address::clamp_to_edge);
+    float4 texColor = entityTex.sample(texSampler, in.texCoord);
     float4 baseColor = texColor * in.color;
+
+    if (baseColor.a < 0.1) discard_fragment();
     float4 light = lightmap.sample(texSampler, in.lightUV);
+    baseColor.rgb *= light.rgb;
+    baseColor.rgb = vanilla_apply_fog(baseColor.rgb, in.fogSphCyl, fog);
+    return baseColor;
+}
+fragment float4 fragment_weather(
+    EntityVertexOut in [[stage_in]],
+    texture2d<float> entityTex  [[texture(0)]],
+    texture2d<float> lightmap   [[texture(1)]],
+    constant float4& overlayParams [[buffer(5)]],
+    constant FogUniforms& fog [[buffer(6)]]
+) {
+
+
+
+
+
+
+
+    constexpr sampler texSampler(filter::nearest, address::repeat);
+    constexpr sampler lightSampler(filter::linear, address::clamp_to_edge);
+    float4 texColor = entityTex.sample(texSampler, in.texCoord);
+    float4 baseColor = texColor * in.color;
+
+    if (baseColor.a < 0.1) discard_fragment();
+    float4 light = lightmap.sample(lightSampler, in.lightUV);
     baseColor.rgb *= light.rgb;
     baseColor.rgb = vanilla_apply_fog(baseColor.rgb, in.fogSphCyl, fog);
     return baseColor;
