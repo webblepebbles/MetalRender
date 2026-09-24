@@ -32,9 +32,18 @@ import org.joml.Quaternionf;
 import org.joml.Vector3f;
 
 public class MetalRenderCommandQueue implements SubmitNodeCollector {
+
+  public static final class DrawSegment {
+    public int startVertex;
+    public int vertexCount;
+    public int glTextureId;
+    public int renderFlags;
+  }
+
   private VertexConsumer vertexConsumer;
   private int requestedGlTextureId;
   private int defaultLight;
+  private final java.util.ArrayList<DrawSegment> segments = new java.util.ArrayList<>();
 
   public MetalRenderCommandQueue(VertexConsumer vertexConsumer, int light) {
     this.vertexConsumer = vertexConsumer;
@@ -45,15 +54,27 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
     this.vertexConsumer = vertexConsumer;
     this.requestedGlTextureId = 0;
     this.defaultLight = light;
+    this.segments.clear();
   }
 
   public int getRequestedGlTextureId() {
     return requestedGlTextureId;
   }
 
+  public java.util.List<DrawSegment> getSegments() {
+    return segments;
+  }
+
   @Override
   public OrderedSubmitNodeCollector order(int index) {
     return this;
+  }
+
+  private int currentVertexCount() {
+    if (vertexConsumer instanceof MetalVertexConsumer mvc) {
+      return mvc.getVertexCount();
+    }
+    return -1;
   }
 
   @Override
@@ -65,8 +86,22 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
     if (model == null) {
       return;
     }
+    int start = currentVertexCount();
     invokeSetupAnim(model, state);
     invokeRenderToBuffer(model, matrices, light, overlay, color);
+    int end = currentVertexCount();
+    if (start >= 0 && end > start) {
+      int glId = resolveRenderTypeTexture(layer);
+      if (glId != 0) {
+        requestedGlTextureId = glId;
+      }
+      DrawSegment seg = new DrawSegment();
+      seg.startVertex = start;
+      seg.vertexCount = end - start;
+      seg.glTextureId = glId;
+      seg.renderFlags = renderFlagsFor(layer);
+      segments.add(seg);
+    }
   }
 
   @Override
@@ -75,8 +110,196 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
       boolean visible, boolean noCull, int color,
       ModelFeatureRenderer.CrumblingOverlay crumbling, int extra) {
     if (part != null && (visible || noCull)) {
+      int start = currentVertexCount();
       part.render(matrices, vertexConsumer, light, overlay, color);
+      int end = currentVertexCount();
+      if (start >= 0 && end > start) {
+        int glId = resolveRenderTypeTexture(layer);
+        if (glId != 0) {
+          requestedGlTextureId = glId;
+        }
+        DrawSegment seg = new DrawSegment();
+        seg.startVertex = start;
+        seg.vertexCount = end - start;
+        seg.glTextureId = glId;
+        seg.renderFlags = renderFlagsFor(layer);
+        segments.add(seg);
+      }
     }
+  }
+
+  private static int renderFlagsFor(RenderType layer) {
+    if (layer == null) {
+      return 0;
+    }
+    try {
+      String name = layer.toString();
+      String lower = name != null ? name.toLowerCase(java.util.Locale.ROOT) : "";
+      if (lower.contains("eyes") || lower.contains("emissive") || lower.contains("energy")
+          || lower.contains("glint") || lower.contains("swirl") || lower.contains("beam")) {
+        return 0x2;
+      }
+    } catch (Exception ignored) {
+    }
+    try {
+      if (layer.hasBlending()) {
+        return 0x1;
+      }
+    } catch (Exception ignored) {
+    }
+    return 0;
+  }
+
+  private static int resolveRenderTypeTexture(RenderType layer) {
+    if (layer == null) {
+      return 0;
+    }
+    try {
+
+
+      java.lang.reflect.Field stateField = null;
+      for (Class<?> c = layer.getClass(); c != null; c = c.getSuperclass()) {
+        try {
+          stateField = c.getDeclaredField("state");
+          break;
+        } catch (NoSuchFieldException ignored) {
+        }
+      }
+      if (stateField == null) {
+        return 0;
+      }
+      stateField.setAccessible(true);
+      Object setup = stateField.get(layer);
+      if (setup == null) {
+        return 0;
+      }
+      java.lang.reflect.Field texturesField = null;
+      for (Class<?> c = setup.getClass(); c != null; c = c.getSuperclass()) {
+        try {
+          texturesField = c.getDeclaredField("textures");
+          break;
+        } catch (NoSuchFieldException ignored) {
+        }
+      }
+      if (texturesField == null) {
+        return 0;
+      }
+      texturesField.setAccessible(true);
+      Object mapObj = texturesField.get(setup);
+      if (!(mapObj instanceof java.util.Map<?, ?> texMap) || texMap.isEmpty()) {
+        return 0;
+      }
+      for (Object binding : texMap.values()) {
+        if (binding == null) {
+          continue;
+        }
+        try {
+
+
+          java.lang.reflect.Method locMethod = null;
+          try {
+            locMethod = binding.getClass().getDeclaredMethod("location");
+          } catch (NoSuchMethodException e) {
+            locMethod = binding.getClass().getMethod("location");
+          }
+          locMethod.setAccessible(true);
+          Object idObj = locMethod.invoke(binding);
+          if (idObj instanceof net.minecraft.resources.Identifier identifier) {
+            int glId = getTextureGlId(identifier);
+            if (glId != 0) {
+              return glId;
+            }
+
+
+
+          }
+        } catch (Exception ignored) {
+        }
+      }
+
+
+      try {
+        java.lang.reflect.Method getTextures = setup.getClass().getMethod("getTextures");
+        getTextures.setAccessible(true);
+        Object map2 = getTextures.invoke(setup);
+        if (map2 instanceof java.util.Map<?, ?> m2) {
+          for (Object sampler : m2.values()) {
+            int glId = glIdFromTextureAndSampler(sampler);
+            if (glId != 0) {
+              return glId;
+            }
+          }
+        }
+      } catch (Exception ignored) {
+      }
+    } catch (Exception ignored) {
+    }
+    return 0;
+  }
+
+  private static int glIdFromTextureAndSampler(Object textureAndSampler) {
+    if (textureAndSampler == null) {
+      return 0;
+    }
+    try {
+      java.lang.reflect.Method viewMethod = null;
+      try {
+        viewMethod = textureAndSampler.getClass().getDeclaredMethod("textureView");
+      } catch (NoSuchMethodException e) {
+        viewMethod = textureAndSampler.getClass().getMethod("textureView");
+      }
+      viewMethod.setAccessible(true);
+      Object view = viewMethod.invoke(textureAndSampler);
+      if (view == null) {
+        return 0;
+      }
+
+      for (Class<?> c = view.getClass(); c != null; c = c.getSuperclass()) {
+        for (java.lang.reflect.Field f : c.getDeclaredFields()) {
+          try {
+            f.setAccessible(true);
+            Object v = f.get(view);
+            if (v instanceof GlTexture gl) {
+              return gl.glId();
+            }
+            if (v != null) {
+
+              for (Class<?> c2 = v.getClass(); c2 != null && c2 != Object.class;
+                  c2 = c2.getSuperclass()) {
+                for (java.lang.reflect.Field f2 : c2.getDeclaredFields()) {
+                  try {
+                    f2.setAccessible(true);
+                    Object v2 = f2.get(v);
+                    if (v2 instanceof GlTexture gl2) {
+                      return gl2.glId();
+                    }
+                  } catch (Exception ignored) {
+                  }
+                }
+              }
+            }
+          } catch (Exception ignored) {
+          }
+        }
+      }
+    } catch (Exception ignored) {
+    }
+    return 0;
+  }
+
+  private static int getTextureGlId(net.minecraft.resources.Identifier textureId) {
+    try {
+      Minecraft mc = Minecraft.getInstance();
+      if (mc == null || mc.getTextureManager() == null) {
+        return 0;
+      }
+      AbstractTexture texture = mc.getTextureManager().getTexture(textureId);
+      if (texture != null && texture.getTexture() instanceof GlTexture glTexture) {
+        return glTexture.glId();
+      }
+    } catch (Exception ignored) {
+    }
+    return 0;
   }
 
   @Override
@@ -177,7 +400,21 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
   public void submitCustomGeometry(PoseStack matrices, RenderType layer,
       SubmitNodeCollector.CustomGeometryRenderer custom) {
     if (custom != null) {
+      int start = currentVertexCount();
       custom.render(matrices.last(), vertexConsumer);
+      int end = currentVertexCount();
+      if (start >= 0 && end > start) {
+        int glId = resolveRenderTypeTexture(layer);
+        if (glId != 0) {
+          requestedGlTextureId = glId;
+        }
+        DrawSegment seg = new DrawSegment();
+        seg.startVertex = start;
+        seg.vertexCount = end - start;
+        seg.glTextureId = glId;
+        seg.renderFlags = renderFlagsFor(layer);
+        segments.add(seg);
+      }
     }
   }
 
