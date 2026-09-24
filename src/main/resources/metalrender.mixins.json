@@ -19,6 +19,8 @@
     "SpriteContentsTickerMixin",
     "LightUpdateMixin",
     "WeatherRenderMixin",
+    "CloudRenderMixin",
+    "LevelCloudWeatherMixin",
     "accessor.BillboardParticleAccessor",
     "accessor.ParticleAccessor",
     "accessor.ParticleManagerAccessor"
