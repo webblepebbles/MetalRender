@@ -274,6 +274,7 @@ static id<MTLRenderPipelineState> g_pipelineEntityEmissive = nil;
 static id<MTLRenderPipelineState> g_pipelineEntityOutline = nil;
 static id<MTLRenderPipelineState> g_pipelineEntityShadow = nil;
 static id<MTLRenderPipelineState> g_pipelineParticle = nil;
+static id<MTLRenderPipelineState> g_pipelineWeather = nil;
 static id<MTLRenderPipelineState> g_pipelineDebugLines = nil;
 static id<MTLRenderPipelineState> g_pipelineDebugThickLines = nil;
 id<MTLDepthStencilState> g_depthState = nil;
@@ -1261,11 +1262,30 @@ fragment float4 fragment_particle(
 	constant FogUniforms& fog [[buffer(6)]]
 ) {
 
-	constexpr sampler texSampler(filter::nearest, address::clamp_to_edge);
+	constexpr sampler texSampler(filter::linear, address::clamp_to_edge);
 	float4 texColor = entityTex.sample(texSampler, in.texCoord);
-
-	if (texColor.a < 0.01) discard_fragment();
 	float4 baseColor = texColor * in.color;
+
+	if (baseColor.a < 0.1) discard_fragment();
+
+	float blockLight = clamp(in.lightUV.x, 0.0, 1.0);
+	float skyLight   = clamp(in.lightUV.y * overlayParams.w, 0.0, 1.0);
+	baseColor.rgb *= max(max(blockLight, skyLight), 0.3);
+
+	baseColor.rgb = vanilla_apply_fog(baseColor.rgb, in.fogSphCyl, fog);
+	return baseColor;
+}
+fragment float4 fragment_weather(
+	EntityVertexOut in [[stage_in]],
+	texture2d<float> entityTex  [[texture(0)]],
+	constant float4& overlayParams [[buffer(5)]],
+	constant FogUniforms& fog [[buffer(6)]]
+) {
+	constexpr sampler texSampler(filter::nearest, address::repeat);
+	float4 texColor = entityTex.sample(texSampler, in.texCoord);
+	float4 baseColor = texColor * in.color;
+
+	if (baseColor.a < 0.1) discard_fragment();
 
 	float blockLight = clamp(in.lightUV.x, 0.0, 1.0);
 	float skyLight   = clamp(in.lightUV.y * overlayParams.w, 0.0, 1.0);
@@ -1597,6 +1617,8 @@ kernel void mfx_preserve_alpha(
       @"vertex_entity", @"fragment_entity_shadow", @"EntityShadow", true);
   g_pipelineParticle = createEntityPipeline(
       @"vertex_entity", @"fragment_particle", @"Particle", true);
+  g_pipelineWeather = createEntityPipeline(
+      @"vertex_entity", @"fragment_weather", @"Weather", true);
   {
     id<MTLFunction> dbgVert =
         [g_shaderLibrary newFunctionWithName:@"vertex_debug"];
@@ -2536,7 +2558,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetPipelineState(
     [g_currentEncoder setRenderPipelineState:pipeline];
     g_currentPipeline = pipeline;
     bool isTranslucentPipeline = (pipeline == g_pipelineEntityTranslucent ||
-                                  pipeline == g_pipelineParticle);
+                                  pipeline == g_pipelineParticle ||
+                                  pipeline == g_pipelineWeather);
     id<MTLDepthStencilState> ds =
         isTranslucentPipeline ? g_depthStateLessEqual : g_depthState;
     if (ds)
@@ -5245,6 +5268,13 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetParticlePipelin
     JNIEnv *, jclass, jlong handle) {
   (void)handle;
   return (jlong)(uintptr_t)(__bridge void *)g_pipelineParticle;
+}
+extern "C" JNIEXPORT jlong JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetWeatherPipelineHandle(
+    JNIEnv *, jclass, jlong handle) {
+  (void)handle;
+  if (!g_pipelineWeather) return 0;
+  return (jlong)(uintptr_t)(__bridge void *)g_pipelineWeather;
 }
 extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetEntityOverlay(
