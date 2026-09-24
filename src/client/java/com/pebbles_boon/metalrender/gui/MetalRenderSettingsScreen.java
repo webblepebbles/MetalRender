@@ -322,6 +322,20 @@ public class MetalRenderSettingsScreen extends Screen {
     }
   }
 
+  private static final int HEX_AREA_H = 52;
+  private static final int HEX_APPLY_W = 54;
+
+  private int contentH() {
+    if (selectedTab == 5) {
+      return Math.max(40, ch - HEX_AREA_H);
+    }
+    return ch;
+  }
+
+  private int hexTop() {
+    return cy + contentH();
+  }
+
   @Override
   public void extractRenderState(GuiGraphicsExtractor ctx, int mx, int my, float delta) {
     var font = getFont();
@@ -331,7 +345,8 @@ public class MetalRenderSettingsScreen extends Screen {
     drawHeader(ctx, font);
     renderSidebar(ctx, mx, my);
 
-    ctx.enableScissor(cx, cy, cx + cw, cy + ch);
+    int ech = contentH();
+    ctx.enableScissor(cx, cy, cx + cw, cy + ech);
     posSliders();
     renderRows(ctx, mx, my);
     ctx.disableScissor();
@@ -346,21 +361,34 @@ public class MetalRenderSettingsScreen extends Screen {
 
   private void drawCustomHexLabels(GuiGraphicsExtractor ctx, net.minecraft.client.gui.Font font) {
     if (bgHexBox == null) return;
-    int boxH = 16;
-    int boxY = py + ph - FOOT_H - 22;
-    int labelY = boxY - 10;
     int gap = 8;
-    int boxW = (cw - gap * 3) / 4;
-    if (boxW < 48) boxW = 48;
-    int x0 = cx;
-    int labelCol = C_TEXT_SEC;
-    ctx.text(font, Component.literal("BG"), x0 + 2, labelY, labelCol, false);
-    ctx.text(font, Component.literal("Panel"), x0 + boxW + gap + 2, labelY, labelCol, false);
-    ctx.text(font, Component.literal("Accent"), x0 + (boxW + gap) * 2 + 2, labelY, labelCol, false);
-    ctx.text(font, Component.literal("Text"), x0 + (boxW + gap) * 3 + 2, labelY, labelCol, false);
-    int lineY = labelY - 2;
+    int top = hexTop();
+    int labelY = top + 6;
+    int lineY = top + 2;
     int lineCol = activeTheme.isLight ? 0x14000000 : 0x14FFFFFF;
     ctx.fill(cx, lineY, cx + cw, lineY + 1, lineCol);
+    int labelCol = C_TEXT_SEC;
+    int[] xs = hexBoxXs();
+    int boxW = hexBoxW();
+    String[] names = {"BG", "Panel", "Accent", "Text"};
+    for (int i = 0; i < 4; i++) {
+      String nm = truncateLabel(font, names[i], boxW - 4);
+      ctx.text(font, Component.literal(nm), xs[i] + 2, labelY, labelCol, false);
+    }
+  }
+
+  private int hexBoxW() {
+    int gap = 8;
+    int avail = cw - HEX_APPLY_W - gap;
+    int boxW = (avail - gap * 3) / 4;
+    return Math.max(40, boxW);
+  }
+
+  private int[] hexBoxXs() {
+    int gap = 8;
+    int boxW = hexBoxW();
+    int x0 = cx;
+    return new int[]{x0, x0 + boxW + gap, x0 + (boxW + gap) * 2, x0 + (boxW + gap) * 3};
   }
 
   private void drawBackground(GuiGraphicsExtractor ctx) {
@@ -425,18 +453,46 @@ public class MetalRenderSettingsScreen extends Screen {
   private void drawHeader(GuiGraphicsExtractor ctx, net.minecraft.client.gui.Font font) {
     int tx = px + 18;
     int ty = py + 16;
-    ctx.text(font, Component.literal("MetalRender"), tx, ty, C_TEXT_PRI, false);
-    int vx = tx + font.width("MetalRender") + 6;
-    ctx.text(font, Component.literal("Settings  \u2022  v2.0.0"), vx, ty, C_TEXT_SEC, false);
+    String gpu = MetalHardwareChecker.getDeviceName();
+    boolean gpuOk = gpu != null && !gpu.isEmpty() && !gpu.equals("Unknown GPU");
+    String gpuLabel = gpuOk ? gpu : "GPU";
+    if (font.width(gpuLabel) > 90) {
+      gpuLabel = gpuLabel.substring(0, Math.min(gpuLabel.length(), 14)) + "\u2026";
+    }
+
+    int dotsW = 10 + font.width("Sodium") + 14 + 10 + font.width("Metal") + 14
+        + 10 + font.width(gpuLabel) + 8;
+    int maxTitleW = pw - 36 - dotsW;
+    if (maxTitleW < 60) {
+      maxTitleW = 60;
+
+      gpuLabel = "GPU";
+      dotsW = 10 + font.width("Sodium") + 14 + 10 + font.width("Metal") + 14
+          + 10 + font.width(gpuLabel) + 8;
+      maxTitleW = Math.max(40, pw - 36 - dotsW);
+    }
+    String title = "MetalRender";
+    String version = "Settings  \u2022  v2.0.0";
+    int titleW = font.width(title);
+    int versionW = font.width(version);
+    if (titleW + 6 + versionW > maxTitleW) {
+      int versionMax = Math.max(20, maxTitleW - titleW - 6);
+      version = truncateLabel(font, version, versionMax);
+      versionW = font.width(version);
+      if (titleW + 6 + versionW > maxTitleW) {
+        title = truncateLabel(font, title, Math.max(20, maxTitleW - versionW - 6));
+        titleW = font.width(title);
+      }
+    }
+    ctx.text(font, Component.literal(title), tx, ty, C_TEXT_PRI, false);
+    ctx.text(font, Component.literal(version), tx + titleW + 6, ty, C_TEXT_SEC, false);
     int dotY = py + HDR_H - 18;
     int dotX = px + pw - 18;
     boolean metalOk = MetalRenderClient.isMetalAvailable();
     boolean sodiumOk = MetalRenderClient.isSodiumLoaded();
     dotX = drawStatusDot(ctx, font, dotX, dotY, sodiumOk ? C_GLASS_DOT_ON : C_GLASS_DOT_OFF, "Sodium");
     dotX = drawStatusDot(ctx, font, dotX, dotY, metalOk ? C_GLASS_DOT_ON : C_GLASS_DOT_OFF, "Metal");
-    String gpu = MetalHardwareChecker.getDeviceName();
-    boolean gpuOk = gpu != null && !gpu.isEmpty() && !gpu.equals("Unknown GPU");
-    dotX = drawStatusDot(ctx, font, dotX, dotY, gpuOk ? C_GLASS_DOT_ON : C_GLASS_DOT_OFF, gpuOk ? gpu : "GPU");
+    dotX = drawStatusDot(ctx, font, dotX, dotY, gpuOk ? C_GLASS_DOT_ON : C_GLASS_DOT_OFF, gpuLabel);
     int div = activeTheme.isLight ? 0x14000000 : 0x14FFFFFF;
     ctx.fill(px + 12, py + HDR_H - 1, px + pw - 12, py + HDR_H, div);
   }
@@ -522,8 +578,17 @@ public class MetalRenderSettingsScreen extends Screen {
     ctx.fill(x + w - 1, y + r, x + w, y + h - r, col);
   }
 
+  private int sliderWidthFor(Row r) {
+
+
+    int maxByCard = r.layoutW - 14 - 60 - 16 - 70 - 16;
+    int w = Math.min(SLIDER_W, maxByCard);
+    return Math.max(70, Math.min(SLIDER_W, w));
+  }
+
   private void renderRows(GuiGraphicsExtractor ctx, int mx, int my) {
-    maxScroll = Math.max(0, totalH() - ch);
+    int ech = contentH();
+    maxScroll = Math.max(0, totalH() - ech);
     scrollOffset = cl(scrollOffset, 0, maxScroll);
     hoverRowIndex = -1;
     int idx = 0;
@@ -531,8 +596,8 @@ public class MetalRenderSettingsScreen extends Screen {
       int screenX = cx + r.layoutX;
       int screenY = cy - scrollOffset + r.layoutY;
       r.renderY = screenY;
-      boolean visible = screenY + r.h() >= cy && screenY < cy + ch;
-      if (visible && my >= cy && my < cy + ch
+      boolean visible = screenY + r.h() >= cy && screenY < cy + ech;
+      if (visible && my >= cy && my < cy + ech
           && mx >= screenX && mx < screenX + r.layoutW
           && my >= screenY && my < screenY + r.h()) {
         hoverRowIndex = idx;
@@ -610,9 +675,10 @@ public class MetalRenderSettingsScreen extends Screen {
       int maxThemeTextW = stateX - tx - 10;
       if (maxThemeTextW < 40) maxThemeTextW = 40;
       String themeName = truncateLabel(font, th.displayName, maxThemeTextW);
-      String themeSub = truncateLabel(font, th.displayName, maxThemeTextW);
-      ctx.text(font, Component.literal(themeName), tx, y + 14, C_TEXT_PRI, false);
-      ctx.text(font, Component.literal(themeSub), tx, y + 28, C_TEXT_SEC, false);
+      String variant = (th.isLight ? "Light" : "Dark") + " \u2022 Rounded " + th.cardRadius;
+      String themeSub = truncateLabel(font, variant, maxThemeTextW);
+      ctx.text(font, Component.literal(themeName), tx, y + 12, C_TEXT_PRI, false);
+      ctx.text(font, Component.literal(themeSub), tx, y + 26, C_TEXT_SEC, false);
       if (th.isLight) {
         String lightBadge = truncateLabel(font, "LIGHT", maxThemeTextW);
         ctx.text(font, Component.literal(lightBadge), tx, y + 40, 0xFF9A7E70, false);
@@ -661,7 +727,7 @@ public class MetalRenderSettingsScreen extends Screen {
     } else if (r.type == RT.SLIDER) {
       String sv = r.slider != null ? r.slider.getMessage().getString() : "";
       int swCap = Math.min(font.width(sv) + 12, 70);
-      reserved = SLIDER_W + 12 + swCap + 16;
+      reserved = sliderWidthFor(r) + 12 + swCap + 16;
     }
     int maxLabelW = w - 14 - reserved;
     if (maxLabelW < 32) maxLabelW = 32;
@@ -718,13 +784,14 @@ public class MetalRenderSettingsScreen extends Screen {
       }
       case SLIDER -> {
         if (r.slider != null) {
+          int sliderW = sliderWidthFor(r);
           String sv = r.slider.getMessage().getString();
           String dispSv = truncateLabel(font, sv, 64);
           int sw = font.width(dispSv) + 12;
           int bg = activeTheme.isLight ? 0xFFEADFD3 : 0xFF1E2430;
-          fillRounded(ctx, rx - SLIDER_W - 10 - sw, y + 12, sw, CARD_H - 24, bg, 6);
-          if (activeTheme.isLight) drawRoundedOutline(ctx, rx - SLIDER_W - 10 - sw, y + 12, sw, CARD_H - 24, 0x14C9A090, 6);
-          ctx.text(font, Component.literal(dispSv), rx - SLIDER_W - 10 - sw + 6, y + (CARD_H - 9) / 2, C_TEXT_ACCENT, false);
+          fillRounded(ctx, rx - sliderW - 10 - sw, y + 12, sw, CARD_H - 24, bg, 6);
+          if (activeTheme.isLight) drawRoundedOutline(ctx, rx - sliderW - 10 - sw, y + 12, sw, CARD_H - 24, 0x14C9A090, 6);
+          ctx.text(font, Component.literal(dispSv), rx - sliderW - 10 - sw + 6, y + (CARD_H - 9) / 2, C_TEXT_ACCENT, false);
         }
       }
       default -> {
@@ -755,25 +822,27 @@ public class MetalRenderSettingsScreen extends Screen {
 
   private void drawScrollFades(GuiGraphicsExtractor ctx) {
     if (maxScroll <= 0) return;
+    int ech = contentH();
     if (activeTheme == UiTheme.LIQUID_GLASS) {
       ctx.fillGradient(cx, cy, cx + cw, cy + 12, 0x801E242E, 0x001E242E);
-      ctx.fillGradient(cx, cy + ch - 12, cx + cw, cy + ch, 0x001E242E, 0x801E242E);
+      ctx.fillGradient(cx, cy + ech - 12, cx + cw, cy + ech, 0x001E242E, 0x801E242E);
     } else if (activeTheme.isLight) {
       ctx.fillGradient(cx, cy, cx + cw, cy + 12, 0xFFF0E6DA, 0x00F0E6DA);
-      ctx.fillGradient(cx, cy + ch - 12, cx + cw, cy + ch, 0x00F0E6DA, 0xFFF0E6DA);
+      ctx.fillGradient(cx, cy + ech - 12, cx + cw, cy + ech, 0x00F0E6DA, 0xFFF0E6DA);
     } else {
       ctx.fillGradient(cx, cy, cx + cw, cy + 12, 0xFF222228, 0x00222228);
-      ctx.fillGradient(cx, cy + ch - 12, cx + cw, cy + ch, 0x00222228, 0xFF222228);
+      ctx.fillGradient(cx, cy + ech - 12, cx + cw, cy + ech, 0x00222228, 0xFF222228);
     }
   }
 
   private void renderScrollbar(GuiGraphicsExtractor ctx, int mx, int my) {
     if (maxScroll <= 0) return;
+    int ech = contentH();
     int sbX = px + pw - 9;
     int tot = totalH();
-    int thumbH = Math.max(22, (int) ((float) ch / tot * ch));
-    int thumbY = cy + (int) ((float) scrollOffset / maxScroll * (ch - thumbH));
-    boolean hov = mx >= sbX - 2 && mx <= sbX + 5 && my >= cy && my <= cy + ch;
+    int thumbH = Math.max(22, (int) ((float) ech / tot * ech));
+    int thumbY = cy + (int) ((float) scrollOffset / maxScroll * (ech - thumbH));
+    boolean hov = mx >= sbX - 2 && mx <= sbX + 5 && my >= cy && my <= cy + ech;
     int trackCol;
     int idleCol;
     if (activeTheme == UiTheme.LIQUID_GLASS) {
@@ -793,14 +862,16 @@ public class MetalRenderSettingsScreen extends Screen {
   }
 
   private void posSliders() {
+    int ech = contentH();
     for (Row r : rows) {
       if (r.type != RT.SLIDER || r.slider == null)
         continue;
+      int sliderW = sliderWidthFor(r);
       int screenX = cx + r.layoutX;
       int screenY = cy - scrollOffset + r.layoutY;
-      boolean vis = screenY >= cy && screenY + CARD_H <= cy + ch;
-      r.slider.setPosition(screenX + r.layoutW - 8 - SLIDER_W, screenY + (CARD_H - SLIDER_H) / 2);
-      r.slider.setWidth(SLIDER_W);
+      boolean vis = screenY >= cy && screenY + CARD_H <= cy + ech;
+      r.slider.setPosition(screenX + r.layoutW - 8 - sliderW, screenY + (CARD_H - SLIDER_H) / 2);
+      r.slider.setWidth(sliderW);
       r.slider.visible = vis;
       r.slider.active = vis;
     }
@@ -827,15 +898,16 @@ public class MetalRenderSettingsScreen extends Screen {
       return true;
     }
 
+    int ech = contentH();
     int sbX = px + pw - 8;
-    if (mx >= sbX - 2 && mx <= sbX + 5 && my >= cy && my <= cy + ch) {
+    if (mx >= sbX - 2 && mx <= sbX + 5 && my >= cy && my <= cy + ech) {
       dragging = true;
       dragOriginY = (int) my;
       dragOriginOff = scrollOffset;
       return true;
     }
 
-    if (mx >= cx && mx < cx + cw && my >= cy && my < cy + ch) {
+    if (mx >= cx && mx < cx + cw && my >= cy && my < cy + ech) {
       for (Row r : rows) {
         int screenX = cx + r.layoutX;
         int screenY = cy - scrollOffset + r.layoutY;
@@ -861,9 +933,10 @@ public class MetalRenderSettingsScreen extends Screen {
   public boolean mouseDragged(MouseButtonEvent click, double dx, double dy) {
     if (dragging && maxScroll > 0) {
       double my = click.y();
+      int ech = contentH();
       int tot = totalH();
-      int thumbH = Math.max(16, (int) ((float) ch / tot * ch));
-      float ratio = (float) (my - dragOriginY) / (ch - thumbH);
+      int thumbH = Math.max(16, (int) ((float) ech / tot * ech));
+      float ratio = (float) (my - dragOriginY) / (ech - thumbH);
       scrollOffset = cl(dragOriginOff + (int) (ratio * maxScroll), 0, maxScroll);
       return true;
     }
@@ -878,7 +951,7 @@ public class MetalRenderSettingsScreen extends Screen {
 
   @Override
   public boolean mouseScrolled(double mx, double my, double hAmt, double vAmt) {
-    if (mx >= px && mx < px + pw && my >= cy && my < cy + ch) {
+    if (mx >= px && mx < px + pw && my >= cy && my < cy + contentH()) {
       scrollOffset = cl(scrollOffset - (int) (vAmt * CARD_H * 2), 0, maxScroll);
       return true;
     }
@@ -947,9 +1020,8 @@ public class MetalRenderSettingsScreen extends Screen {
     panelHexBox = null;
     accentHexBox = null;
     textHexBox = null;
-    int bw = 70, bh = 20;
-    addRenderableWidget(Button.builder(Component.literal("Done"), b -> onClose())
-        .bounds(px + pw - bw - 12, py + (HDR_H - bh) / 2 + 1, bw, bh).build());
+
+
     switch (selectedTab) {
       case 0 -> buildVideo();
       case 1 -> buildMetal();
@@ -967,40 +1039,41 @@ public class MetalRenderSettingsScreen extends Screen {
 
   private void setupCustomHexBoxes() {
     var font = getFont();
-    int boxH = 16;
-    int boxY = py + ph - FOOT_H - 22;
-    int labelY = boxY - 10;
+
+
     int gap = 8;
-    int boxW = (cw - gap * 3) / 4;
-    int x0 = cx;
-    if (boxW < 48) boxW = 48;
-    bgHexBox = new EditBox(font, x0, boxY, boxW, boxH, Component.literal("BG Hex"));
+    int top = hexTop();
+    int boxY = top + 20;
+    int boxH = 18;
+    int boxW = hexBoxW();
+    int[] xs = hexBoxXs();
+    bgHexBox = new EditBox(font, xs[0], boxY, boxW, boxH, Component.literal("BG Hex"));
     bgHexBox.setMaxLength(7);
     bgHexBox.setValue(customHexBg);
     bgHexBox.setHint(Component.literal("BG"));
     bgHexBox.setResponder(v -> { customHexBg = v.replace("#","").trim(); });
     addRenderableWidget(bgHexBox);
-    panelHexBox = new EditBox(font, x0 + boxW + gap, boxY, boxW, boxH, Component.literal("Panel Hex"));
+    panelHexBox = new EditBox(font, xs[1], boxY, boxW, boxH, Component.literal("Panel Hex"));
     panelHexBox.setMaxLength(7);
     panelHexBox.setValue(customHexPanel);
     panelHexBox.setHint(Component.literal("Panel"));
     panelHexBox.setResponder(v -> { customHexPanel = v.replace("#","").trim(); });
     addRenderableWidget(panelHexBox);
-    accentHexBox = new EditBox(font, x0 + (boxW + gap) * 2, boxY, boxW, boxH, Component.literal("Accent Hex"));
+    accentHexBox = new EditBox(font, xs[2], boxY, boxW, boxH, Component.literal("Accent Hex"));
     accentHexBox.setMaxLength(7);
     accentHexBox.setValue(customHexAccent);
     accentHexBox.setHint(Component.literal("Accent"));
     accentHexBox.setResponder(v -> { customHexAccent = v.replace("#","").trim(); });
     addRenderableWidget(accentHexBox);
-    textHexBox = new EditBox(font, x0 + (boxW + gap) * 3, boxY, boxW, boxH, Component.literal("Text Hex"));
+    textHexBox = new EditBox(font, xs[3], boxY, boxW, boxH, Component.literal("Text Hex"));
     textHexBox.setMaxLength(7);
     textHexBox.setValue(customHexText);
     textHexBox.setHint(Component.literal("Text"));
     textHexBox.setResponder(v -> { customHexText = v.replace("#","").trim(); });
     addRenderableWidget(textHexBox);
-    int abW = 54, abH = 16;
+    int applyX = cx + cw - HEX_APPLY_W;
     addRenderableWidget(Button.builder(Component.literal("Apply"), b -> applyCustomHex())
-        .bounds(px + pw - abW - 12, labelY - 2, abW, abH).build());
+        .bounds(applyX, boxY, HEX_APPLY_W, boxH).build());
   }
 
   private void applyCustomHex() {
@@ -1027,26 +1100,19 @@ public class MetalRenderSettingsScreen extends Screen {
     return h;
   }
 
+  private boolean isFullWidth(Row r) {
+
+
+    return r.type == RT.SECTION || r.type == RT.THEME || r.type == RT.SLIDER;
+  }
+
   private void computeLayout() {
     int col = 0;
     int colWidth = (cw - CARD_GAP) / 2;
     int y = 0;
     Row lastRow = null;
     for (Row r : rows) {
-      if (r.type == RT.SECTION) {
-        if (col == 1 && lastRow != null) {
-          lastRow.layoutX = 0;
-          lastRow.layoutY = y;
-          lastRow.layoutW = cw;
-          y += lastRow.h() + CARD_GAP;
-          col = 0;
-        }
-        r.layoutX = 0;
-        r.layoutY = y;
-        r.layoutW = cw;
-        y += SEC_H;
-        col = 0;
-      } else if (r.type == RT.THEME) {
+      if (isFullWidth(r)) {
         if (col == 1 && lastRow != null) {
           lastRow.layoutX = 0;
           lastRow.layoutY = y;
@@ -1222,7 +1288,7 @@ public class MetalRenderSettingsScreen extends Screen {
 
   private void buildThemes() {
     sec("Colour Themes");
-    infoRow("Active Theme", activeTheme.displayName + " \u2022 ");
+    infoRow("Active Theme", activeTheme.displayName);
     themeRow(UiTheme.LIQUID_GLASS);
     themeRow(UiTheme.PASTEL);
     themeRow(UiTheme.AMBER);
