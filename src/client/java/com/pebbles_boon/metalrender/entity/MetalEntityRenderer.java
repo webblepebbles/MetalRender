@@ -278,6 +278,33 @@ public class MetalEntityRenderer {
 
   private void enqueueEntityDraws(int startVertex, CapturedEntity captured,
       float hurtFactor) {
+
+
+
+
+    if (reusableCmdQueue != null) {
+      java.util.List<MetalRenderCommandQueue.DrawSegment> segs =
+          reusableCmdQueue.getSegments();
+      if (segs != null && !segs.isEmpty()) {
+        for (MetalRenderCommandQueue.DrawSegment seg : segs) {
+          if (seg.vertexCount <= 0) {
+            continue;
+          }
+          int tex = seg.glTextureId != 0 ? seg.glTextureId : captured.glTextureId;
+          if (tex == 0) {
+            continue;
+          }
+          enqueueDraw(seg.startVertex, seg.vertexCount, hurtFactor, tex,
+              seg.renderFlags);
+        }
+        if (captured.overlayVertexCount > 0 && captured.overlayTextureId != 0) {
+          enqueueDraw(captured.overlayStartVertex, captured.overlayVertexCount,
+              0.0f, captured.overlayTextureId, 0);
+        }
+        return;
+      }
+    }
+
     int endVertex = metalVertexConsumer.getVertexCount();
     int totalVertexCount = endVertex - startVertex;
     if (totalVertexCount <= 0) {
@@ -292,22 +319,27 @@ public class MetalEntityRenderer {
 
     if (mainVertexCount > 0) {
       enqueueDraw(startVertex, mainVertexCount, hurtFactor,
-          captured.glTextureId);
+          captured.glTextureId, 0);
     }
     if (captured.overlayVertexCount > 0 && captured.overlayTextureId != 0) {
       enqueueDraw(captured.overlayStartVertex, captured.overlayVertexCount,
-          0.0f, captured.overlayTextureId);
+          0.0f, captured.overlayTextureId, 0);
     }
   }
 
   private void enqueueDraw(int startVertex, int vertexCount, float hurtFactor,
       int glTextureId) {
+    enqueueDraw(startVertex, vertexCount, hurtFactor, glTextureId, 0);
+  }
+
+  private void enqueueDraw(int startVertex, int vertexCount, float hurtFactor,
+      int glTextureId, int renderFlags) {
     EntityDrawCommand drawCommand = getOrCreateDrawCommand();
     drawCommand.startVertex = startVertex;
     drawCommand.vertexCount = vertexCount;
     drawCommand.hurtFactor = hurtFactor;
     drawCommand.whiteFlash = 0.0f;
-    drawCommand.renderFlags = 0;
+    drawCommand.renderFlags = renderFlags;
     drawCommand.glTextureId = glTextureId;
     pendingDrawCount++;
   }
