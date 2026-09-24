@@ -143,6 +143,8 @@ public final class NativeBridge {
 
   public static native long nGetParticlePipelineHandle(long handle);
 
+  public static native long nGetWeatherPipelineHandle(long handle);
+
   public static native long nGetEntityPipelineHandle(long handle);
 
   public static native long nGetEntityTranslucentPipelineHandle(long handle);
