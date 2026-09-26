@@ -599,10 +599,16 @@ static inline int visibleOpaqueQuadCount(const int counts[7], uint32_t mask) {
 }
 
 static inline uint32_t visibleFacingMaskForAabb(float ox, float oy, float oz) {
-  (void)ox;
-  (void)oy;
-  (void)oz;
-  return 0x7Fu;
+  if (!g_cameraFacingCullingEnabled.load(std::memory_order_relaxed))
+    return 0x7Fu;
+  uint32_t mask = (1u << 6);
+  mask |= (uint32_t)(ox < 3.0f) << 5;
+  mask |= (uint32_t)(oy < 3.0f) << 1;
+  mask |= (uint32_t)(oz < 3.0f) << 3;
+  mask |= (uint32_t)(ox > -19.0f) << 4;
+  mask |= (uint32_t)(oy > -19.0f) << 0;
+  mask |= (uint32_t)(oz > -19.0f) << 2;
+  return mask;
 }
 
 static inline int opaqueBucketStartQuad(const int counts[7], int bucket) {
@@ -3693,10 +3699,11 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           for (int f = 0; f < 7; f++) {
             meshlets[meshletCount].faceStart[f] = acc;
             uint32_t faceV = (uint32_t)s_cmds[i].opaqueFaceCounts[f] * 4u;
-            meshlets[meshletCount].faceVertexCount[f] = faceV;
+            bool faceKept = (fm & (1u << f)) != 0u;
+            meshlets[meshletCount].faceVertexCount[f] = faceKept ? faceV : 0u;
             meshlets[meshletCount].visibleFaceStart[f] = visibleAcc;
             acc += faceV;
-            if ((fm & (1u << f)) != 0u)
+            if (faceKept)
               visibleAcc += faceV;
           }
           meshlets[meshletCount].visibleVertexCount = visibleAcc;
