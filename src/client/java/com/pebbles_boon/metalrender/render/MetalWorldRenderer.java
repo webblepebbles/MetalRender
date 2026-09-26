@@ -159,6 +159,12 @@ public class MetalWorldRenderer {
   private int lastCullCount = 0;
   private final float[] lastCullFrustum = new float[24];
   private final CullingOrcreator cullingOrcreator = new CullingOrcreator();
+  private final com.pebbles_boon.metalrender.culling.SectionOcclusionCuller graphCuller = new com.pebbles_boon.metalrender.culling.SectionOcclusionCuller();
+  private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<long[]> sectionVisibilityMap = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+  private java.util.concurrent.ExecutorService occlusionExecutor;
+  private final java.util.concurrent.atomic.AtomicBoolean occlusionTaskRunning = new java.util.concurrent.atomic.AtomicBoolean(false);
+  private final java.util.concurrent.atomic.AtomicReference<OcclusionTaskResult> occlusionTaskResult = new java.util.concurrent.atomic.AtomicReference<>(null);
+  private volatile int occlusionEpoch;
   private final Matrix4f asyncProjScratch = new Matrix4f();
   private final Matrix4f asyncMVScratch = new Matrix4f();
   private final Vector3f asyncCamScratch = new Vector3f();
@@ -243,9 +249,9 @@ public class MetalWorldRenderer {
     lastOutlineUploadPos = Long.MIN_VALUE;
     lastOutlineDrawCount = -1;
     scanDirty = true;
-    nextOcclusionFrame = 0;
-    occlusionBackoffMult = 1;
-    occlusionLowYieldStreak = 0;
+    lastOcclusionSubmitKey = Long.MIN_VALUE;
+    lastOcclusionSubmitGen = Integer.MIN_VALUE;
+    lastOcclusionSubmitSearch = -1.0f;
     worldLoaded = true;
     MetalRenderConfig gpuConfig = MetalRenderClient.getConfig();
     boolean clusterEnabled = gpuConfig != null && gpuConfig.enableClusterFrustumCulling;
@@ -318,6 +324,7 @@ public class MetalWorldRenderer {
     textureManager.destroy();
     ioSurfaceBlitter.destroy();
     chunkMesher.clear();
+    shutdownOcclusionWorker();
     clearOcclusionState();
     vanillaAOTracked = false;
     lodRingPlayerCX = Integer.MIN_VALUE;
@@ -915,23 +922,15 @@ public class MetalWorldRenderer {
       new it.unimi.dsi.fastutil.longs.LongArrayList(256);
   private final LodPolicy lodPolicy = new LodPolicy();
 
-  private static final int OCCLUSION_INTERVAL_FRAMES = 30;
-  private static final int OCCLUSION_MAX_VISITS = 120000;
   private final it.unimi.dsi.fastutil.longs.LongOpenHashSet occlusionHidden =
       new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
   private final it.unimi.dsi.fastutil.longs.LongOpenHashSet occlusionVisited =
       new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
-  private final it.unimi.dsi.fastutil.longs.LongArrayList occlusionQueue =
-      new it.unimi.dsi.fastutil.longs.LongArrayList();
   private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<CustomChunkMesher.ChunkMeshData> occlusionMeshIndex =
       new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
-  private long lastOcclusionCamSectionKey = Long.MIN_VALUE;
-  private int lastOcclusionMeshGen = Integer.MIN_VALUE;
-  private int lastOcclusionHiddenCount = 0;
-  private long occlusionSuspendCamKey = Long.MIN_VALUE;
-  private int nextOcclusionFrame;
-  private int occlusionBackoffMult = 1;
-  private int occlusionLowYieldStreak;
+  private long lastOcclusionSubmitKey = Long.MIN_VALUE;
+  private int lastOcclusionSubmitGen = Integer.MIN_VALUE;
+  private float lastOcclusionSubmitSearch = -1.0f;
   private boolean scanDirty = true;
 
   private int lastResizeW = -1;
@@ -2132,18 +2131,25 @@ public class MetalWorldRenderer {
     }
   }
 
+  private void shutdownOcclusionWorker() {
+    occlusionEpoch++;
+    if (occlusionExecutor != null) {
+      occlusionExecutor.shutdownNow();
+      occlusionExecutor = null;
+    }
+    occlusionTaskRunning.set(false);
+    occlusionTaskResult.set(null);
+  }
+
   private void clearOcclusionState() {
     occlusionHidden.clear();
     occlusionVisited.clear();
-    occlusionQueue.clear();
     occlusionMeshIndex.clear();
-    lastOcclusionCamSectionKey = Long.MIN_VALUE;
-    lastOcclusionMeshGen = Integer.MIN_VALUE;
-    lastOcclusionHiddenCount = 0;
-    occlusionSuspendCamKey = Long.MIN_VALUE;
-    nextOcclusionFrame = 0;
-    occlusionBackoffMult = 1;
-    occlusionLowYieldStreak = 0;
+    sectionVisibilityMap.clear();
+    graphCuller.clearCache();
+    lastOcclusionSubmitKey = Long.MIN_VALUE;
+    lastOcclusionSubmitGen = Integer.MIN_VALUE;
+    lastOcclusionSubmitSearch = -1.0f;
   }
 
   private void restoreAllOcclusionHidden() {
@@ -2162,9 +2168,43 @@ public class MetalWorldRenderer {
     }
   }
 
-  private static final int[] OCCLUSION_DX = { 0, 0, 0, 0, -1, 1 };
-  private static final int[] OCCLUSION_DY = { -1, 1, 0, 0, 0, 0 };
-  private static final int[] OCCLUSION_DZ = { 0, 0, -1, 1, 0, 0 };
+  private static final class OcclusionTaskResult {
+    final long[] visibleKeys;
+    final int wideCount;
+    final int regularCount;
+    final int localCount;
+    final int fallbackCount;
+    final int meshTotal;
+    final long cullNs;
+    final float searchRegular;
+    final float searchLocal;
+    final int camSX;
+    final int camSY;
+    final int camSZ;
+    final int camBX;
+    final int camBY;
+    final int camBZ;
+
+    OcclusionTaskResult(long[] visibleKeys, int wideCount, int regularCount, int localCount,
+        int fallbackCount, int meshTotal, long cullNs, float searchRegular, float searchLocal,
+        int camSX, int camSY, int camSZ, int camBX, int camBY, int camBZ) {
+      this.visibleKeys = visibleKeys;
+      this.wideCount = wideCount;
+      this.regularCount = regularCount;
+      this.localCount = localCount;
+      this.fallbackCount = fallbackCount;
+      this.meshTotal = meshTotal;
+      this.cullNs = cullNs;
+      this.searchRegular = searchRegular;
+      this.searchLocal = searchLocal;
+      this.camSX = camSX;
+      this.camSY = camSY;
+      this.camSZ = camSZ;
+      this.camBX = camBX;
+      this.camBY = camBY;
+      this.camBZ = camBZ;
+    }
+  }
 
   private void updateOcclusionCulling(Minecraft mc) {
     if (mc == null || mc.player == null || mc.level == null) {
@@ -2172,24 +2212,9 @@ public class MetalWorldRenderer {
     }
     MetalRenderConfig config = MetalRenderClient.getConfig();
     if (config == null || !config.enableOcclusionCulling) {
+      occlusionTaskResult.set(null);
       restoreAllOcclusionHidden();
       return;
-    }
-    if (frameCount < nextOcclusionFrame) {
-      double qx = frameCameraX;
-      double qy = frameCameraY;
-      double qz = frameCameraZ;
-      if (frameCount > 0 && (qx != 0.0 || qy != 0.0 || qz != 0.0)) {
-        long qKey = packChunkKey((int) Math.floor(qx) >> 4,
-            (int) Math.floor(qy) >> 4, (int) Math.floor(qz) >> 4);
-        if (qKey == lastOcclusionCamSectionKey || qKey == occlusionSuspendCamKey) {
-          return;
-        }
-        occlusionBackoffMult = 1;
-        occlusionLowYieldStreak = 0;
-      } else {
-        return;
-      }
     }
     double camX = frameCameraX;
     double camY = frameCameraY;
@@ -2204,139 +2229,176 @@ public class MetalWorldRenderer {
     int camSZ = (int) Math.floor(camZ) >> 4;
     long camKey = packChunkKey(camSX, camSY, camSZ);
     int meshGen = chunkMesher.getMeshUpdateGeneration();
-    if (camKey == lastOcclusionCamSectionKey && meshGen == lastOcclusionMeshGen) {
-      nextOcclusionFrame = frameCount + OCCLUSION_INTERVAL_FRAMES * occlusionBackoffMult;
-      return;
-    }
-    if (camKey == occlusionSuspendCamKey) {
-      nextOcclusionFrame = frameCount + OCCLUSION_INTERVAL_FRAMES * occlusionBackoffMult;
-      return;
-    }
-
     occlusionMeshIndex.clear();
-    int minY = Integer.MAX_VALUE;
-    int maxY = Integer.MIN_VALUE;
-    int minX = Integer.MAX_VALUE;
-    int maxX = Integer.MIN_VALUE;
-    int minZ = Integer.MAX_VALUE;
-    int maxZ = Integer.MIN_VALUE;
+    sectionVisibilityMap.clear();
     int meshTotal = 0;
+    int fallbackVisCount = 0;
     try {
       for (CustomChunkMesher.ChunkMeshData m : chunkMesher.getAllMeshes()) {
         if (m == null) {
           continue;
         }
-        occlusionMeshIndex.put(packChunkKey(m.chunkX, m.chunkY, m.chunkZ), m);
-        if (m.chunkY < minY) {
-          minY = m.chunkY;
+        long key = packChunkKey(m.chunkX, m.chunkY, m.chunkZ);
+        occlusionMeshIndex.put(key, m);
+        long[] vis = m.sectionVisibility;
+        if (vis == null) {
+          vis = new long[] { visibilityFromFaceMask(m.faceOcclusionMask) };
+          fallbackVisCount++;
         }
-        if (m.chunkY > maxY) {
-          maxY = m.chunkY;
-        }
-        if (m.chunkX < minX) {
-          minX = m.chunkX;
-        }
-        if (m.chunkX > maxX) {
-          maxX = m.chunkX;
-        }
-        if (m.chunkZ < minZ) {
-          minZ = m.chunkZ;
-        }
-        if (m.chunkZ > maxZ) {
-          maxZ = m.chunkZ;
-        }
+        sectionVisibilityMap.put(key, vis);
         meshTotal++;
       }
     } catch (Exception ignored) {
       return;
     }
     if (meshTotal == 0) {
-      lastOcclusionCamSectionKey = camKey;
-      lastOcclusionMeshGen = meshGen;
+      if (MetalRenderConfig.isDeepDebugActive()) {
+        MetalLogger.info("occlusion: no meshes cam=[%d,%d,%d]", camSX, camSY, camSZ);
+      }
       return;
     }
-    minY -= 2;
-    maxY += 2;
-
-    if (camSY < minY) {
-      minY = camSY - 2;
+    int minSY = Integer.MIN_VALUE;
+    int maxSY = Integer.MAX_VALUE;
+    try {
+      minSY = mc.level.getMinSectionY();
+      maxSY = mc.level.getMaxSectionY();
+    } catch (Exception ignored) {
+      minSY = -4;
+      maxSY = 20;
     }
-    if (camSY > maxY) {
-      maxY = camSY + 2;
-    }
-
-    CustomChunkMesher.ChunkMeshData camMesh = occlusionMeshIndex.get(camKey);
-    if (camMesh != null && (camMesh.faceOcclusionMask & 0x3F) == 0x3F) {
-      restoreAllOcclusionHidden();
-      lastOcclusionCamSectionKey = camKey;
-      lastOcclusionMeshGen = meshGen;
-      return;
-    }
-
-    int meshSpan = Math.max(maxX - minX, maxZ - minZ);
     int renderDist = 32;
     try {
       renderDist = mc.options.renderDistance().get();
     } catch (Exception ignored) {
     }
-    int bound = Math.min(renderDist + 2, Math.max(2, meshSpan / 2 + 2));
-    int pcx = camSX;
-    int pcz = camSZ;
-
-    occlusionVisited.clear();
-    occlusionQueue.clear();
-    occlusionVisited.add(camKey);
-    occlusionQueue.add(camKey);
-    boolean overflow = false;
-    int visits = 0;
-    while (!occlusionQueue.isEmpty()) {
-      long key = occlusionQueue.removeLong(occlusionQueue.size() - 1);
-      if (++visits > OCCLUSION_MAX_VISITS) {
-        overflow = true;
-        break;
+    float searchRegular = (float) (renderDist * 16);
+    float searchLocal = (float) (renderDist * 16);
+    try {
+      float fogEnd = fogRenderEnd;
+      if (fogEnd > 0.0f && fogEnd < searchRegular) {
+        searchLocal = fogEnd;
       }
-      int cx = unpackChunkX(key);
-      int cy = unpackChunkY(key);
-      int cz = unpackChunkZ(key);
-      CustomChunkMesher.ChunkMeshData cur = occlusionMeshIndex.get(key);
-      byte curMask = cur != null ? cur.faceOcclusionMask : 0;
-      for (int d = 0; d < 6; d++) {
-        int nx = cx + OCCLUSION_DX[d];
-        int ny = cy + OCCLUSION_DY[d];
-        int nz = cz + OCCLUSION_DZ[d];
-        if (nx - pcx > bound || pcx - nx > bound || nz - pcz > bound || pcz - nz > bound
-            || ny < minY || ny > maxY) {
-          continue;
-        }
-
-        if ((curMask & (1 << d)) != 0) {
-          continue;
-        }
-        long nkey = packChunkKey(nx, ny, nz);
-        if (occlusionVisited.contains(nkey)) {
-          continue;
-        }
-        CustomChunkMesher.ChunkMeshData nb = occlusionMeshIndex.get(nkey);
-        if (nb != null && (nb.faceOcclusionMask & (1 << (d ^ 1))) != 0) {
-          continue;
-        }
-        occlusionVisited.add(nkey);
-        occlusionQueue.add(nkey);
-      }
+    } catch (Exception ignored) {
     }
-    if (overflow) {
+    CustomChunkMesher.ChunkMeshData camMesh = occlusionMeshIndex.get(camKey);
+    if (camMesh != null && (camMesh.faceOcclusionMask & 0x3F) == 0x3F) {
       restoreAllOcclusionHidden();
-      lastOcclusionCamSectionKey = camKey;
-      lastOcclusionMeshGen = meshGen;
-      occlusionSuspendCamKey = camKey;
-      nextOcclusionFrame = frameCount + OCCLUSION_INTERVAL_FRAMES * occlusionBackoffMult;
-      MetalLogger.info(
-          "occlusion: pass over budget (%d visits); suspending until camera leaves section [%d,%d,%d]",
-          visits, camSX, camSY, camSZ);
+      lastOcclusionSubmitKey = camKey;
+      lastOcclusionSubmitGen = meshGen;
+      lastOcclusionSubmitSearch = searchRegular;
+      MetalLogger.info("occlusion: camera inside sealed section meshes=%d cam=[%d,%d,%d]",
+          meshTotal, camSX, camSY, camSZ);
       return;
     }
-    occlusionSuspendCamKey = Long.MIN_VALUE;
+    OcclusionTaskResult done = occlusionTaskResult.getAndSet(null);
+    if (done != null) {
+      applyOcclusionResult(done);
+    }
+    boolean occlusionInputsChanged = camKey != lastOcclusionSubmitKey || meshGen != lastOcclusionSubmitGen || searchRegular != lastOcclusionSubmitSearch;
+    if (occlusionInputsChanged && !occlusionTaskRunning.get()) {
+      submitOcclusionTask(camX, camY, camZ, camSX, camSY, camSZ, camKey, meshGen, searchRegular, searchLocal, minSY, maxSY, meshTotal, fallbackVisCount);
+    }
+  }
 
+  private void submitOcclusionTask(double camX, double camY, double camZ, int camSX, int camSY, int camSZ, long camKey, int meshGen, float searchRegular, float searchLocal, int minSY, int maxSY, int meshTotal, int fallbackVisCount) {
+    if (!occlusionTaskRunning.compareAndSet(false, true)) {
+      return;
+    }
+    it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<long[]> taskMap = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>(sectionVisibilityMap);
+    FrustumCuller frustumCopy = new FrustumCuller();
+    try {
+      frustumCopy.copyFrom(this.frustumCuller);
+    } catch (Exception ignored) {
+    }
+    if (occlusionExecutor == null || occlusionExecutor.isShutdown()) {
+      occlusionExecutor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+        Thread t = new Thread(r, "MetalRender-Occlusion");
+        t.setDaemon(true);
+        t.setPriority(Thread.NORM_PRIORITY - 1);
+        return t;
+      });
+    }
+    lastOcclusionSubmitKey = camKey;
+    lastOcclusionSubmitGen = meshGen;
+    lastOcclusionSubmitSearch = searchRegular;
+    final int epochAtSubmit = occlusionEpoch;
+    final double fCamX = camX;
+    final double fCamY = camY;
+    final double fCamZ = camZ;
+    occlusionExecutor.execute(() -> runOcclusionTask(taskMap, frustumCopy, fCamX, fCamY, fCamZ, camSX, camSY, camSZ, searchRegular, searchLocal, minSY, maxSY, meshTotal, fallbackVisCount, epochAtSubmit));
+  }
+
+  private void runOcclusionTask(it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<long[]> taskMap, FrustumCuller frustum, double camX, double camY, double camZ, int camSX, int camSY, int camSZ, float searchRegular, float searchLocal, int minSY, int maxSY, int meshTotal, int fallbackVisCount, int epochAtSubmit) {
+    long cullStartNs = System.nanoTime();
+    try {
+      it.unimi.dsi.fastutil.longs.LongOpenHashSet wideSet = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+      it.unimi.dsi.fastutil.longs.LongOpenHashSet regularSet = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+      it.unimi.dsi.fastutil.longs.LongOpenHashSet localSet = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+      final double fCamX = camX;
+      final double fCamY = camY;
+      final double fCamZ = camZ;
+      final FrustumCuller frustumForCull = frustum;
+      com.pebbles_boon.metalrender.culling.SectionOcclusionCuller.GraphOcclusionVisitor wideV = (node, inFrustum) -> {
+        wideSet.add(packChunkKey(node.chunkX, node.chunkY, node.chunkZ));
+      };
+      com.pebbles_boon.metalrender.culling.SectionOcclusionCuller.GraphOcclusionVisitor regularV = (node, inFrustum) -> {
+        regularSet.add(packChunkKey(node.chunkX, node.chunkY, node.chunkZ));
+      };
+      com.pebbles_boon.metalrender.culling.SectionOcclusionCuller.VisibilityTestingVisitor localV = new com.pebbles_boon.metalrender.culling.SectionOcclusionCuller.VisibilityTestingVisitor() {
+        @Override
+        public boolean visitTestVisible(com.pebbles_boon.metalrender.culling.SectionOcclusionCuller.Node section) {
+          float minX = (float) (section.getOriginX() - fCamX);
+          float minY = (float) (section.getOriginY() - fCamY);
+          float minZ = (float) (section.getOriginZ() - fCamZ);
+          boolean vis = frustumForCull.testBoundingBox(minX, minY, minZ, minX + 16.0f, minY + 16.0f, minZ + 16.0f);
+          if (vis) {
+            localSet.add(packChunkKey(section.chunkX, section.chunkY, section.chunkZ));
+          }
+          return vis;
+        }
+        @Override
+        public void visit(com.pebbles_boon.metalrender.culling.SectionOcclusionCuller.Node visit, boolean inFrustum) {
+          if (inFrustum) {
+            localSet.add(packChunkKey(visit.chunkX, visit.chunkY, visit.chunkZ));
+          }
+        }
+      };
+      graphCuller.syncNodes(taskMap);
+      graphCuller.findVisible(wideV, regularV, localV, frustumForCull, fCamX, fCamY, fCamZ, taskMap, searchRegular, searchLocal, true, minSY, maxSY);
+      graphCuller.pruneFarNodes(camSX, camSY, camSZ, searchRegular + 128.0f);
+      int wideCount = wideSet.size();
+      int regularCount = regularSet.size();
+      int localCount = localSet.size();
+      wideSet.addAll(regularSet);
+      it.unimi.dsi.fastutil.longs.LongArrayList visibleKeys = new it.unimi.dsi.fastutil.longs.LongArrayList(wideSet.size());
+      var unionIt = wideSet.iterator();
+      while (unionIt.hasNext()) {
+        long k = unionIt.nextLong();
+        if (taskMap.containsKey(k)) {
+          visibleKeys.add(k);
+        }
+      }
+      long cullElapsedNs = System.nanoTime() - cullStartNs;
+      int camBX = (int) Math.floor(camX);
+      int camBY = (int) Math.floor(camY);
+      int camBZ = (int) Math.floor(camZ);
+      OcclusionTaskResult res = new OcclusionTaskResult(visibleKeys.toLongArray(), wideCount, regularCount, localCount, fallbackVisCount, meshTotal, cullElapsedNs, searchRegular, searchLocal, camSX, camSY, camSZ, camBX, camBY, camBZ);
+      if (epochAtSubmit == occlusionEpoch) {
+        occlusionTaskResult.set(res);
+      }
+    } catch (Exception ignored) {
+    } finally {
+      occlusionTaskRunning.set(false);
+    }
+  }
+
+  private void applyOcclusionResult(OcclusionTaskResult res) {
+    occlusionVisited.clear();
+    for (long k : res.visibleKeys) {
+      if (occlusionMeshIndex.containsKey(k)) {
+        occlusionVisited.add(k);
+      }
+    }
     if (!occlusionHidden.isEmpty()) {
       var hit = occlusionHidden.iterator();
       while (hit.hasNext()) {
@@ -2345,9 +2407,9 @@ public class MetalWorldRenderer {
         }
       }
     }
-
     int unregistered = 0;
     int reregistered = 0;
+    int faceSkippedMeshes = 0;
     var entryIter = occlusionMeshIndex.long2ObjectEntrySet().fastIterator();
     while (entryIter.hasNext()) {
       var entry = entryIter.next();
@@ -2355,6 +2417,19 @@ public class MetalWorldRenderer {
       CustomChunkMesher.ChunkMeshData mesh = entry.getValue();
       boolean visible = occlusionVisited.contains(key);
       boolean hidden = occlusionHidden.contains(key);
+      int dirMask = com.pebbles_boon.metalrender.culling.CameraFaceCuller.getVisibleFacesDirectionMask(res.camBX, res.camBY, res.camBZ, mesh.chunkX, mesh.chunkY, mesh.chunkZ);
+      int geomMask = 0;
+      int[] facingCounts = mesh.facingQuadCounts;
+      if (facingCounts != null) {
+        for (int fi = 0; fi < 7 && fi < facingCounts.length; fi++) {
+          if (facingCounts[fi] > 0) {
+            geomMask |= 1 << fi;
+          }
+        }
+      }
+      if ((dirMask & geomMask) == 0) {
+        faceSkippedMeshes++;
+      }
       if (!visible && !hidden) {
         try {
           NativeBridge.nUnregisterChunkMesh(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
@@ -2368,26 +2443,36 @@ public class MetalWorldRenderer {
         reregistered++;
       }
     }
-    lastOcclusionCamSectionKey = camKey;
-    lastOcclusionMeshGen = meshGen;
-    lastOcclusionHiddenCount = occlusionHidden.size();
-    if (meshTotal > 512 && lastOcclusionHiddenCount * 200L < meshTotal) {
-      occlusionLowYieldStreak++;
-      int cap = (unregistered + reregistered) == 0 ? 32 : 8;
-      if (occlusionLowYieldStreak >= 3 && occlusionBackoffMult < cap) {
-        occlusionBackoffMult *= 2;
-        occlusionLowYieldStreak = 0;
-      }
-    } else {
-      occlusionLowYieldStreak = 0;
-      occlusionBackoffMult = 1;
-    }
-    nextOcclusionFrame = frameCount + OCCLUSION_INTERVAL_FRAMES * occlusionBackoffMult;
     if ((unregistered + reregistered) > 0 || MetalRenderConfig.isDeepDebugActive()) {
-      MetalLogger.info("occlusion: hidden=%d (+%d -%d) visited=%d/%d meshes=%d",
+      MetalLogger.info("occlusion: hidden=%d (+%d -%d) visited=%d/%d meshes=%d wide=%d regular=%d local=%d fallback=%d faceskipped=%d cullms=%.2f search=%.0f/%.0f cam=[%d,%d,%d] async",
           occlusionHidden.size(), unregistered, reregistered,
-          occlusionVisited.size(), visits, meshTotal);
+          occlusionVisited.size(), res.wideCount + res.regularCount, res.meshTotal,
+          res.wideCount, res.regularCount, res.localCount,
+          res.fallbackCount, faceSkippedMeshes, res.cullNs / 1000000.0,
+          res.searchRegular, res.searchLocal, res.camSX, res.camSY, res.camSZ);
     }
+  }
+  private static long visibilityFromFaceMask(byte mask) {
+    int m = mask & 0x3F;
+    if (m == 0x3F) {
+      return 0L;
+    }
+    if (m == 0) {
+      return 0xFFFFFFFFFFFFL;
+    }
+    long v = 0L;
+    for (int from = 0; from < 6; from++) {
+      if ((m & (1 << from)) != 0) {
+        continue;
+      }
+      for (int to = 0; to < 6; to++) {
+        if ((m & (1 << to)) != 0) {
+          continue;
+        }
+        v |= 1L << com.pebbles_boon.metalrender.culling.VisibilityEncoding.bit(from, to);
+      }
+    }
+    return v;
   }
 
   public static boolean shouldBlitAt(String timingPoint) {
