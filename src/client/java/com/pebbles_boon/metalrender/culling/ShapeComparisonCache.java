@@ -1,0 +1,89 @@
+package com.pebbles_boon.metalrender.culling;
+
+import it.unimi.dsi.fastutil.Hash;
+import it.unimi.dsi.fastutil.objects.Object2IntLinkedOpenCustomHashMap;
+import net.minecraft.world.phys.shapes.BooleanOp;
+import net.minecraft.world.phys.shapes.Shapes;
+import net.minecraft.world.phys.shapes.VoxelShape;
+
+public final class ShapeComparisonCache {
+  private static final int CACHE_SIZE = 512;
+  private static final int ENTRY_ABSENT = -1;
+  private static final int ENTRY_FALSE = 0;
+  private static final int ENTRY_TRUE = 1;
+  private final Object2IntLinkedOpenCustomHashMap<ShapeComparison> comparisonLookupTable;
+  private final ShapeComparison cachedComparisonObject = new ShapeComparison();
+  public ShapeComparisonCache() {
+    this.comparisonLookupTable = new Object2IntLinkedOpenCustomHashMap<>(CACHE_SIZE, 0.5F, ShapeComparison.ShapeComparisonStrategy.INSTANCE);
+    this.comparisonLookupTable.defaultReturnValue(ENTRY_ABSENT);
+  }
+  public static boolean isFullShape(VoxelShape selfShape) {
+    return selfShape == Shapes.block();
+  }
+  public static boolean isEmptyShape(VoxelShape voxelShape) {
+    return voxelShape == Shapes.empty() || voxelShape.isEmpty();
+  }
+  public boolean lookup(VoxelShape self, VoxelShape other) {
+    return this.lookup(self, other, null);
+  }
+  public boolean lookup(VoxelShape self, VoxelShape other, VoxelShape constraint) {
+    ShapeComparison comparison = this.cachedComparisonObject;
+    comparison.self = self;
+    comparison.other = other;
+    comparison.constraint = constraint;
+    return switch (this.comparisonLookupTable.getAndMoveToFirst(comparison)) {
+      case ENTRY_FALSE -> false;
+      case ENTRY_TRUE -> true;
+      default -> this.calculate(comparison);
+    };
+  }
+  private boolean calculate(ShapeComparison comparison) {
+    VoxelShape self = comparison.self;
+    if (comparison.constraint != null && !comparison.constraint.isEmpty()) {
+      self = Shapes.join(comparison.self, comparison.constraint, BooleanOp.ONLY_FIRST);
+    }
+    boolean result = Shapes.joinIsNotEmpty(self, comparison.other, BooleanOp.ONLY_FIRST);
+    while (this.comparisonLookupTable.size() >= CACHE_SIZE) {
+      this.comparisonLookupTable.removeLastInt();
+    }
+    this.comparisonLookupTable.putAndMoveToFirst(comparison.copy(), (result ? ENTRY_TRUE : ENTRY_FALSE));
+    return result;
+  }
+  private static final class ShapeComparison {
+    private VoxelShape self;
+    private VoxelShape other;
+    private VoxelShape constraint;
+    private ShapeComparison() {
+    }
+    private ShapeComparison(VoxelShape self, VoxelShape other, VoxelShape constraint) {
+      this.self = self;
+      this.other = other;
+      this.constraint = constraint;
+    }
+    public static class ShapeComparisonStrategy implements Hash.Strategy<ShapeComparison> {
+      public static final ShapeComparisonStrategy INSTANCE = new ShapeComparisonStrategy();
+      private ShapeComparisonStrategy() {
+      }
+      @Override
+      public int hashCode(ShapeComparison value) {
+        int result = System.identityHashCode(value.self);
+        result = 31 * result + System.identityHashCode(value.other);
+        result = 31 * result + System.identityHashCode(value.constraint);
+        return result;
+      }
+      @Override
+      public boolean equals(ShapeComparison a, ShapeComparison b) {
+        if (a == b) {
+          return true;
+        }
+        if (a == null || b == null) {
+          return false;
+        }
+        return a.self == b.self && a.other == b.other && a.constraint == b.constraint;
+      }
+    }
+    public ShapeComparison copy() {
+      return new ShapeComparison(this.self, this.other, this.constraint);
+    }
+  }
+}
