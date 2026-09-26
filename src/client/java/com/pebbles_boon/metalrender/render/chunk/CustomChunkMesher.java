@@ -80,6 +80,20 @@ public class CustomChunkMesher {
       0);
   private static final java.util.concurrent.atomic.AtomicInteger DIAG_CONTENTCHANGED = new java.util.concurrent.atomic.AtomicInteger(
       0);
+  private static final java.util.concurrent.atomic.AtomicInteger DIAG_FACE_TESTS = new java.util.concurrent.atomic.AtomicInteger(
+      0);
+  private static final java.util.concurrent.atomic.AtomicInteger DIAG_FACE_CULLED = new java.util.concurrent.atomic.AtomicInteger(
+      0);
+  private static final java.util.concurrent.atomic.AtomicInteger DIAG_FACE_SHAPE = new java.util.concurrent.atomic.AtomicInteger(
+      0);
+  private static final java.util.concurrent.atomic.AtomicInteger DIAG_VIS_BUILDS = new java.util.concurrent.atomic.AtomicInteger(
+      0);
+  private static final java.util.concurrent.atomic.AtomicInteger DIAG_VIS_SEALED = new java.util.concurrent.atomic.AtomicInteger(
+      0);
+  private static final java.util.concurrent.atomic.AtomicInteger DIAG_VIS_OPEN = new java.util.concurrent.atomic.AtomicInteger(
+      0);
+  private static final java.util.concurrent.atomic.AtomicInteger DIAG_VIS_MIXED = new java.util.concurrent.atomic.AtomicInteger(
+      0);
 
   private static final ThreadLocal<ByteBuffer> VERTEX_BUF_POOL = ThreadLocal
       .withInitial(() -> ByteBuffer.allocateDirect(VERTEX_BUF_SIZE)
@@ -103,7 +117,7 @@ public class CustomChunkMesher {
   private static final int MAX_STASHED_VARIANTS = 768;
 
 
-  public static class ChunkMeshData {
+  public static class ChunkMeshData implements com.pebbles_boon.metalrender.culling.SectionOcclusionCuller.HasVisibility {
     public final long bufferHandle;
     public final int quadCount;
     public final int chunkX;
@@ -114,25 +128,28 @@ public class CustomChunkMesher {
     public final int buildPlayerCX, buildPlayerCY, buildPlayerCZ;
     public final int lodTier;
     public final byte missingNeighborMask;
-
     public final byte faceOcclusionMask;
-
+    public final long[] sectionVisibility;
     public ChunkMeshData(long bufferHandle, int quadCount, int chunkX, int chunkY, int chunkZ,
         int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ) {
       this(bufferHandle, quadCount, chunkX, chunkY, chunkZ, buildPlayerCX, buildPlayerCY, buildPlayerCZ, 0L,
-          new int[7], 0, (byte) 0, (byte) 0);
+          new int[7], 0, (byte) 0, (byte) 0, null);
     }
-
     public ChunkMeshData(long bufferHandle, int quadCount, int chunkX, int chunkY, int chunkZ,
         int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ, long visibilityMask, int[] facingQuadCounts,
         int lodTier, byte missingNeighborMask) {
       this(bufferHandle, quadCount, chunkX, chunkY, chunkZ, buildPlayerCX, buildPlayerCY, buildPlayerCZ,
-          visibilityMask, facingQuadCounts, lodTier, missingNeighborMask, (byte) 0);
+          visibilityMask, facingQuadCounts, lodTier, missingNeighborMask, (byte) 0, null);
     }
-
     public ChunkMeshData(long bufferHandle, int quadCount, int chunkX, int chunkY, int chunkZ,
         int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ, long visibilityMask, int[] facingQuadCounts,
         int lodTier, byte missingNeighborMask, byte faceOcclusionMask) {
+      this(bufferHandle, quadCount, chunkX, chunkY, chunkZ, buildPlayerCX, buildPlayerCY, buildPlayerCZ,
+          visibilityMask, facingQuadCounts, lodTier, missingNeighborMask, faceOcclusionMask, null);
+    }
+    public ChunkMeshData(long bufferHandle, int quadCount, int chunkX, int chunkY, int chunkZ,
+        int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ, long visibilityMask, int[] facingQuadCounts,
+        int lodTier, byte missingNeighborMask, byte faceOcclusionMask, long[] sectionVisibility) {
       this.bufferHandle = bufferHandle;
       this.quadCount = quadCount;
       this.chunkX = chunkX;
@@ -146,6 +163,19 @@ public class CustomChunkMesher {
       this.lodTier = lodTier;
       this.missingNeighborMask = missingNeighborMask;
       this.faceOcclusionMask = faceOcclusionMask;
+      this.sectionVisibility = sectionVisibility != null ? sectionVisibility.clone() : null;
+    }
+    public int getChunkX() {
+      return this.chunkX;
+    }
+    public int getChunkY() {
+      return this.chunkY;
+    }
+    public int getChunkZ() {
+      return this.chunkZ;
+    }
+    public long[] getSectionVisibility() {
+      return this.sectionVisibility;
     }
   }
 
@@ -1743,6 +1773,10 @@ public class CustomChunkMesher {
       .withInitial(IdentityHashMap::new);
   private static final ThreadLocal<java.util.ArrayList<BlockStateModelPart>> PARTS_POOL = ThreadLocal
       .withInitial(java.util.ArrayList::new);
+  private static final ThreadLocal<com.pebbles_boon.metalrender.culling.ShapeComparisonCache> SHAPE_CACHE = ThreadLocal
+      .withInitial(com.pebbles_boon.metalrender.culling.ShapeComparisonCache::new);
+  private static final ThreadLocal<com.pebbles_boon.metalrender.culling.DirectionalVisGraph> VIS_GRAPH_POOL = ThreadLocal
+      .withInitial(com.pebbles_boon.metalrender.culling.DirectionalVisGraph::new);
 
   private static final java.util.concurrent.atomic.AtomicInteger THREAD_LOCAL_GENERATION = new java.util.concurrent.atomic.AtomicInteger();
   private static final ThreadLocal<Integer> THREAD_LOCAL_GEN = ThreadLocal.withInitial(() -> 0);
@@ -1861,6 +1895,7 @@ public class CustomChunkMesher {
       vertexBuffer.flip();
       long visibilityMask = computeVisibilityMask(snapshot.paddedBlockStates);
       byte faceOcclusionMask = computeFaceOcclusionMask(snapshot.paddedBlockStates);
+      long[] sectionVisibility = buildSectionVisibility(snapshot.paddedBlockStates);
       int dataLen = quadCount * 4 * VERTEX_STRIDE;
 
       if (isTaskCancelled(key, generation, globalGeneration)) {
@@ -1892,7 +1927,7 @@ public class CustomChunkMesher {
       ChunkMeshData mesh = new ChunkMeshData(bufferHandle, quadCount, chunkX, chunkY, chunkZ,
           context.buildPlayerCX, context.buildPlayerCY, context.buildPlayerCZ,
           visibilityMask, facingQuadCounts, lodTier,
-          computeMissingNeighborMask(context.world, chunkX, chunkZ), faceOcclusionMask);
+          computeMissingNeighborMask(context.world, chunkX, chunkZ), faceOcclusionMask, sectionVisibility);
       ChunkMeshData old;
       synchronized (dirtyGeneration) {
         if (isTaskCancelled(key, generation, globalGeneration)) {
@@ -2288,16 +2323,23 @@ public class CustomChunkMesher {
         return false;
       if (neighbor.isAir())
         return false;
-
+      DIAG_FACE_TESTS.incrementAndGet();
       boolean currentIsLeaves = state.getBlock() instanceof LeavesBlock;
       boolean neighborIsLeaves = neighbor.getBlock() instanceof LeavesBlock;
       if (currentIsLeaves || neighborIsLeaves) {
-        return isOpaqueForCulling(neighbor);
+        boolean leavesCulled = isOpaqueForCulling(neighbor);
+        if (leavesCulled) {
+          DIAG_FACE_CULLED.incrementAndGet();
+        }
+        return leavesCulled;
       }
-
-      if (state.skipRendering(neighbor, direction))
-        return true;
-      return isOpaqueForCulling(neighbor);
+      DIAG_FACE_SHAPE.incrementAndGet();
+      com.pebbles_boon.metalrender.culling.ShapeComparisonCache cache = SHAPE_CACHE.get();
+      boolean shapeCulled = com.pebbles_boon.metalrender.culling.BlockFaceCulling.shouldCullFace(state, neighbor, direction, cache);
+      if (shapeCulled) {
+        DIAG_FACE_CULLED.incrementAndGet();
+      }
+      return shapeCulled;
     }
 
     private boolean isOpaqueForCulling(BlockState state) {
@@ -3028,6 +3070,40 @@ public class CustomChunkMesher {
       } catch (Exception ignored) {
       }
     }
+  }
+
+  private static long[] buildSectionVisibility(int[] paddedBlockStates) {
+    if (paddedBlockStates == null) {
+      return new long[] { 0xFFFFFFFFFFFFL };
+    }
+    com.pebbles_boon.metalrender.culling.DirectionalVisGraph graph = VIS_GRAPH_POOL.get();
+    graph.reset();
+    for (int y = 0; y < SECTION_SIZE; y++) {
+      for (int z = 0; z < SECTION_SIZE; z++) {
+        for (int x = 0; x < SECTION_SIZE; x++) {
+          int pIdx = ((y + PADDED_RADIUS) * PADDED_SIZE + (z + PADDED_RADIUS)) * PADDED_SIZE + (x + PADDED_RADIUS);
+          int stateId = paddedBlockStates[pIdx];
+          if (stateId != 0 && isOpaqueState(stateId)) {
+            graph.setOpaque(x, y, z);
+          }
+        }
+      }
+    }
+    long[] encoded = graph.resolveEncoded();
+    int visBuilds = DIAG_VIS_BUILDS.incrementAndGet();
+    if (encoded.length == 1 && encoded[0] == 0L) {
+      DIAG_VIS_SEALED.incrementAndGet();
+    } else if (encoded.length == 1 && encoded[0] == 0xFFFFFFFFFFFFL) {
+      DIAG_VIS_OPEN.incrementAndGet();
+    } else {
+      DIAG_VIS_MIXED.incrementAndGet();
+    }
+    if (visBuilds % 200 == 0) {
+      MetalLogger.info("sectionvis: builds=%d sealed=%d open=%d mixed=%d facetests=%d faceculled=%d shapetests=%d",
+          visBuilds, DIAG_VIS_SEALED.get(), DIAG_VIS_OPEN.get(), DIAG_VIS_MIXED.get(),
+          DIAG_FACE_TESTS.get(), DIAG_FACE_CULLED.get(), DIAG_FACE_SHAPE.get());
+    }
+    return encoded;
   }
 
   private static byte computeFaceOcclusionMask(int[] paddedBlockStates) {
