@@ -6,7 +6,6 @@ import com.mojang.blaze3d.systems.RenderSystem;
 import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.backend.MetalRenderer;
 import com.pebbles_boon.metalrender.config.MetalRenderConfig;
-import com.pebbles_boon.metalrender.culling.AsyncCullTask;
 import com.pebbles_boon.metalrender.culling.CullingOrcreator;
 import com.pebbles_boon.metalrender.culling.FrustumCuller;
 import com.pebbles_boon.metalrender.entity.MetalEntityRenderer;
@@ -42,2953 +41,3266 @@ import org.joml.Matrix4f;
 import org.joml.Vector3f;
 
 public class MetalWorldRenderer {
-  private static final int DEFAULT_MAX_MESHES = 65536;
-  private static final int PINNED_RENDER_DISTANCE = 32;
-  private static final int PINNED_MAX_MESHES = 131072;
-  private static final long CHUNK_BUILD_BUDGET_NS = 4_500_000L;
-  private static final int MIN_CHUNK_BUILDS_PER_FRAME = 10;
-  private static final int CHUNK_BACKLOG_PRESSURE_THRESHOLD = 384;
-  private static final int CHUNK_BACKLOG_HEAVY_THRESHOLD = 1024;
-  private static final int CHUNK_SCAN_PRESSURE_THRESHOLD = 4096;
-  private static final int CHUNK_SCAN_SATURATED_THRESHOLD = 12288;
-  private static final long CHUNK_BACKLOG_BUILD_BURST_NS = 8_000_000L;
-  private static final int MIN_CHUNK_BACKLOG_BUILDS_PER_FRAME = 24;
-  private static final long CHUNK_HEAVY_BACKLOG_BUILD_BURST_NS = 12_000_000L;
-  private static final int MIN_CHUNK_HEAVY_BACKLOG_BUILDS_PER_FRAME = 40;
-  private static final long CHUNK_SATURATED_BUILD_BUDGET_NS = 1_500_000L;
-  private static final int MIN_CHUNK_SATURATED_BUILDS_PER_FRAME = 4;
-  private static final long CHUNK_TURN_BUILD_BURST_NS = 3_500_000L;
-  private static final int MIN_CHUNK_TURN_BUILDS_PER_FRAME = 12;
-  private static final int BASE_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 12;
-  private static final int BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 24;
-  private static final int HEAVY_BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 32;
-  private static final int TURN_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 24;
-  private static final int SATURATED_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 4;
-  private static final int PRIORITIZED_BUILD_STREAK_LIMIT = 2;
-  private static final int RESERVED_PRIORITY_IN_FLIGHT_SLOTS = 32;
-  private static final int FPS_PRIORITY_NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS = 192;
-  private static final int HIGH_PRIORITY_LOADED_VERTICAL_RANGE = 3;
-  private static final int MID_DISTANCE_SCAN_VERTICAL_RANGE = 8;
-  private static final int FAR_DISTANCE_SCAN_VERTICAL_RANGE = 5;
-  private static final int EXTREME_DISTANCE_SCAN_VERTICAL_RANGE = 3;
-  private static final int SURFACE_SECTION_EXTRA_DEPTH = 2;
-  private static final int TURN_PRIORITY_LOADED_CHUNK_RANGE = 24;
-  private static final float BUILD_SORT_REORDER_DOT_THRESHOLD = 0.9848f;
-  private static final int TURN_PRIORITY_SCAN_FRAMES = 6;
-  private static final int TURN_PRIORITY_FORWARD_SCAN_DEPTH = 6;
-  private static final float TURN_PRIORITY_SCAN_COS_THRESHOLD = 0.45f;
-  private static final int IMMEDIATE_LOADED_CHUNK_BUILD_RANGE = 8;
-  private static final int IMPORTANT_REBUILD_CHUNK_RANGE = 2;
-  private static final int LOD_REFRESH_FRAME_INTERVAL = 6;
-  private static final int MAX_LOD_REFRESH_SUBMITS_PER_PASS = 32;
-  private static final int MAX_LOD_SCAN_PER_PASS = 2048;
-  private static final int LOD_REFRESH_PENDING_LIMIT = 64;
-  private static final int LOD_REFRESH_IN_FLIGHT_LIMIT = 48;
-  private static final int MAX_LOD_DEMOTIONS_PER_PASS = 12;
-  private static final int LOD_RING_MARGIN = 2;
-  private static final int LOD_RING_COLLECT_CAP = 128;
-  private static final int LOD_RING_UPGRADES_PER_FRAME = 24;
-  private static final int LOD_RING_DEMOTIONS_PER_FRAME = 6;
-  private static final int LOD_RING_SLICE_SIZE = 4096;
-  private static final int LOD_RECENCY_PULL_INTERVAL = 30;
-  private static final int MAX_LOD_RECENCY_DEMOTIONS_PER_PASS = 8;
-  private static final int LOD_RECENCY_SCRATCH_SIZE = 32768;
-  private static final int INTERACTIVE_PRIORITY_CHUNK_RANGE = 6;
-  private static final int INTERACTIVE_PRIORITY_SUBMISSIONS_PER_PASS = 8;
-  private static final int MAX_INTERACTIVE_PRIORITY_QUEUE_DEPTH = 16;
-  private static final int LOADING_BACKGROUND_SUBMISSIONS_PER_PASS = 128;
-  private static final int TURN_PRIORITY_BACKGROUND_SUBMISSIONS_PER_PASS = 24;
-  private static final int NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS = 128;
-  private static final int ACTIVE_CLOSE_RANGE_RESCAN_INTERVAL = 3;
-  private static final int IDLE_CLOSE_RANGE_RESCAN_INTERVAL = 8;
-  private static final int HOT_LOAD_REBUILD_RANGE = 12;
-  private static final int NORMAL_FRONTIER_RING_SCAN_SPAN = 6;
+    private static final int DEFAULT_MAX_MESHES = 65536;
+    private static final int PINNED_RENDER_DISTANCE = 32;
+    private static final int PINNED_MAX_MESHES = 131072;
+    private static final long CHUNK_BUILD_BUDGET_NS = 4_500_000L;
+    private static final int MIN_CHUNK_BUILDS_PER_FRAME = 10;
+    private static final int CHUNK_BACKLOG_PRESSURE_THRESHOLD = 384;
+    private static final int CHUNK_BACKLOG_HEAVY_THRESHOLD = 1024;
+    private static final int CHUNK_SCAN_PRESSURE_THRESHOLD = 4096;
+    private static final int CHUNK_SCAN_SATURATED_THRESHOLD = 12288;
+    private static final long CHUNK_BACKLOG_BUILD_BURST_NS = 8_000_000L;
+    private static final int MIN_CHUNK_BACKLOG_BUILDS_PER_FRAME = 24;
+    private static final long CHUNK_HEAVY_BACKLOG_BUILD_BURST_NS = 12_000_000L;
+    private static final int MIN_CHUNK_HEAVY_BACKLOG_BUILDS_PER_FRAME = 40;
+    private static final long CHUNK_SATURATED_BUILD_BUDGET_NS = 1_500_000L;
+    private static final int MIN_CHUNK_SATURATED_BUILDS_PER_FRAME = 4;
+    private static final long CHUNK_TURN_BUILD_BURST_NS = 3_500_000L;
+    private static final int MIN_CHUNK_TURN_BUILDS_PER_FRAME = 12;
+    private static final int BASE_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 12;
+    private static final int BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 24;
+    private static final int HEAVY_BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 32;
+    private static final int TURN_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 24;
+    private static final int SATURATED_HIGH_PRIORITY_SUBMISSIONS_PER_PASS = 4;
+    private static final int PRIORITIZED_BUILD_STREAK_LIMIT = 2;
+    private static final int RESERVED_PRIORITY_IN_FLIGHT_SLOTS = 32;
+    private static final int FPS_PRIORITY_NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS = 192;
+    private static final int HIGH_PRIORITY_LOADED_VERTICAL_RANGE = 3;
+    private static final int MID_DISTANCE_SCAN_VERTICAL_RANGE = 8;
+    private static final int FAR_DISTANCE_SCAN_VERTICAL_RANGE = 5;
+    private static final int EXTREME_DISTANCE_SCAN_VERTICAL_RANGE = 3;
+    private static final int SURFACE_SECTION_EXTRA_DEPTH = 2;
+    private static final int TURN_PRIORITY_LOADED_CHUNK_RANGE = 24;
+    private static final float BUILD_SORT_REORDER_DOT_THRESHOLD = 0.9848f;
+    private static final int TURN_PRIORITY_SCAN_FRAMES = 6;
+    private static final int TURN_PRIORITY_FORWARD_SCAN_DEPTH = 6;
+    private static final float TURN_PRIORITY_SCAN_COS_THRESHOLD = 0.45f;
+    private static final int IMMEDIATE_LOADED_CHUNK_BUILD_RANGE = 8;
+    private static final int IMPORTANT_REBUILD_CHUNK_RANGE = 2;
+    private static final int LOD_REFRESH_FRAME_INTERVAL = 6;
+    private static final int MAX_LOD_REFRESH_SUBMITS_PER_PASS = 32;
+    private static final int MAX_LOD_SCAN_PER_PASS = 2048;
+    private static final int LOD_REFRESH_PENDING_LIMIT = 64;
+    private static final int LOD_REFRESH_IN_FLIGHT_LIMIT = 48;
+    private static final int MAX_LOD_DEMOTIONS_PER_PASS = 12;
+    private static final int LOD_RING_MARGIN = 2;
+    private static final int LOD_RING_COLLECT_CAP = 128;
+    private static final int LOD_RING_UPGRADES_PER_FRAME = 24;
+    private static final int LOD_RING_DEMOTIONS_PER_FRAME = 6;
+    private static final int LOD_RING_SLICE_SIZE = 4096;
+    private static final int LOD_FAST_LANE_PER_FRAME = 4;
+    private static final int LOD_FAST_LANE_CHUNK_RANGE = 6;
+    private static final int LOD_RECENCY_PULL_INTERVAL = 30;
+    private static final int MAX_LOD_RECENCY_DEMOTIONS_PER_PASS = 8;
+    private static final int LOD_RECENCY_SCRATCH_SIZE = 32768;
+    private static final int INTERACTIVE_PRIORITY_CHUNK_RANGE = 6;
+    private static final int INTERACTIVE_PRIORITY_SUBMISSIONS_PER_PASS = 8;
+    private static final int MAX_INTERACTIVE_PRIORITY_QUEUE_DEPTH = 16;
+    private static final int LOADING_BACKGROUND_SUBMISSIONS_PER_PASS = 128;
+    private static final int TURN_PRIORITY_BACKGROUND_SUBMISSIONS_PER_PASS = 24;
+    private static final int NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS = 128;
+    private static final int ACTIVE_CLOSE_RANGE_RESCAN_INTERVAL = 3;
+    private static final int IDLE_CLOSE_RANGE_RESCAN_INTERVAL = 8;
+    private static final int HOT_LOAD_REBUILD_RANGE = 12;
+    private static final int NORMAL_FRONTIER_RING_SCAN_SPAN = 6;
 
-  private static final int PRESSURED_CLOSE_SCAN_RANGE = 6;
-  private static final int SATURATED_CLOSE_SCAN_RANGE = 4;
-  private static final long FULL_RENDERDIST_RESCAN_INTERVAL_NS = 3_000_000_000L;
-  private static final int TEXTURE_SYNC_PRESSURE_THRESHOLD = 64;
-  private static final int PRESSURED_LIGHTMAP_SYNC_FRAME_INTERVAL = 8;
-  private static final double TEXTURE_BACKOFF_TRIP_MESH_MS = 6.0;
-  private static final double TEXTURE_BACKOFF_HARD_TRIP_MESH_MS = 12.0;
-  private static final double TEXTURE_BACKOFF_RECOVERY_MESH_MS = 4.0;
-  private static final int TEXTURE_BACKOFF_TRIP_CONSEC = 2;
-  private static final int TEXTURE_BACKOFF_RECOVER_CONSEC = 5;
-  private static final int BACKED_OFF_LIGHTMAP_SYNC_FRAME_INTERVAL = 32;
-  private static volatile java.lang.reflect.Field skyLightFactorField;
-  private static volatile java.lang.reflect.Method skyLightProbeGetValueMethod;
-  private static volatile boolean skyLightLookupFailed;
-  private static MetalWorldRenderer instance;
-  private final FrustumCuller frustumCuller;
-  private final MetalEntityRenderer entityRenderer;
-  private final MetalParticleRenderer particleRenderer;
-  private final MetalCloudRenderer cloudRenderer;
-  private final MetalWeatherRenderer weatherRenderer;
-  private final CustomChunkMesher chunkMesher;
-  private final MetalTextureManager textureManager;
-  private final IOSurfaceBlitter ioSurfaceBlitter;
-  private final Matrix4f projectionMatrix;
-  private final Matrix4f modelViewMatrix;
-  private boolean worldLoaded;
-  private boolean renderingActive;
-  private boolean texturesReady;
-  private int frameCount;
-  private int maxMeshes = DEFAULT_MAX_MESHES;
-  private int lastDrawnChunkCount;
-  private long lastDiagLogMs;
-  private long outlineBufferHandle;
-  private long jBuildAcc;
-  private int jProfCount = 0;
-  private boolean gpuDrivenEnabled;
-  private MeshShaderBackend meshShaderBackend;
-  private ByteBuffer subChunkUploadBuffer;
-  private ByteBuffer chunkUniformsBuffer;
-  private int subChunkUploadCapacity = 4096;
-  private long argumentBufferHandle;
-  private it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap readinessCache;
-  private it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap lightReadinessCache;
-  private static final long LIGHT_GRACE_NANOS = 1_500_000_000L;
-  private long lastLightWaitLogMs;
-  private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap delayedBlockRebuildFrames =
-      new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
-  private final int[] cameraFacingCullStats = new int[3];
-  private int lastCullMeshGen = -1;
-  private float lastCullCamX;
-  private float lastCullCamY;
-  private float lastCullCamZ;
-  private int lastCullCount = 0;
-  private final float[] lastCullFrustum = new float[24];
-  private final CullingOrcreator cullingOrcreator = new CullingOrcreator();
-  private final com.pebbles_boon.metalrender.culling.SectionOcclusionCuller graphCuller = new com.pebbles_boon.metalrender.culling.SectionOcclusionCuller();
-  private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<long[]> sectionVisibilityMap = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
-  private java.util.concurrent.ExecutorService occlusionExecutor;
-  private final java.util.concurrent.atomic.AtomicBoolean occlusionTaskRunning = new java.util.concurrent.atomic.AtomicBoolean(false);
-  private final java.util.concurrent.atomic.AtomicReference<OcclusionTaskResult> occlusionTaskResult = new java.util.concurrent.atomic.AtomicReference<>(null);
-  private volatile int occlusionEpoch;
-  private final Matrix4f asyncProjScratch = new Matrix4f();
-  private final Matrix4f asyncMVScratch = new Matrix4f();
-  private final Vector3f asyncCamScratch = new Vector3f();
-  private final Matrix4f vpScratch = new Matrix4f();
-  private final Matrix4f metalProjScratch = new Matrix4f();
-  private final Vector3f camDirScratch = new Vector3f();
-  private final Vector3f camFwdScratch = new Vector3f();
-  private float lastFogAppliedR = Float.NaN;
-  private float lastFogAppliedG = Float.NaN;
-  private float lastFogAppliedB = Float.NaN;
-  private float lastFogAppliedEnvStart = Float.NaN;
-  private float lastFogAppliedEnvEnd = Float.NaN;
-  private float lastFogAppliedRenderStart = Float.NaN;
-  private float lastFogAppliedRenderEnd = Float.NaN;
-  private float lastSkyApplied = Float.NaN;
-  private long lastAtlasApplied;
-  private long lastLightmapApplied;
-  private long lastPipelineApplied;
-  private boolean lastFaceCullApplied = true;
-  private int lastRenderDistApplied = Integer.MIN_VALUE;
-  private java.nio.ByteBuffer outlineDirectBuf;
-  private double lastOutlineBx;
-  private double lastOutlineBy;
-  private double lastOutlineBz;
-  private int lastOutlineDrawCount = -1;
-  private long lastOutlineUploadPos = Long.MIN_VALUE;
-  private int lodRingRunFrame = -1000;
-  private final java.util.ArrayList<LodCandidate> lodUpgradeScratch = new java.util.ArrayList<>(64);
-  private final java.util.ArrayList<LodCandidate> lodDemotionScratch = new java.util.ArrayList<>(16);
-  private long outlineCachePos = Long.MIN_VALUE;
-  private int outlineCacheCount;
-  private int outlineCacheDataLen;
-  private float[] outlineLocalVerts = new float[72 * 3];
-  private int outlineLocalCount;
-  private BlockState outlineCacheState;
-  private final TranslucencySorter translucencySorter = new TranslucencySorter();
-  private final float[] gpuFrustumPlanes = new float[24];
-  private double frameCameraX;
-  private double frameCameraY;
-  private double frameCameraZ;
-  private float[] outlineVerts = new float[72 * 3];
-  private byte[] outlineDataBuf = new byte[72 * 3 * 4];
-  private final java.util.ArrayList<float[]> outlineEdges = new java.util.ArrayList<>(32);
-  private int screenshotBlitCooldownFrames;
-  private boolean loggedChunkLoadDropNotReady;
-  private boolean loggedBlockUpdateDropNotReady;
-  private boolean loggedWorldLoadWithoutRenderer;
-  private long lastQueuePressureLogMs;
+    private static final int PRESSURED_CLOSE_SCAN_RANGE = 6;
+    private static final int SATURATED_CLOSE_SCAN_RANGE = 4;
+    private static final long FULL_RENDERDIST_RESCAN_INTERVAL_NS = 3_000_000_000L;
+    private static final int TEXTURE_SYNC_PRESSURE_THRESHOLD = 64;
+    private static final int PRESSURED_LIGHTMAP_SYNC_FRAME_INTERVAL = 8;
+    private static final double TEXTURE_BACKOFF_TRIP_MESH_MS = 6.0;
+    private static final double TEXTURE_BACKOFF_HARD_TRIP_MESH_MS = 12.0;
+    private static final double TEXTURE_BACKOFF_RECOVERY_MESH_MS = 4.0;
+    private static final int TEXTURE_BACKOFF_TRIP_CONSEC = 2;
+    private static final int TEXTURE_BACKOFF_RECOVER_CONSEC = 5;
+    private static final int BACKED_OFF_LIGHTMAP_SYNC_FRAME_INTERVAL = 32;
+    private static volatile java.lang.reflect.Field skyLightFactorField;
+    private static volatile java.lang.reflect.Method skyLightProbeGetValueMethod;
+    private static volatile boolean skyLightLookupFailed;
+    private static MetalWorldRenderer instance;
+    private final FrustumCuller frustumCuller;
+    private final MetalEntityRenderer entityRenderer;
+    private final MetalParticleRenderer particleRenderer;
+    private final MetalCloudRenderer cloudRenderer;
+    private final MetalWeatherRenderer weatherRenderer;
+    private final CustomChunkMesher chunkMesher;
+    private final MetalTextureManager textureManager;
+    private final IOSurfaceBlitter ioSurfaceBlitter;
+    private final Matrix4f projectionMatrix;
+    private final Matrix4f modelViewMatrix;
+    private boolean worldLoaded;
+    private boolean renderingActive;
+    private boolean texturesReady;
+    private int frameCount;
+    private int maxMeshes = DEFAULT_MAX_MESHES;
+    private int lastDrawnChunkCount;
+    private long lastDiagLogMs;
+    private long outlineBufferHandle;
+    private long jBuildAcc;
+    private int jProfCount = 0;
+    private boolean gpuDrivenEnabled;
+    private MeshShaderBackend meshShaderBackend;
+    private ByteBuffer subChunkUploadBuffer;
+    private ByteBuffer chunkUniformsBuffer;
+    private int subChunkUploadCapacity = 4096;
+    private long argumentBufferHandle;
+    private it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap readinessCache;
+    private it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap lightReadinessCache;
+    private static final long LIGHT_GRACE_NANOS = 1_500_000_000L;
+    private long lastLightWaitLogMs;
+    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap delayedBlockRebuildFrames = new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap();
+    private final int[] cameraFacingCullStats = new int[3];
+    private int lastCullMeshGen = -1;
+    private float lastCullCamX;
+    private float lastCullCamY;
+    private float lastCullCamZ;
+    private int lastCullCount = 0;
+    private final float[] lastCullFrustum = new float[24];
+    private final CullingOrcreator cullingOrcreator = new CullingOrcreator();
+    private final com.pebbles_boon.metalrender.culling.SectionOcclusionCuller graphCuller = new com.pebbles_boon.metalrender.culling.SectionOcclusionCuller();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<long[]> sectionVisibilityMap = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private java.util.concurrent.ExecutorService occlusionExecutor;
+    private final java.util.concurrent.atomic.AtomicBoolean occlusionTaskRunning = new java.util.concurrent.atomic.AtomicBoolean(
+            false);
+    private final java.util.concurrent.atomic.AtomicReference<OcclusionTaskResult> occlusionTaskResult = new java.util.concurrent.atomic.AtomicReference<>(
+            null);
+    private volatile int occlusionEpoch;
+    private final Matrix4f asyncProjScratch = new Matrix4f();
+    private final Matrix4f asyncMVScratch = new Matrix4f();
+    private final Vector3f asyncCamScratch = new Vector3f();
+    private final Matrix4f vpScratch = new Matrix4f();
+    private final Matrix4f metalProjScratch = new Matrix4f();
+    private final Vector3f camDirScratch = new Vector3f();
+    private final Vector3f camFwdScratch = new Vector3f();
+    private float lastFogAppliedR = Float.NaN;
+    private float lastFogAppliedG = Float.NaN;
+    private float lastFogAppliedB = Float.NaN;
+    private float lastFogAppliedEnvStart = Float.NaN;
+    private float lastFogAppliedEnvEnd = Float.NaN;
+    private float lastFogAppliedRenderStart = Float.NaN;
+    private float lastFogAppliedRenderEnd = Float.NaN;
+    private float lastSkyApplied = Float.NaN;
+    private long lastAtlasApplied;
+    private long lastLightmapApplied;
+    private long lastPipelineApplied;
+    private boolean lastFaceCullApplied = true;
+    private int lastRenderDistApplied = Integer.MIN_VALUE;
+    private java.nio.ByteBuffer outlineDirectBuf;
+    private double lastOutlineBx;
+    private double lastOutlineBy;
+    private double lastOutlineBz;
+    private int lastOutlineDrawCount = -1;
+    private long lastOutlineUploadPos = Long.MIN_VALUE;
+    private int lodRingRunFrame = -1000;
+    private final java.util.ArrayList<LodCandidate> lodUpgradeScratch = new java.util.ArrayList<>(64);
+    private final java.util.ArrayList<LodCandidate> lodDemotionScratch = new java.util.ArrayList<>(16);
+    private long outlineCachePos = Long.MIN_VALUE;
+    private int outlineCacheCount;
+    private int outlineCacheDataLen;
+    private float[] outlineLocalVerts = new float[72 * 3];
+    private int outlineLocalCount;
+    private BlockState outlineCacheState;
+    private final TranslucencySorter translucencySorter = new TranslucencySorter();
+    private final float[] gpuFrustumPlanes = new float[24];
+    private double frameCameraX;
+    private double frameCameraY;
+    private double frameCameraZ;
+    private float[] outlineVerts = new float[72 * 3];
+    private byte[] outlineDataBuf = new byte[72 * 3 * 4];
+    private final java.util.ArrayList<float[]> outlineEdges = new java.util.ArrayList<>(32);
+    private int screenshotBlitCooldownFrames;
+    private boolean loggedChunkLoadDropNotReady;
+    private boolean loggedBlockUpdateDropNotReady;
+    private boolean loggedWorldLoadWithoutRenderer;
+    private long lastQueuePressureLogMs;
 
-  public MetalWorldRenderer() {
-    this.frustumCuller = new FrustumCuller();
-    this.entityRenderer = new MetalEntityRenderer();
-    this.particleRenderer = new MetalParticleRenderer();
-    this.cloudRenderer = new MetalCloudRenderer();
-    this.weatherRenderer = new MetalWeatherRenderer();
-    this.chunkMesher = new CustomChunkMesher();
-    this.readinessCache = new it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap();
-    this.lightReadinessCache = new it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap();
-    this.delayedBlockRebuildFrames.defaultReturnValue(Integer.MIN_VALUE);
-    MetalRenderer renderer = MetalRenderClient.getRenderer();
-    long device = renderer != null ? renderer.getBackend().getDeviceHandle() : 0;
-    this.textureManager = new MetalTextureManager(device);
-    this.ioSurfaceBlitter = new IOSurfaceBlitter();
-    this.projectionMatrix = new Matrix4f();
-    this.modelViewMatrix = new Matrix4f();
-    instance = this;
-  }
+    public MetalWorldRenderer() {
+        this.frustumCuller = new FrustumCuller();
+        this.entityRenderer = new MetalEntityRenderer();
+        this.particleRenderer = new MetalParticleRenderer();
+        this.cloudRenderer = new MetalCloudRenderer();
+        this.weatherRenderer = new MetalWeatherRenderer();
+        this.chunkMesher = new CustomChunkMesher();
+        this.readinessCache = new it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap();
+        this.lightReadinessCache = new it.unimi.dsi.fastutil.longs.Long2BooleanOpenHashMap();
+        this.delayedBlockRebuildFrames.defaultReturnValue(Integer.MIN_VALUE);
+        MetalRenderer renderer = MetalRenderClient.getRenderer();
+        long device = renderer != null ? renderer.getBackend().getDeviceHandle() : 0;
+        this.textureManager = new MetalTextureManager(device);
+        this.ioSurfaceBlitter = new IOSurfaceBlitter();
+        this.projectionMatrix = new Matrix4f();
+        this.modelViewMatrix = new Matrix4f();
+        instance = this;
+    }
 
-  public static MetalWorldRenderer getInstance() {
-    return instance;
-  }
+    public static MetalWorldRenderer getInstance() {
+        return instance;
+    }
 
-  public void onWorldLoad() {
-    AsyncCullTask.reset();
-    lodPolicy.clear();
-    lastAtlasApplied = 0;
-    lastLightmapApplied = 0;
-    lastPipelineApplied = 0;
-    lastRenderDistApplied = Integer.MIN_VALUE;
-    lastSkyApplied = Float.NaN;
-    lastFogAppliedR = Float.NaN;
-    lastOutlineUploadPos = Long.MIN_VALUE;
-    lastOutlineDrawCount = -1;
-    scanDirty = true;
-    lastOcclusionSubmitKey = Long.MIN_VALUE;
-    lastOcclusionSubmitGen = Integer.MIN_VALUE;
-    lastOcclusionSubmitSearch = -1.0f;
-    worldLoaded = true;
-    MetalRenderConfig gpuConfig = MetalRenderClient.getConfig();
-    boolean clusterEnabled = gpuConfig != null && gpuConfig.enableClusterFrustumCulling;
-    boolean sortEnabled = gpuConfig != null && gpuConfig.enableGpuTranslucencySort;
-    cullingOrcreator.setActive(clusterEnabled);
-    cullingOrcreator.setCpuFallbackEnabled(true);
-    translucencySorter.setActive(sortEnabled);
-    MetalLogger.info("orchestrators: cluster=%s sort=%s",
-        clusterEnabled, sortEnabled);
-    MetalRenderer renderer = MetalRenderClient.getRenderer();
-    if (renderer != null && renderer.isAvailable()) {
-      Minecraft mc = Minecraft.getInstance();
-      int w = mc.getWindow().getWidth();
-      int h = mc.getWindow().getHeight();
-      if (w > 0 && h > 0) {
-        renderer.resize(w, h);
-      }
-      chunkMesher.initialize(renderer.getBackend().getDeviceHandle());
-      entityRenderer.setup(renderer.getBackend().getDeviceHandle(), 0);
-      particleRenderer.setup(renderer.getBackend().getDeviceHandle());
-      cloudRenderer.setup(renderer.getBackend().getDeviceHandle());
-      weatherRenderer.setup(renderer.getBackend().getDeviceHandle());
-      renderingActive = true;
-      entityRenderer.setActive(true);
-      particleRenderer.setActive(true);
-      cloudRenderer.setActive(true);
-      weatherRenderer.setActive(true);
-      texturesReady = false;
-      long handle = renderer.getBackend().getDeviceHandle();
-      meshShaderBackend = new MeshShaderBackend();
-      meshShaderBackend.initialize();
-      boolean meshShadersSupported = MetalHardwareChecker.supportsMeshShaders();
-      if (handle != 0) {
-        subChunkUploadBuffer = ByteBuffer.allocateDirect(subChunkUploadCapacity * 48)
-            .order(ByteOrder.nativeOrder());
-        chunkUniformsBuffer = ByteBuffer.allocateDirect(subChunkUploadCapacity * 16)
-            .order(ByteOrder.nativeOrder());
-        if (argumentBufferHandle == 0 && meshShaderBackend != null &&
-            meshShaderBackend.areMeshShadersAvailable()) {
-          argumentBufferHandle = NativeBridge.nCreateBuffer(handle,
-              subChunkUploadCapacity * 16,
-              NativeMemory.STORAGE_MODE_SHARED);
-          if (argumentBufferHandle != 0) {
-            MetalLogger.info("mesh arg buf: h=%d sz=%d",
-                argumentBufferHandle, subChunkUploadCapacity * 16);
-          }
-        }
-      }
-      applyFeatureConfig(MetalRenderClient.getConfig());
-      boolean meshShadersActive = NativeBridge.isLibLoaded() && NativeBridge.nAreMeshShadersActive();
-      MetalLogger.info("gpu pipeline weady (mesh=%s on=%s)",
-          meshShadersActive ? "on" : (meshShadersSupported ? "avail" : "no"),
-          gpuDrivenEnabled ? "yes" : "no");
-      MetalLogger.info("world wendew on (" + w + "x" + h + ")");
-    } else if (!loggedWorldLoadWithoutRenderer) {
-      loggedWorldLoadWithoutRenderer = true;
-      MetalLogger.warn(
-          "world load before wendewer weady; capture deferred");
-    }
-  }
-
-  public void onWorldUnload() {
-    worldLoaded = false;
-    renderingActive = false;
-    texturesReady = false;
-    entityRenderer.shutdown();
-    particleRenderer.shutdown();
-    cloudRenderer.shutdown();
-    weatherRenderer.shutdown();
-    textureManager.destroy();
-    ioSurfaceBlitter.destroy();
-    chunkMesher.clear();
-    shutdownOcclusionWorker();
-    clearOcclusionState();
-    vanillaAOTracked = false;
-    lodRingPlayerCX = Integer.MIN_VALUE;
-    lodRingPlayerCZ = Integer.MIN_VALUE;
-    lodRingMeshGen = Integer.MIN_VALUE;
-    lodRingThermalBias = Integer.MIN_VALUE;
-    lodRingCursor = 0;
-    lodRingBacklog = false;
-    lodRingBoostKeys.clear();
-    lastResizeW = -1;
-    lastResizeH = -1;
-    lastAppliedScale = -1.0f;
-    loggedChunkLoadDropNotReady = false;
-    loggedBlockUpdateDropNotReady = false;
-    loggedWorldLoadWithoutRenderer = false;
-    delayedBlockRebuildFrames.clear();
-    frameCount = 0;
-    lastDrawnChunkCount = 0;
-    if (meshShaderBackend != null) {
-      meshShaderBackend.shutdown();
-      meshShaderBackend = null;
-    }
-    gpuDrivenEnabled = false;
-    instance = null;
-    subChunkUploadBuffer = null;
-    chunkUniformsBuffer = null;
-    if (argumentBufferHandle != 0) {
-      NativeBridge.nDestroyBuffer(argumentBufferHandle);
-      argumentBufferHandle = 0;
-    }
-    com.pebbles_boon.metalrender.nativebridge.ResidencySetManager.shutdown();
-    cullingOrcreator.shutdown();
-    translucencySorter.shutdown();
-  }
-
-  public boolean metalActive() {
-    return worldLoaded && renderingActive &&
-        MetalRenderClient.isMetalAvailable() &&
-        MetalRenderClient.getConfig().enableMetalRendering;
-  }
-
-  private static int currentInFlightBudget() {
-    try {
-      BuildBudgetEstimator estimator = PerformanceController.getBudgetEstimator();
-      if (estimator != null) {
-        return estimator.recommendedInFlight();
-      }
-    } catch (Exception ignored) {
-    }
-    return 256;
-  }
-
-  public void prepareMeshes() {
-    MetalRenderer renderer = MetalRenderClient.getRenderer();
-    if (renderer == null || !renderer.isAvailable())
-      return;
-    Minecraft mc = Minecraft.getInstance();
-    maxMeshes = shouldPinLoadedMeshes(mc) ? PINNED_MAX_MESHES : DEFAULT_MAX_MESHES;
-    try {
-      boolean vanillaAO = true;
-      if (mc != null && mc.options != null && mc.options.ambientOcclusion() != null) {
-        Object v = mc.options.ambientOcclusion().get();
-        if (v instanceof Boolean b) {
-          vanillaAO = b;
-        }
-      }
-      if (vanillaAOTracked && vanillaAO != lastVanillaAO) {
-        chunkMesher.markAllDirty();
-        MetalLogger.info("vanilla AO toggled (%s); rebuilding meshes to match",
-            vanillaAO ? "on" : "off");
-      }
-      lastVanillaAO = vanillaAO;
-      vanillaAOTracked = true;
-    } catch (Exception ignored) {
-    }
-    int w = mc.getWindow().getWidth();
-    int h = mc.getWindow().getHeight();
-    int refreshRate = mc.getWindow().getRefreshRate();
-    double budgetMs = refreshRate > 0 ? 1000.0 / refreshRate : 16.666;
-    if (!mc.options.enableVsync().get()) {
-      int fpsLimit = mc.options.framerateLimit().get();
-      if (fpsLimit > 0 && fpsLimit < 250) {
-        budgetMs = Math.min(budgetMs, 1000.0 / fpsLimit);
-      }
-    }
-    AdaptiveResolutionController.getInstance().setFrameBudgetMs(budgetMs);
-    float scale = MetalRenderConfig.resolutionScale();
-    if (w != lastResizeW || h != lastResizeH || scale != lastAppliedScale) {
-      lastResizeW = w;
-      lastResizeH = h;
-      lastAppliedScale = scale;
-      renderer.resize(w, h);
-    }
-    if (!texturesReady && frameCount > 2) {
-      textureManager.loadBlockAtlas();
-      textureManager.loadLightmap();
-      texturesReady = textureManager.isBlockAtlasLoaded() &&
-          textureManager.isLightmapLoaded();
-    } else if (texturesReady && textureManager.isUsingFallbackBlockAtlas() &&
-        frameCount % 120 == 0) {
-      textureManager.loadBlockAtlas();
-    } else if (texturesReady && !textureManager.isUsingFallbackBlockAtlas()) {
-      boolean textureSyncPressure = pendingBuildSet.size() >= TEXTURE_SYNC_PRESSURE_THRESHOLD ||
-          chunkMesher.getPendingCount() >= TEXTURE_SYNC_PRESSURE_THRESHOLD;
-      updateTextureBackoffState();
-      textureManager.setAtlasBackoffActive(textureBackoffActive);
-      textureManager.updateBlockAtlas();
-      int lightmapInterval;
-      if (textureBackoffActive) {
-        lightmapInterval = BACKED_OFF_LIGHTMAP_SYNC_FRAME_INTERVAL;
-      } else if (textureSyncPressure) {
-        lightmapInterval = PRESSURED_LIGHTMAP_SYNC_FRAME_INTERVAL;
-      } else {
-        lightmapInterval = 1;
-      }
-      if (frameCount % lightmapInterval == 0) {
-        textureManager.updateLightmap();
-      }
-    }
-    long now = System.currentTimeMillis();
-    long diagInterval = chunkMesher.getMeshCount() < 2000 ? 1000 : 5000;
-    if (MetalRenderConfig.isDeepDebugActive() &&
-        now - lastDiagLogMs > diagInterval) {
-      lastDiagLogMs = now;
-      MetalLogger.info(
-          "diag: texReady=" + texturesReady +
-              " fb=" + textureManager.isUsingFallbackBlockAtlas() +
-              " m=" + chunkMesher.getMeshCount());
-    }
-    if (MetalRenderClient.getConfig().enableMetalRendering) {
-      long buildStart = System.nanoTime();
-      refreshLodRing(mc);
-      if (frameCount % LOD_REFRESH_FRAME_INTERVAL == 0) {
-        refreshLodTiers(mc);
-        updateLodRecencyEviction(mc);
-      }
-      updateOcclusionCulling(mc);
-
-      if (frameCount % 120 == 60 && mc.player != null) {
-        try {
-          org.joml.Vector3f pruneCam = new org.joml.Vector3f(
-              (float) mc.player.getX(), (float) mc.player.getY(), (float) mc.player.getZ());
-          pruneFarMeshes(mc, pruneCam);
-        } catch (Exception ignored) {
-        }
-      }
-      releaseDelayedBlockRebuilds();
-      buildPendingChunkMeshes(mc);
-      if ((frameCount % 240) == 0) {
-        try {
-          chunkMesher.pruneStaleLatencyMaps(System.nanoTime(), 30_000_000_000L);
-        } catch (Exception ignored) {
-        }
-      }
-      jBuildAcc += System.nanoTime() - buildStart;
-      jProfCount++;
-      if (jProfCount >= 120) {
-        double buildMs = jBuildAcc / 1e6 / jProfCount;
-        MetalLogger.info(
-            "java_profile: build=%.2f (avg/%d) p=%d q=%d m=%d "
-                + "build=%d/%d inst=%d/%d int=%d/%d vis=%.2f/%d blk=%.2f/%d t=%d/%d",
-            buildMs, jProfCount,
-            pendingBuildSet.size(), chunkMesher.getPendingCount(),
-            chunkMesher.getMeshCount(), chunkMesher.getBuilderActiveCount(),
-            chunkMesher.getBuilderQueueDepth(),
-            chunkMesher.getInstantActiveCount(),
-            chunkMesher.getInstantQueueDepth(),
-            chunkMesher.getInteractiveActiveCount(),
-            chunkMesher.getInteractiveQueueDepth(),
-            chunkMesher.getAverageVisibleSectionLatencyMs(),
-            chunkMesher.getVisibleSectionLatencySamples(),
-            chunkMesher.getAverageBlockUpdateLatencyMs(),
-            chunkMesher.getBlockUpdateLatencySamples(),
-            chunkMesher.getTrackedVisibleSectionCount(),
-            chunkMesher.getTrackedBlockUpdateCount());
-        jBuildAcc = 0;
-        jProfCount = 0;
-      }
-    }
-  }
-
-  public void beginFrame(Camera camera, float tickDelta, Matrix4f projection,
-      Matrix4f modelView, double cameraX, double cameraY, double cameraZ) {
-    MetalRenderer renderer = MetalRenderClient.getRenderer();
-    if (renderer == null || !renderer.isAvailable())
-      return;
-    frameCameraX = cameraX;
-    frameCameraY = cameraY;
-    frameCameraZ = cameraZ;
-    if (chunkMesher != null) {
-      chunkMesher.flushMeshRegistrations();
-    }
-    projectionMatrix.set(projection);
-    modelViewMatrix.set(modelView);
-    Vector3f camPos = asyncCamScratch.set((float) cameraX, (float) cameraY,
-        (float) cameraZ);
-
-    long cullStart = System.nanoTime();
-    frustumCuller.update(projectionMatrix, modelViewMatrix, camPos);
-    MetalRenderProfiler.getInstance().recordCullTime(System.nanoTime() - cullStart);
-
-    boolean frustumStable = !cullingOrcreator.isActive();
-    if (cullingOrcreator.isActive()) {
-      vpScratch.set(projectionMatrix).mul(modelViewMatrix);
-      extractFrustumPlanes(vpScratch, gpuFrustumPlanes);
-      int chunkRadius = Minecraft.getInstance().options.renderDistance().get();
-      cullingOrcreator.rebuildFromFrustumCpu(frustumCuller, chunkRadius,
-          camPos.x, camPos.y, camPos.z);
-      cullingOrcreator.uploadToGpu(gpuFrustumPlanes);
-      frustumStable = true;
-      for (int i = 0; i < 24; i++) {
-        if (Float.floatToRawIntBits(gpuFrustumPlanes[i]) !=
-            Float.floatToRawIntBits(lastCullFrustum[i])) {
-          frustumStable = false;
-          break;
-        }
-      }
-    }
-    lastDrawnChunkCount = 0;
-    metalProjScratch.set(projectionMatrix);
-    metalProjScratch.m02(0.5f * metalProjScratch.m02() + 0.5f * metalProjScratch.m03());
-    metalProjScratch.m12(0.5f * metalProjScratch.m12() + 0.5f * metalProjScratch.m13());
-    metalProjScratch.m22(0.5f * metalProjScratch.m22() + 0.5f * metalProjScratch.m23());
-    metalProjScratch.m32(0.5f * metalProjScratch.m32() + 0.5f * metalProjScratch.m33());
-    renderer.setProjectionMatrix(metalProjScratch);
-    renderer.setModelViewMatrix(modelViewMatrix);
-    renderer.setCameraPosition(cameraX, cameraY, cameraZ);
-    camDirScratch.set(0.0f, 0.0f, 1.0f);
-    camera.rotation().transform(camDirScratch);
-    float invLen = 1.0f / Math.max(1e-6f, camDirScratch.length());
-    camDirScratch.mul(invLen);
-    if (NativeBridge.isLibLoaded()) {
-      NativeBridge.nSetCameraDirection(renderer.getHandle(), camDirScratch.x,
-          camDirScratch.y, camDirScratch.z);
-      MetalRenderConfig config = MetalRenderClient.getConfig();
-      boolean wantFaceCull = config != null && config.enableCameraFacingCulling;
-      if (wantFaceCull != lastFaceCullApplied) {
-        NativeBridge.nSetCameraFacingCulling(wantFaceCull);
-        lastFaceCullApplied = wantFaceCull;
-      }
-    }
-    if (NativeBridge.isLibLoaded()) {
-      int wantRenderDistBlocks =
-          Minecraft.getInstance().options.getEffectiveRenderDistance() * 16;
-      if (wantRenderDistBlocks != lastRenderDistApplied) {
-        NativeBridge.nSetRenderDistance(wantRenderDistBlocks);
-        lastRenderDistApplied = wantRenderDistBlocks;
-      }
-    }
-    if (texturesReady) {
-      long blockAtlas = textureManager.getBlockAtlasTexture();
-      if (blockAtlas != 0 && blockAtlas != lastAtlasApplied) {
-        renderer.bindTexture(blockAtlas, 0);
-        lastAtlasApplied = blockAtlas;
-      }
-      long lightmap = textureManager.getLightmapTexture();
-      if (lightmap != 0 && lightmap != lastLightmapApplied) {
-        renderer.bindTexture(lightmap, 1);
-        lastLightmapApplied = lightmap;
-      }
-    }
-    NativeBridge.nSetReuseTerrainFrame(false);
-    long frameCtx = renderer.frameCtx();
-    if (frameCtx != 0) {
-      if (MetalRenderClient.getConfig().enableMetalRendering) {
-        long inhousePipeline = renderer.getBackend().getInhousePipelineHandle();
-        if (inhousePipeline != 0) {
-          NativeBridge.nSetPipelineState(frameCtx, inhousePipeline);
-          lastPipelineApplied = inhousePipeline;
-        }
-        float skyFactor = resolveSkyLightFactor(camera, tickDelta);
-        if (Float.floatToRawIntBits(skyFactor) != Float.floatToRawIntBits(lastSkyApplied)) {
-          NativeBridge.nSetSkyBrightness(frameCtx, skyFactor);
-          lastSkyApplied = skyFactor;
-        }
-
-        try {
-          if (fogR != lastFogAppliedR || fogG != lastFogAppliedG || fogB != lastFogAppliedB
-              || fogEnvStart != lastFogAppliedEnvStart || fogEnvEnd != lastFogAppliedEnvEnd
-              || fogRenderStart != lastFogAppliedRenderStart || fogRenderEnd != lastFogAppliedRenderEnd) {
-            NativeBridge.nSetFog(fogR, fogG, fogB,
-                fogEnvStart, fogEnvEnd, fogRenderStart, fogRenderEnd);
-            lastFogAppliedR = fogR;
-            lastFogAppliedG = fogG;
-            lastFogAppliedB = fogB;
-            lastFogAppliedEnvStart = fogEnvStart;
-            lastFogAppliedEnvEnd = fogEnvEnd;
-            lastFogAppliedRenderStart = fogRenderStart;
-            lastFogAppliedRenderEnd = fogRenderEnd;
-          }
-        } catch (Exception ignored) {
-        }
-        if (argumentBufferHandle == 0 && meshShaderBackend != null &&
-            meshShaderBackend.areMeshShadersAvailable() &&
-            NativeBridge.isLibLoaded()) {
-          long handle0 = renderer.getBackend().getDeviceHandle();
-          if (handle0 != 0) {
-            argumentBufferHandle = NativeBridge.nCreateBuffer(handle0,
-                subChunkUploadCapacity * 16,
-                NativeMemory.STORAGE_MODE_SHARED);
-          }
-        }
-        long ibHandle = chunkMesher.getGlobalIndexBuffer();
-        if (ibHandle != 0) {
-          int drawn = NativeBridge.nDrawAllVisibleChunks(frameCtx, ibHandle);
-          lastDrawnChunkCount = drawn;
-          MetalRenderProfiler.getInstance().incrementChunksDrawn(drawn);
-          if (frameCount < 10 || frameCount % 1000 == 0) {
-            MetalLogger.info("frame %d: drew %d chunks",
-                frameCount, lastDrawnChunkCount);
-          }
-        } else {
-          lastDrawnChunkCount = 0;
-        }
-      }
-    }
-  }
-
-  private static void extractFrustumPlanes(Matrix4f vp, float[] out) {
-    out[0] = vp.m30() + vp.m00();
-    out[1] = vp.m31() + vp.m01();
-    out[2] = vp.m32() + vp.m02();
-    out[3] = vp.m33() + vp.m03();
-    normalizePlane(out, 0);
-    out[4] = vp.m30() - vp.m00();
-    out[5] = vp.m31() - vp.m01();
-    out[6] = vp.m32() - vp.m02();
-    out[7] = vp.m33() - vp.m03();
-    normalizePlane(out, 4);
-    out[8] = vp.m30() + vp.m10();
-    out[9] = vp.m31() + vp.m11();
-    out[10] = vp.m32() + vp.m12();
-    out[11] = vp.m33() + vp.m13();
-    normalizePlane(out, 8);
-    out[12] = vp.m30() - vp.m10();
-    out[13] = vp.m31() - vp.m11();
-    out[14] = vp.m32() - vp.m12();
-    out[15] = vp.m33() - vp.m13();
-    normalizePlane(out, 12);
-    out[16] = vp.m30() + vp.m20();
-    out[17] = vp.m31() + vp.m21();
-    out[18] = vp.m32() + vp.m22();
-    out[19] = vp.m33() + vp.m23();
-    normalizePlane(out, 16);
-    out[20] = vp.m30() - vp.m20();
-    out[21] = vp.m31() - vp.m21();
-    out[22] = vp.m32() - vp.m22();
-    out[23] = vp.m33() - vp.m23();
-    normalizePlane(out, 20);
-  }
-
-  private static float resolveSkyLightFactor(Camera camera, float tickDelta) {
-    if (camera == null || skyLightLookupFailed) {
-      return 1.0f;
-    }
-    Object attributeProbe = camera.attributeProbe();
-    if (attributeProbe == null) {
-      return 1.0f;
-    }
-    try {
-      java.lang.reflect.Field factorField = skyLightFactorField;
-      java.lang.reflect.Method getValueMethod = skyLightProbeGetValueMethod;
-      if (factorField == null || getValueMethod == null) {
-        Class<?> attributesClass = Class.forName(
-            "net.minecraft.world.attribute.EnvironmentAttributes");
-        factorField = attributesClass.getField("SKY_LIGHT_FACTOR");
-        getValueMethod = attributeProbe.getClass().getMethod(
-            "getValue", factorField.getType(), float.class);
-        skyLightFactorField = factorField;
-        skyLightProbeGetValueMethod = getValueMethod;
-      }
-      Object value = getValueMethod.invoke(attributeProbe,
-          factorField.get(null), tickDelta);
-      if (value instanceof Number number) {
-        return number.floatValue();
-      }
-    } catch (ReflectiveOperationException | RuntimeException ignored) {
-      skyLightLookupFailed = true;
-    }
-    return 1.0f;
-  }
-
-  private static void normalizePlane(float[] planes, int offset) {
-    float a = planes[offset], b = planes[offset + 1], c = planes[offset + 2];
-    float len = (float) Math.sqrt(a * a + b * b + c * c);
-    if (len > 0.0f) {
-      float invLen = 1.0f / len;
-      planes[offset] *= invLen;
-      planes[offset + 1] *= invLen;
-      planes[offset + 2] *= invLen;
-      planes[offset + 3] *= invLen;
-    }
-  }
-
-  public void endFrame() {
-    MetalRenderer renderer = MetalRenderClient.getRenderer();
-    if (renderer == null || !renderer.isAvailable())
-      return;
-    long frameCtx = renderer.frameCtx();
-    if (frameCtx != 0) {
-      boolean inWater = false;
-      Minecraft mc = Minecraft.getInstance();
-      net.minecraft.client.Camera camera = null;
-      float tickDelta = 0.0f;
-      if (mc != null) {
-        if (mc.getCameraEntity() != null) {
-          inWater = mc.getCameraEntity().isUnderWater();
-        }
-        try {
-          camera = mc.gameRenderer.getMainCamera();
-          tickDelta = mc.getDeltaTracker().getGameTimeDeltaPartialTick(true);
-        } catch (Exception ignored) {
-        }
-      }
-      entityRenderer.renderCapturedEntities(frameCtx, inWater);
-      if (camera != null) {
-
-
-        try {
-          cloudRenderer.render(frameCtx, camera, tickDelta);
-        } catch (Exception ignored) {
-        }
-        try {
-          weatherRenderer.render(frameCtx, camera, tickDelta);
-        } catch (Exception ignored) {
-        }
-      }
-      NativeBridge.nDrawDeferredWaterPass(frameCtx);
-      NativeBridge.nDrawOITPass(frameCtx);
-      particleRenderer.render(frameCtx);
-      renderBlockOutline(frameCtx);
-    }
-    renderer.endFrame();
-    frameCount++;
-  }
-
-  public MetalCloudRenderer getCloudRenderer() {
-    return cloudRenderer;
-  }
-
-  public MetalWeatherRenderer getWeatherRenderer() {
-    return weatherRenderer;
-  }
-
-  private void renderBlockOutline(long frameCtx) {
-    try {
-      Minecraft mc = Minecraft.getInstance();
-      if (mc == null || mc.level == null || mc.hitResult == null ||
-          mc.hitResult.getType() != HitResult.Type.BLOCK) {
-        return;
-      }
-      BlockHitResult hit = (BlockHitResult) mc.hitResult;
-      BlockPos pos = hit.getBlockPos();
-      long posKey = pos.asLong();
-      float bx = (float) (pos.getX() - frameCameraX);
-      float by = (float) (pos.getY() - frameCameraY);
-      float bz = (float) (pos.getZ() - frameCameraZ);
-      int lineVertexCount;
-      int drawVertexCount;
-      int scalarCount;
-      if (posKey == outlineCachePos && outlineLocalCount > 0
-          && mc.level.getBlockState(pos) == outlineCacheState) {
-        lineVertexCount = outlineLocalCount;
-        drawVertexCount = outlineCacheCount;
-        scalarCount = lineVertexCount * 3;
-        if (outlineVerts.length < scalarCount) {
-          outlineVerts = new float[Math.max(scalarCount, outlineVerts.length * 2)];
-        }
-        float[] local = outlineLocalVerts;
-        float[] out = outlineVerts;
-        int vi = 0;
-        for (int i = 0; i < scalarCount; i += 3) {
-          out[vi++] = local[i] + bx;
-          out[vi++] = local[i + 1] + by;
-          out[vi++] = local[i + 2] + bz;
-        }
-      } else {
-        BlockState state = mc.level.getBlockState(pos);
-        if (state.isAir() || !mc.level.getWorldBorder().isWithinBounds(pos)) {
-          return;
-        }
-
-        CollisionContext context = mc.getCameraEntity() != null
-            ? CollisionContext.of(mc.getCameraEntity())
-            : CollisionContext.empty();
-        VoxelShape shape = state.getShape(mc.level, pos, context);
-        if (shape.isEmpty()) {
-          return;
-        }
-
-        outlineEdges.clear();
-        shape.forAllEdges((x0, y0, z0, x1, y1, z1) -> outlineEdges.add(new float[] {
-            (float) x0, (float) y0, (float) z0,
-            (float) x1, (float) y1, (float) z1
-        }));
-        if (outlineEdges.isEmpty()) {
-          return;
-        }
-
-        lineVertexCount = outlineEdges.size() * 2;
-        drawVertexCount = outlineEdges.size() * 6;
-        scalarCount = lineVertexCount * 3;
-        if (outlineLocalVerts.length < scalarCount) {
-          outlineLocalVerts = new float[Math.max(scalarCount, outlineLocalVerts.length * 2)];
-        }
-        int li = 0;
-        for (float[] edge : outlineEdges) {
-          outlineLocalVerts[li++] = edge[0];
-          outlineLocalVerts[li++] = edge[1];
-          outlineLocalVerts[li++] = edge[2];
-          outlineLocalVerts[li++] = edge[3];
-          outlineLocalVerts[li++] = edge[4];
-          outlineLocalVerts[li++] = edge[5];
-        }
-        outlineLocalCount = lineVertexCount;
-        outlineCachePos = posKey;
-        outlineCacheCount = drawVertexCount;
-        outlineCacheState = state;
-        if (outlineVerts.length < scalarCount) {
-          outlineVerts = new float[Math.max(scalarCount, outlineVerts.length * 2)];
-        }
-        float[] local = outlineLocalVerts;
-        float[] out = outlineVerts;
-        int vi = 0;
-        for (int i = 0; i < scalarCount; i += 3) {
-          out[vi++] = local[i] + bx;
-          out[vi++] = local[i + 1] + by;
-          out[vi++] = local[i + 2] + bz;
-        }
-      }
-
-      int dataLen = scalarCount * Float.BYTES;
-      if (outlineDirectBuf == null || outlineDirectBuf.capacity() < dataLen) {
-        outlineDirectBuf = java.nio.ByteBuffer.allocateDirect(Math.max(dataLen, 4096))
-            .order(java.nio.ByteOrder.nativeOrder());
-      }
-      outlineDirectBuf.clear();
-      outlineDirectBuf.limit(dataLen);
-      java.nio.FloatBuffer fb = outlineDirectBuf.asFloatBuffer();
-      fb.put(outlineVerts, 0, scalarCount);
-      outlineDirectBuf.position(0);
-      MetalRenderer renderer = MetalRenderClient.getRenderer();
-      if (renderer == null) {
-        return;
-      }
-      long device = renderer.getBackend().getDeviceHandle();
-      if (outlineBufferHandle == 0 || dataLen > outlineBufferSize) {
-        if (outlineBufferHandle != 0) {
-          NativeBridge.nDestroyBuffer(outlineBufferHandle);
-        }
-        outlineBufferHandle = NativeBridge.nCreateBuffer(
-            device, dataLen, NativeMemory.STORAGE_MODE_SHARED);
-        outlineBufferSize = dataLen;
-      }
-      NativeBridge.nUploadBufferDataDirect(outlineBufferHandle, outlineDirectBuf, 0, dataLen);
-      NativeBridge.nSetDebugColor(frameCtx, 0.0f, 0.0f, 0.0f, 0.4f);
-      NativeBridge.nDrawTriangleBuffer(frameCtx, outlineBufferHandle, drawVertexCount);
-    } catch (Exception e) {
-      MetalLogger.error("[blockoutline] eww: %s", e.getMessage());
-    }
-  }
-
-  private int outlineBufferSize = 0;
-
-  private final it.unimi.dsi.fastutil.longs.LongOpenHashSet pendingBuildSet = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
-  private final it.unimi.dsi.fastutil.longs.LongArrayList sortedBuildList = new it.unimi.dsi.fastutil.longs.LongArrayList();
-  private long[] sortKeyScratch = new long[1024];
-  private final it.unimi.dsi.fastutil.longs.LongArrayList sortReorderScratch = new it.unimi.dsi.fastutil.longs.LongArrayList();
-  private boolean sortedListDirty = true;
-  private int lastSortedSize = 0;
-  private int consecutiveHighMeshMsFrames = 0;
-  private int consecutiveCoolMeshMsFrames = 0;
-  private boolean textureBackoffActive = false;
-  private int framesSinceLastSort = 0;
-  private float cachedForwardX = 0, cachedForwardZ = 1;
-  private int lastScanPlayerCX = Integer.MIN_VALUE, lastScanPlayerCZ = Integer.MIN_VALUE;
-  private int lastSortedPlayerCX = Integer.MIN_VALUE, lastSortedPlayerCZ = Integer.MIN_VALUE;
-  private int lastScanRenderDist = -1;
-  private int turnPriorityFrames = 0;
-  private int remainingPrioritizedBuilds = PRIORITIZED_BUILD_STREAK_LIMIT;
-  private int cachedThermalState = 0;
-  private int lodRefreshCursor = 0;
-  private int lodRefreshPlayerCX = Integer.MIN_VALUE;
-  private int lodRefreshPlayerCZ = Integer.MIN_VALUE;
-  private int lodRefreshThermalBias = Integer.MIN_VALUE;
-  private int lodRingPlayerCX = Integer.MIN_VALUE;
-  private int lodRingPlayerCZ = Integer.MIN_VALUE;
-  private int lodRingMeshGen = Integer.MIN_VALUE;
-  private int lodRingThermalBias = Integer.MIN_VALUE;
-  private int lodRingCursor;
-  private boolean lodRingBacklog = false;
-  private final it.unimi.dsi.fastutil.longs.LongOpenHashSet lodRingBoostKeys =
-      new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
-  private final it.unimi.dsi.fastutil.longs.LongArrayList pruneScratch =
-      new it.unimi.dsi.fastutil.longs.LongArrayList(256);
-  private final LodPolicy lodPolicy = new LodPolicy();
-
-  private final it.unimi.dsi.fastutil.longs.LongOpenHashSet occlusionHidden =
-      new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
-  private final it.unimi.dsi.fastutil.longs.LongOpenHashSet occlusionVisited =
-      new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
-  private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<CustomChunkMesher.ChunkMeshData> occlusionMeshIndex =
-      new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
-  private long lastOcclusionSubmitKey = Long.MIN_VALUE;
-  private int lastOcclusionSubmitGen = Integer.MIN_VALUE;
-  private float lastOcclusionSubmitSearch = -1.0f;
-  private boolean scanDirty = true;
-
-  private int lastResizeW = -1;
-  private int lastResizeH = -1;
-  private float lastAppliedScale = -1.0f;
-  private boolean lastVanillaAO = true;
-  private boolean vanillaAOTracked = false;
-
-  private float fogR = 0.0f;
-  private float fogG = 0.0f;
-  private float fogB = 0.0f;
-  private float fogEnvStart = com.pebbles_boon.metalrender.render.fog.VanillaFog.NO_FOG_DIST;
-  private float fogEnvEnd = com.pebbles_boon.metalrender.render.fog.VanillaFog.NO_FOG_DIST;
-  private float fogRenderStart = com.pebbles_boon.metalrender.render.fog.VanillaFog.NO_FOG_DIST;
-  private float fogRenderEnd = com.pebbles_boon.metalrender.render.fog.VanillaFog.NO_FOG_DIST;
-
-  public void setFogState(com.pebbles_boon.metalrender.render.fog.VanillaFog.FogState fog) {
-    if (fog == null || !fog.isFinite()) {
-      return;
-    }
-    fogR = fog.r();
-    fogG = fog.g();
-    fogB = fog.b();
-    fogEnvStart = fog.envStart();
-    fogEnvEnd = fog.envEnd();
-    fogRenderStart = fog.renderStart();
-    fogRenderEnd = fog.renderEnd();
-  }
-  private final long[] lodRecencyKeys = new long[LOD_RECENCY_SCRATCH_SIZE];
-  private final int[] lodRecencyFrames = new int[LOD_RECENCY_SCRATCH_SIZE];
-  private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap lodRecencyAgeMap =
-      new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap(LOD_RECENCY_SCRATCH_SIZE);
-  private boolean lodRecencyNativeEnabled;
-  private int lodRecencyPullCounter;
-  private int lodDiagScanCounter;
-
-  private static final class LodCandidate {
-    final long key;
-    final float impact;
-    final int chunkX, chunkY, chunkZ;
-    final int targetTier;
-
-    LodCandidate(long key, float impact, int chunkX, int chunkY, int chunkZ,
-        int targetTier) {
-      this.key = key;
-      this.impact = impact;
-      this.chunkX = chunkX;
-      this.chunkY = chunkY;
-      this.chunkZ = chunkZ;
-      this.targetTier = targetTier;
-    }
-  }
-
-  private static final class PendingBuildCandidate {
-    final long key;
-    final int index;
-    final int chunkX;
-    final int chunkY;
-    final int chunkZ;
-    final int chunkDist;
-
-    PendingBuildCandidate(long key, int index, int chunkX, int chunkY,
-        int chunkZ, int chunkDist) {
-      this.key = key;
-      this.index = index;
-      this.chunkX = chunkX;
-      this.chunkY = chunkY;
-      this.chunkZ = chunkZ;
-      this.chunkDist = chunkDist;
-    }
-  }
-
-  private static long packChunkKey(int cx, int cy, int cz) {
-    return ((long) (cx & 0x3FFFFF) << 42) | ((long) (cy & 0xFFFFF) << 22) |
-        (cz & 0x3FFFFF);
-  }
-
-  private static int unpackChunkX(long key) {
-    int chunkX = (int) ((key >> 42) & 0x3FFFFF);
-    if ((chunkX & 0x200000) != 0) {
-      chunkX |= ~0x3FFFFF;
-    }
-    return chunkX;
-  }
-
-  private static int unpackChunkY(long key) {
-    int chunkY = (int) ((key >> 22) & 0xFFFFF);
-    if ((chunkY & 0x80000) != 0) {
-      chunkY |= ~0xFFFFF;
-    }
-    return chunkY;
-  }
-
-  private static int unpackChunkZ(long key) {
-    int chunkZ = (int) (key & 0x3FFFFF);
-    if ((chunkZ & 0x200000) != 0) {
-      chunkZ |= ~0x3FFFFF;
-    }
-    return chunkZ;
-  }
-
-  private void buildPendingChunkMeshes(Minecraft mc) {
-    if (mc.player == null || mc.level == null) {
-      return;
-    }
-    if (mc.getOverlay() != null) {
-      return;
-    }
-    if (mc.player != null) {
-      float yaw = mc.player.getYRot();
-      float nextForwardX = (float) -Math.sin(Math.toRadians(yaw));
-      float nextForwardZ = (float) Math.cos(Math.toRadians(yaw));
-      float turnDot = cachedForwardX * nextForwardX + cachedForwardZ * nextForwardZ;
-      cachedForwardX = nextForwardX;
-      cachedForwardZ = nextForwardZ;
-      if (turnDot < BUILD_SORT_REORDER_DOT_THRESHOLD) {
-        if (turnPriorityFrames == 0) {
-          if (!pendingBuildSet.isEmpty()) {
-            sortedListDirty = true;
-          }
-          turnPriorityFrames = TURN_PRIORITY_SCAN_FRAMES;
-          scanFrontierRing = HOT_LOAD_REBUILD_RANGE + 1;
-          scanFrameCounter = 0;
-        }
-      }
-    }
-    if (pendingBuildSet.size() < CHUNK_SCAN_SATURATED_THRESHOLD ||
-        (frameCount & 1) == 0) {
-      scanForPendingChunks(mc);
-    }
-    if (mc.player != null && chunkMesher.getMeshCount() < maxMeshes) {
-      int playerChunkX = mc.player.chunkPosition().x();
-      int playerChunkZ = mc.player.chunkPosition().z();
-      int playerSectionY = mc.player.getBlockY() >> 4;
-      boolean turnBurstActive = turnPriorityFrames > 0;
-      int mesherPending = chunkMesher.getPendingCount();
-      int visibleBacklog = pendingBuildSet.size() + mesherPending;
-      boolean fpsPriorityMode = MetalRenderClient.getConfig() != null &&
-          MetalRenderClient.getConfig().prioritizeFpsOverTps;
-      long buildBudget = turnBurstActive ? CHUNK_TURN_BUILD_BURST_NS : CHUNK_BUILD_BUDGET_NS;
-      int minBuilds = turnBurstActive ? MIN_CHUNK_TURN_BUILDS_PER_FRAME
-          : MIN_CHUNK_BUILDS_PER_FRAME;
-      int highPrioritySubmissions = turnBurstActive ? TURN_HIGH_PRIORITY_SUBMISSIONS_PER_PASS
-          : BASE_HIGH_PRIORITY_SUBMISSIONS_PER_PASS;
-      if (mesherPending >= CHUNK_SCAN_SATURATED_THRESHOLD) {
-        buildBudget = Math.min(buildBudget, CHUNK_SATURATED_BUILD_BUDGET_NS);
-        minBuilds = Math.min(minBuilds, MIN_CHUNK_SATURATED_BUILDS_PER_FRAME);
-        highPrioritySubmissions = Math.min(highPrioritySubmissions,
-            SATURATED_HIGH_PRIORITY_SUBMISSIONS_PER_PASS);
-      } else if (visibleBacklog >= CHUNK_BACKLOG_HEAVY_THRESHOLD) {
-        buildBudget = Math.max(buildBudget, CHUNK_HEAVY_BACKLOG_BUILD_BURST_NS);
-        minBuilds = Math.max(minBuilds, MIN_CHUNK_HEAVY_BACKLOG_BUILDS_PER_FRAME);
-        highPrioritySubmissions = Math.max(highPrioritySubmissions,
-            HEAVY_BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS);
-      } else if (visibleBacklog >= CHUNK_BACKLOG_PRESSURE_THRESHOLD) {
-        buildBudget = Math.max(buildBudget, CHUNK_BACKLOG_BUILD_BURST_NS);
-        minBuilds = Math.max(minBuilds, MIN_CHUNK_BACKLOG_BUILDS_PER_FRAME);
-        highPrioritySubmissions = Math.max(highPrioritySubmissions,
-            BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS);
-      }
-      if (fpsPriorityMode) {
-        buildBudget = Math.max(buildBudget, CHUNK_BACKLOG_BUILD_BURST_NS);
-        minBuilds = Math.max(
-            minBuilds, MIN_CHUNK_BACKLOG_BUILDS_PER_FRAME);
-        highPrioritySubmissions = Math.max(
-            highPrioritySubmissions,
-            BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS);
-      }
-      buildFromPendingSet(playerChunkX, playerSectionY, playerChunkZ,
-          buildBudget, minBuilds, highPrioritySubmissions);
-
-      if (turnPriorityFrames > 0) {
-        turnPriorityFrames--;
-      }
-    }
-  }
-
-  private int scanFrameCounter = 0;
-  private int scanFrontierRing = 0;
-  private long lastFullRescanNs = 0L;
-
-  private void scanForPendingChunks(Minecraft mc) {
-    ClientLevel world = mc.level;
-    if (world == null)
-      return;
-    if (mc.player == null)
-      return;
-    int renderDist = mc.options.renderDistance().get();
-    int mesherPending = chunkMesher.getPendingCount();
-    int visibleBacklog = pendingBuildSet.size() + mesherPending;
-    boolean scanPressured = visibleBacklog >= CHUNK_SCAN_PRESSURE_THRESHOLD;
-    boolean scanSaturated = visibleBacklog >= CHUNK_SCAN_SATURATED_THRESHOLD;
-    int closeRange = Math.min(HOT_LOAD_REBUILD_RANGE, renderDist);
-    if (scanSaturated) {
-      closeRange = Math.min(closeRange, SATURATED_CLOSE_SCAN_RANGE);
-    } else if (scanPressured) {
-      closeRange = Math.min(closeRange, PRESSURED_CLOSE_SCAN_RANGE);
-    }
-    int playerChunkX = mc.player.chunkPosition().x();
-    int playerChunkZ = mc.player.chunkPosition().z();
-    int playerSectionY = mc.player.getBlockY() >> 4;
-    if (scanSaturated) {
-      if ((frameCount % 10) == 0) {
-        trimPendingBuildSet(playerChunkX, playerChunkZ, closeRange);
-        visibleBacklog = pendingBuildSet.size() + mesherPending;
-        scanPressured = visibleBacklog >= CHUNK_SCAN_PRESSURE_THRESHOLD;
-        scanSaturated = visibleBacklog >= CHUNK_SCAN_SATURATED_THRESHOLD;
-      }
-    }
-    boolean playerMovedChunk = (playerChunkX != lastScanPlayerCX || playerChunkZ != lastScanPlayerCZ);
-    boolean renderDistChanged = (renderDist != lastScanRenderDist);
-    if (playerMovedChunk || renderDistChanged) {
-      lastScanPlayerCX = playerChunkX;
-      lastScanPlayerCZ = playerChunkZ;
-      lastScanRenderDist = renderDist;
-      sortedListDirty = true;
-      if (renderDistChanged) {
-        pendingBuildSet.clear();
-        scanRingsInRange(world, playerChunkX, playerChunkZ, playerSectionY, 0,
-            closeRange);
-        scanFrontierRing = closeRange + 1;
-        scanFrameCounter = 0;
-      } else {
-        scanRingsInRange(world, playerChunkX, playerChunkZ, playerSectionY, 0,
-            closeRange);
-        scanFrontierRing = closeRange + 1;
-      }
-    }
-    long nowNs = System.nanoTime();
-    boolean fullRescanDue = lastFullRescanNs == 0L ||
-        nowNs - lastFullRescanNs >= FULL_RENDERDIST_RESCAN_INTERVAL_NS;
-    scanFrameCounter++;
-    if (fullRescanDue) {
-      scanRingsInRange(world, playerChunkX, playerChunkZ, playerSectionY, 0,
-          closeRange);
-      lastFullRescanNs = nowNs;
-      scanFrameCounter = 0;
-      scanFrontierRing = closeRange + 1;
-      scanDirty = false;
-    } else {
-      boolean queuePressure = !pendingBuildSet.isEmpty() || chunkMesher.getPendingCount() > 0;
-      boolean needScan = scanDirty || playerMovedChunk || queuePressure;
-      if (!needScan) {
-        if (turnPriorityFrames > 0 && !scanPressured) {
-          scanForwardSector(world, playerChunkX, playerChunkZ, playerSectionY,
-              renderDist);
-        }
-        return;
-      }
-      int closeRangeRescanInterval = queuePressure
-          ? ACTIVE_CLOSE_RANGE_RESCAN_INTERVAL
-          : IDLE_CLOSE_RANGE_RESCAN_INTERVAL;
-      if (!playerMovedChunk &&
-          scanFrameCounter % closeRangeRescanInterval == 0) {
-        scanRingsInRange(world, playerChunkX, playerChunkZ, playerSectionY, 0,
-            closeRange);
-      }
-      int frontierStart = Math.max(closeRange + 1, scanFrontierRing);
-      int frontierSpan = NORMAL_FRONTIER_RING_SCAN_SPAN;
-      if (scanSaturated) {
-        frontierSpan = 1;
-      } else if (scanPressured) {
-        frontierSpan = Math.min(frontierSpan, 2);
-      }
-      int frontierEnd = Math.min(frontierStart + frontierSpan - 1, renderDist);
-      if (frontierStart <= renderDist) {
-        scanRingsInRange(world, playerChunkX, playerChunkZ, playerSectionY,
-            frontierStart, frontierEnd);
-        scanFrontierRing = frontierEnd + 1;
-        if (scanFrontierRing > renderDist) {
-          scanFrontierRing = closeRange + 1;
-        }
-      }
-      scanDirty = false;
-    }
-    if (turnPriorityFrames > 0 && !scanPressured) {
-      scanForwardSector(world, playerChunkX, playerChunkZ, playerSectionY,
-          renderDist);
-    }
-  }
-
-  private void scanRingsInRange(ClientLevel world, int playerChunkX,
-      int playerChunkZ, int playerSectionY,
-      int startRing, int endRing) {
-    for (int ring = startRing; ring <= endRing; ring++) {
-      for (int dx = -ring; dx <= ring; dx++) {
-        for (int dz = -ring; dz <= ring; dz++) {
-          if (ring > 0 && Math.abs(dx) < ring && Math.abs(dz) < ring)
-            continue;
-          int cx = playerChunkX + dx;
-          int cz = playerChunkZ + dz;
-          queueChunkSectionsIfMissing(world, cx, cz, playerSectionY,
-              Math.max(Math.abs(dx), Math.abs(dz)));
-        }
-      }
-    }
-  }
-
-  private void scanForwardSector(ClientLevel world, int playerChunkX,
-      int playerChunkZ, int playerSectionY,
-      int renderDist) {
-    int startRing = Math.min(HOT_LOAD_REBUILD_RANGE, renderDist) + 1;
-    scanForwardSector(world, playerChunkX, playerChunkZ, playerSectionY,
-        startRing, renderDist);
-  }
-
-  private void scanForwardSector(ClientLevel world, int playerChunkX,
-      int playerChunkZ, int playerSectionY,
-      int startRing, int endRing) {
-    float minForwardDotSq = TURN_PRIORITY_SCAN_COS_THRESHOLD * TURN_PRIORITY_SCAN_COS_THRESHOLD;
-    for (int ring = startRing; ring <= endRing; ring++) {
-      for (int dx = -ring; dx <= ring; dx++) {
-        for (int dz = -ring; dz <= ring; dz++) {
-          if (ring > 0 && Math.abs(dx) < ring && Math.abs(dz) < ring) {
-            continue;
-          }
-          if (dx == 0 && dz == 0) {
-            continue;
-          }
-          float forwardDot = dx * cachedForwardX + dz * cachedForwardZ;
-          if (forwardDot <= 0.0f) {
-            continue;
-          }
-          float distSq = (dx * dx) + (dz * dz);
-          if (forwardDot * forwardDot < distSq * minForwardDotSq) {
-            continue;
-          }
-          queueChunkSectionsIfMissing(world, playerChunkX + dx,
-              playerChunkZ + dz, playerSectionY, ring);
-        }
-      }
-    }
-  }
-
-  private long lastTrimLogMs = 0;
-
-  private void trimPendingBuildSet(int playerChunkX, int playerChunkZ,
-      int keepRange) {
-    if (pendingBuildSet.isEmpty()) {
-      return;
-    }
-    boolean removed = false;
-    it.unimi.dsi.fastutil.longs.LongIterator iterator = pendingBuildSet.iterator();
-    while (iterator.hasNext()) {
-      long key = iterator.nextLong();
-      int chunkX = unpackChunkX(key);
-      int chunkZ = unpackChunkZ(key);
-      int dx = chunkX - playerChunkX;
-      int dz = chunkZ - playerChunkZ;
-      int chunkDistance = Math.max(Math.abs(dx), Math.abs(dz));
-      if (chunkDistance <= keepRange || isInForwardPriorityCone(dx, dz)) {
-        continue;
-      }
-      iterator.remove();
-      removed = true;
-    }
-    if (removed) {
-      sortedListDirty = true;
-      long now = System.currentTimeMillis();
-      if (now - lastTrimLogMs >= 2000) {
-        lastTrimLogMs = now;
-        MetalLogger.info(
-            "queue_trim: keep=%d player=[%d,%d] p=%d cp=%d m=%d",
-            keepRange, playerChunkX, playerChunkZ, pendingBuildSet.size(),
-            chunkMesher.getPendingCount(), chunkMesher.getMeshCount());
-      }
-    }
-  }
-
-  private int getScanVerticalRange(int chunkDistance) {
-    if (chunkDistance <= HOT_LOAD_REBUILD_RANGE) {
-      return Integer.MAX_VALUE;
-    }
-    if (chunkDistance < 16) {
-      return MID_DISTANCE_SCAN_VERTICAL_RANGE;
-    }
-    if (chunkDistance < 24) {
-      return FAR_DISTANCE_SCAN_VERTICAL_RANGE;
-    }
-    return EXTREME_DISTANCE_SCAN_VERTICAL_RANGE;
-  }
-
-  private void queueChunkSectionsIfMissing(ClientLevel world, int chunkX,
-      int chunkZ, int playerSectionY,
-      int chunkDistance) {
-    LevelChunk chunk = world.getChunkSource().getChunkNow(chunkX, chunkZ);
-    if (chunk == null) {
-      if (MetalRenderConfig.isDeepDebugActive()) {
-        MetalLogger.debug("scan_skip: chunk [%d,%d]", chunkX, chunkZ);
-      }
-      return;
-    }
-    LevelChunkSection[] sections = chunk.getSections();
-    int maxVerticalRange = getScanVerticalRange(chunkDistance);
-    int highestNonAirSection = Integer.MIN_VALUE;
-    if (maxVerticalRange != Integer.MAX_VALUE) {
-      for (int sy = sections.length - 1; sy >= 0; sy--) {
-        LevelChunkSection section = sections[sy];
-        if (section != null && !section.hasOnlyAir()) {
-          highestNonAirSection = chunk.getSectionYFromSectionIndex(sy);
-          break;
-        }
-      }
-    }
-    for (int sy = 0; sy < sections.length; sy++) {
-      LevelChunkSection section = sections[sy];
-      if (section == null || section.hasOnlyAir())
-        continue;
-      int worldY = chunk.getSectionYFromSectionIndex(sy);
-      if (maxVerticalRange != Integer.MAX_VALUE) {
-        boolean withinVerticalWindow = Math.abs(worldY - playerSectionY) <= maxVerticalRange;
-        boolean withinSurfaceBand = highestNonAirSection != Integer.MIN_VALUE &&
-            worldY >= highestNonAirSection - SURFACE_SECTION_EXTRA_DEPTH;
-        if (!withinVerticalWindow && !withinSurfaceBand) {
-          continue;
-        }
-      }
-      long sectionKey = packChunkKey(chunkX, worldY, chunkZ);
-      if (pendingBuildSet.contains(sectionKey))
-        continue;
-      if (!chunkMesher.hasMesh(chunkX, worldY, chunkZ)) {
-        chunkMesher.noteSectionAvailable(chunkX, worldY, chunkZ);
-        if (pendingBuildSet.add(sectionKey)) {
-          sortedListDirty = true;
-          if (MetalRenderConfig.isDeepDebugActive()) {
-            MetalLogger.debug(
-                "queue_add: chunk=[%d,%d,%d] dist=%d p=%d",
-                chunkX, worldY, chunkZ, chunkDistance, pendingBuildSet.size());
-          }
-        }
-      }
-    }
-  }
-
-  private int buildFromPendingSet(int playerChunkX, int playerSectionY,
-      int playerChunkZ, long budgetNanos,
-      int minBuilds, int highPrioritySubmissions) {
-    if (pendingBuildSet.isEmpty())
-      return 0;
-    readinessCache.clear();
-    lightReadinessCache.clear();
-    int lightSkipped = 0;
-    if (sortedListDirty) {
-      int currentSize = pendingBuildSet.size();
-      int sortInterval = currentSize > 25000 ? 30
-          : (currentSize > 15000 ? 20
-              : (currentSize > 5000 ? 10
-                  : (currentSize > 1000 ? 5 : 3)));
-      int playerMovedSinceSort = Math.max(
-          Math.abs(playerChunkX - lastSortedPlayerCX),
-          Math.abs(playerChunkZ - lastSortedPlayerCZ));
-      boolean shouldSort = turnPriorityFrames == TURN_PRIORITY_SCAN_FRAMES
-          || currentSize > lastSortedSize + 256
-          || currentSize < lastSortedSize * 3 / 4
-          || framesSinceLastSort >= sortInterval
-          || playerMovedSinceSort > 4
-          || sortedBuildList.isEmpty();
-      if (shouldSort) {
-        sortedBuildList.clear();
-        sortedBuildList.addAll(pendingBuildSet);
-        final int pcx = playerChunkX;
-        final int pcy = playerSectionY;
-        final int pcz = playerChunkZ;
-        final float fwdX = cachedForwardX;
-        final float fwdZ = cachedForwardZ;
-        int n = sortedBuildList.size();
-        if (sortKeyScratch.length < n) {
-          sortKeyScratch = new long[Math.max(n * 2, 1024)];
-        }
-        for (int i = 0; i < n; i++) {
-          long key = sortedBuildList.getLong(i);
-          int cx = unpackChunkX(key);
-          int cy = unpackChunkY(key);
-          int cz = unpackChunkZ(key);
-          float dot = (cx - pcx) * fwdX + (cz - pcz) * fwdZ;
-          int front = dot >= 0 ? 1 : 0;
-          int dist = Math.abs(cx - pcx) + Math.abs(cz - pcz);
-          int vd = Math.abs(cy - pcy);
-          sortKeyScratch[i] = ((long) front << 63) | ((long) dist << 40)
-              | ((long) vd << 32) | (i & 0xFFFFFFFFL);
-        }
-        java.util.Arrays.sort(sortKeyScratch, 0, n);
-        sortReorderScratch.clear();
-        for (int i = 0; i < n; i++) {
-          sortReorderScratch.add(sortedBuildList.getLong(
-              (int) (sortKeyScratch[i] & 0xFFFFFFFFL)));
-        }
-        sortedBuildList.clear();
-        sortedBuildList.addAll(sortReorderScratch);
-        lastSortedSize = sortedBuildList.size();
-        lastSortedPlayerCX = playerChunkX;
-        lastSortedPlayerCZ = playerChunkZ;
-        framesSinceLastSort = 0;
-      } else {
-        framesSinceLastSort++;
-      }
-      sortedListDirty = false;
-    }
-    Minecraft mc = Minecraft.getInstance();
-    ClientLevel world = mc != null ? mc.level : null;
-    if (world == null) {
-      return 0;
-    }
-    long deadline = budgetNanos > 0 ? System.nanoTime() + budgetNanos : Long.MAX_VALUE;
-    int maxSubmit = pendingBuildSet.size() > 20000 ? 200 : 500;
-    int thermalState = 0;
-    if ((frameCount & 31) == 0) {
-      cachedThermalState = NativeBridge.isLibLoaded() ? NativeBridge.nGetThermalState() : 0;
-    }
-    thermalState = cachedThermalState;
-    if (thermalState >= 2) {
-      budgetNanos = Math.min(budgetNanos, 3_000_000L);
-      maxSubmit = Math.min(maxSubmit, 100);
-    }
-    int built = 0;
-    int importantSubmitted = 0;
-    int backgroundSubmissions = 0;
-    boolean fpsPriorityMode = MetalRenderClient.getConfig() != null &&
-        MetalRenderClient.getConfig().prioritizeFpsOverTps;
-    int maxInFlightBuildTasks = currentInFlightBudget();
-    int reserveSlots = fpsPriorityMode ? 0 : RESERVED_PRIORITY_IN_FLIGHT_SLOTS;
-    int backgroundInFlightLimit = Math.max(1, maxInFlightBuildTasks - reserveSlots);
-    int backgroundSubmissionBudget = turnPriorityFrames > 0
-        ? TURN_PRIORITY_BACKGROUND_SUBMISSIONS_PER_PASS
-        : NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS;
-    if (fpsPriorityMode) {
-      backgroundInFlightLimit = maxInFlightBuildTasks;
-      backgroundSubmissionBudget = Math.max(
-          backgroundSubmissionBudget,
-          FPS_PRIORITY_NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS);
-    }
-    int currentMeshCount = chunkMesher.getMeshCount();
-    while (!sortedBuildList.isEmpty() && built < maxSubmit &&
-        currentMeshCount < maxMeshes) {
-      if (budgetNanos > 0 && built >= minBuilds &&
-          System.nanoTime() >= deadline)
-        break;
-      int currentPending = chunkMesher.getPendingCount();
-      if (currentPending >= maxInFlightBuildTasks) {
-        break;
-      }
-      PendingBuildCandidate importantCandidate = null;
-      PendingBuildCandidate normalCandidate = null;
-      int index = 0;
-      final int baseScanLimit = (pendingBuildSet.size() > 10000 && budgetNanos > 3_000_000L) ? 256 : 128;
-      int scanLimit = Math.min(baseScanLimit, sortedBuildList.size());
-      while (true) {
-        while (index < scanLimit) {
-          long key = sortedBuildList.get(index);
-          int cx = unpackChunkX(key);
-          int cy = unpackChunkY(key);
-          int cz = unpackChunkZ(key);
-          if (chunkMesher.hasMesh(cx, cy, cz)) {
-            pendingBuildSet.remove(key);
-            sortedBuildList.remove(index);
-            scanLimit = Math.min(baseScanLimit, sortedBuildList.size());
-            continue;
-          }
-          int dx = cx - playerChunkX;
-          int dz = cz - playerChunkZ;
-          int chunkDist = Math.max(Math.abs(dx), Math.abs(dz));
-          boolean bypassReadiness = chunkDist <= IMPORTANT_REBUILD_CHUNK_RANGE;
-          if (!bypassReadiness && !isSectionBuildReady(world, cx, cy, cz)) {
-            if (MetalRenderConfig.isDeepDebugActive()) {
-              MetalLogger.debug(
-                  "build_defer: chunk=[%d,%d,%d] dist=%d",
-                  cx, cy, cz, chunkDist);
+    public void onWorldLoad() {
+        lodPolicy.clear();
+        lastAtlasApplied = 0;
+        lastLightmapApplied = 0;
+        lastPipelineApplied = 0;
+        lastRenderDistApplied = Integer.MIN_VALUE;
+        lastSkyApplied = Float.NaN;
+        lastFogAppliedR = Float.NaN;
+        lastOutlineUploadPos = Long.MIN_VALUE;
+        lastOutlineDrawCount = -1;
+        scanDirty = true;
+        lastOcclusionSubmitKey = Long.MIN_VALUE;
+        lastOcclusionSubmitGen = Integer.MIN_VALUE;
+        lastOcclusionSubmitSearch = -1.0f;
+        worldLoaded = true;
+        MetalRenderConfig gpuConfig = MetalRenderClient.getConfig();
+        boolean clusterEnabled = gpuConfig != null && gpuConfig.enableClusterFrustumCulling;
+        boolean sortEnabled = gpuConfig != null && gpuConfig.enableGpuTranslucencySort;
+        cullingOrcreator.setActive(clusterEnabled);
+        cullingOrcreator.setCpuFallbackEnabled(true);
+        translucencySorter.setActive(sortEnabled);
+        MetalLogger.info("orchestrators: cluster=%s sort=%s",
+                clusterEnabled, sortEnabled);
+        MetalRenderer renderer = MetalRenderClient.getRenderer();
+        if (renderer != null && renderer.isAvailable()) {
+            Minecraft mc = Minecraft.getInstance();
+            int w = mc.getWindow().getWidth();
+            int h = mc.getWindow().getHeight();
+            if (w > 0 && h > 0) {
+                renderer.resize(w, h);
             }
-            index++;
-            continue;
-          }
-          if (!isSectionLightReady(world, cx, cy, cz)) {
-            lightSkipped++;
-            index++;
-            continue;
-          }
-          PendingBuildCandidate candidate = new PendingBuildCandidate(
-              key, index, cx, cy, cz, chunkDist);
-          boolean ringBoost = lodRingBoostKeys.contains(key);
-          boolean importantBuild = (importantSubmitted < highPrioritySubmissions &&
-              isImportantPendingBuild(dx, dz, chunkDist)) || ringBoost;
-          if (importantBuild) {
-            importantCandidate = candidate;
-          } else if (normalCandidate == null) {
-            normalCandidate = candidate;
-          }
-          if (importantCandidate != null && normalCandidate != null) {
-            break;
-          }
-          index++;
+            chunkMesher.initialize(renderer.getBackend().getDeviceHandle());
+            entityRenderer.setup(renderer.getBackend().getDeviceHandle(), 0);
+            particleRenderer.setup(renderer.getBackend().getDeviceHandle());
+            cloudRenderer.setup(renderer.getBackend().getDeviceHandle());
+            weatherRenderer.setup(renderer.getBackend().getDeviceHandle());
+            renderingActive = true;
+            entityRenderer.setActive(true);
+            particleRenderer.setActive(true);
+            cloudRenderer.setActive(true);
+            weatherRenderer.setActive(true);
+            texturesReady = false;
+            long handle = renderer.getBackend().getDeviceHandle();
+            meshShaderBackend = new MeshShaderBackend();
+            meshShaderBackend.initialize();
+            boolean meshShadersSupported = MetalHardwareChecker.supportsMeshShaders();
+            if (handle != 0) {
+                subChunkUploadBuffer = ByteBuffer.allocateDirect(subChunkUploadCapacity * 48)
+                        .order(ByteOrder.nativeOrder());
+                chunkUniformsBuffer = ByteBuffer.allocateDirect(subChunkUploadCapacity * 16)
+                        .order(ByteOrder.nativeOrder());
+                if (argumentBufferHandle == 0 && meshShaderBackend != null &&
+                        meshShaderBackend.areMeshShadersAvailable()) {
+                    argumentBufferHandle = NativeBridge.nCreateBuffer(handle,
+                            subChunkUploadCapacity * 16,
+                            NativeMemory.STORAGE_MODE_SHARED);
+                    if (argumentBufferHandle != 0) {
+                        MetalLogger.info("mesh arg buf: h=%d sz=%d",
+                                argumentBufferHandle, subChunkUploadCapacity * 16);
+                    }
+                }
+            }
+            applyFeatureConfig(MetalRenderClient.getConfig());
+            boolean meshShadersActive = NativeBridge.isLibLoaded() && NativeBridge.nAreMeshShadersActive();
+            MetalLogger.info("gpu pipeline weady (mesh=%s on=%s)",
+                    meshShadersActive ? "on" : (meshShadersSupported ? "avail" : "no"),
+                    gpuDrivenEnabled ? "yes" : "no");
+            MetalLogger.info("world wendew on (" + w + "x" + h + ")");
+        } else if (!loggedWorldLoadWithoutRenderer) {
+            loggedWorldLoadWithoutRenderer = true;
+            MetalLogger.warn(
+                    "world load before wendewer weady; capture deferred");
         }
-        if (importantCandidate != null || normalCandidate != null) {
-          break;
-        }
-        if (scanLimit >= sortedBuildList.size()) {
-          break;
-        }
-        scanLimit = Math.min(scanLimit + 128, sortedBuildList.size());
-      }
-
-      if (importantCandidate == null && normalCandidate == null) {
-        break;
-      }
-
-      final PendingBuildCandidate candidate;
-      final boolean highPriority;
-      if (importantCandidate == null) {
-        candidate = normalCandidate;
-        highPriority = false;
-        remainingPrioritizedBuilds = PRIORITIZED_BUILD_STREAK_LIMIT;
-      } else if (normalCandidate == null) {
-        candidate = importantCandidate;
-        highPriority = true;
-        remainingPrioritizedBuilds = Math.max(0, remainingPrioritizedBuilds - 1);
-      } else if (remainingPrioritizedBuilds <= 0) {
-        candidate = normalCandidate;
-        highPriority = false;
-        remainingPrioritizedBuilds = PRIORITIZED_BUILD_STREAK_LIMIT;
-      } else if (importantCandidate.index <= normalCandidate.index) {
-        candidate = importantCandidate;
-        highPriority = true;
-        remainingPrioritizedBuilds = Math.max(0, remainingPrioritizedBuilds - 1);
-      } else {
-        candidate = normalCandidate;
-        highPriority = false;
-        remainingPrioritizedBuilds = PRIORITIZED_BUILD_STREAK_LIMIT;
-      }
-
-      pendingBuildSet.remove(candidate.key);
-      sortedBuildList.remove(candidate.index);
-      lodRingBoostKeys.remove(candidate.key);
-
-      boolean interactivePriority = highPriority &&
-          candidate.chunkDist <= INTERACTIVE_PRIORITY_CHUNK_RANGE &&
-          turnPriorityFrames > 0 &&
-          chunkMesher.getInteractiveQueueDepth() < MAX_INTERACTIVE_PRIORITY_QUEUE_DEPTH;
-      if (!highPriority && !interactivePriority) {
-        if (backgroundSubmissions >= backgroundSubmissionBudget) {
-          break;
-        }
-        if (chunkMesher.getPendingCount() >= backgroundInFlightLimit) {
-          break;
-        }
-      }
-      boolean submitted;
-      if (interactivePriority) {
-        submitted = chunkMesher.buildMeshFromWorldInteractive(
-            candidate.chunkX, candidate.chunkY, candidate.chunkZ);
-      } else {
-        submitted = chunkMesher.buildMeshFromWorld(candidate.chunkX, candidate.chunkY,
-            candidate.chunkZ, highPriority);
-      }
-      if (!submitted) {
-        pendingBuildSet.add(candidate.key);
-        sortedListDirty = true;
-        break;
-      }
-      if (built < 5 || MetalRenderConfig.isDeepDebugActive()) {
-        MetalLogger.debug(
-            "build_queue: chunk=[%d,%d,%d] high=%s int=%s p=%d m=%d",
-            candidate.chunkX, candidate.chunkY, candidate.chunkZ,
-            highPriority, interactivePriority,
-            pendingBuildSet.size(), chunkMesher.getMeshCount());
-      }
-      if (highPriority) {
-        importantSubmitted++;
-      } else {
-        backgroundSubmissions++;
-      }
-      built++;
-    }
-    if (built > 0 && System.currentTimeMillis() - lastQueuePressureLogMs >= 1000) {
-      lastQueuePressureLogMs = System.currentTimeMillis();
-      MetalLogger.info(
-          "build_pass: built=%d imp=%d bg=%d p=%d cp=%d m=%d bud=%d",
-          built, importantSubmitted, backgroundSubmissions,
-          pendingBuildSet.size(), chunkMesher.getPendingCount(),
-          chunkMesher.getMeshCount(), budgetNanos);
-    }
-    if (lightSkipped > 0 && System.currentTimeMillis() - lastLightWaitLogMs >= 5000) {
-      lastLightWaitLogMs = System.currentTimeMillis();
-      MetalLogger.info("light_wait: %d sections held for skylight data (p=%d)",
-          lightSkipped, pendingBuildSet.size());
-    }
-    return built;
-  }
-
-  public MetalEntityRenderer getEntityRenderer() {
-    return entityRenderer;
-  }
-
-  public MetalParticleRenderer getParticleRenderer() {
-    return particleRenderer;
-  }
-
-  public CustomChunkMesher getChunkMesher() {
-    return chunkMesher;
-  }
-
-  public int getLastDrawnChunkCount() {
-    return lastDrawnChunkCount;
-  }
-
-  public MetalTextureManager getTextureManager() {
-    return textureManager;
-  }
-
-  private void refreshLodRing(Minecraft mc) {
-    MetalRenderConfig config = MetalRenderClient.getConfig();
-    if (config == null || mc.player == null || !config.enableDistanceLod) {
-      return;
-    }
-    int playerChunkX = mc.player.chunkPosition().x();
-    int playerChunkZ = mc.player.chunkPosition().z();
-    int thermalBias = config.lodThermalAdaptive
-        ? (cachedThermalState >= 3 ? 2 : (cachedThermalState >= 2 ? 1 : 0))
-        : 0;
-    int meshGen = chunkMesher.getMeshUpdateGeneration();
-    boolean moved = playerChunkX != lodRingPlayerCX
-        || playerChunkZ != lodRingPlayerCZ
-        || thermalBias != lodRingThermalBias;
-    boolean fpsPriorityMode = config.prioritizeFpsOverTps;
-    int maxInFlight = currentInFlightBudget();
-    int reserveSlots = fpsPriorityMode ? 0 : RESERVED_PRIORITY_IN_FLIGHT_SLOTS;
-    boolean saturated =
-        chunkMesher.getPendingCount() >= maxInFlight - reserveSlots;
-    if (!moved) {
-      if (saturated) {
-        return;
-      }
-      if (!lodRingBacklog && meshGen == lodRingMeshGen) {
-        return;
-      }
-      if (!lodRingBacklog && frameCount - lodRingRunFrame < 3) {
-        return;
-      }
-      if (pendingBuildSet.size() + chunkMesher.getPendingCount() >= CHUNK_BACKLOG_PRESSURE_THRESHOLD) {
-        lodRingMeshGen = meshGen;
-        return;
-      }
-    }
-    lodRingRunFrame = frameCount;
-    lodRingPlayerCX = playerChunkX;
-    lodRingPlayerCZ = playerChunkZ;
-    lodRingMeshGen = meshGen;
-    lodRingThermalBias = thermalBias;
-    lodRingBacklog = false;
-    lodRingBoostKeys.clear();
-
-    lodPolicy.setEnabled(config.lodVisibilityGate, config.lodViewImpact, config.lodStickyTiers);
-    lodPolicy.beginScan();
-
-    float yaw = mc.player.getYRot();
-    float fwdX = (float) -Math.sin(Math.toRadians(yaw));
-    float fwdZ = (float) Math.cos(Math.toRadians(yaw));
-
-    int radius = Math.max(config.lodMidChunks, config.lodNearChunks) + LOD_RING_MARGIN;
-    int upgradeBudget = LOD_RING_UPGRADES_PER_FRAME;
-    boolean demotionIdle = pendingBuildSet.size() < LOD_REFRESH_PENDING_LIMIT
-        && chunkMesher.getPendingCount() < LOD_REFRESH_IN_FLIGHT_LIMIT;
-    int demotionBudget = demotionIdle ? LOD_RING_DEMOTIONS_PER_FRAME : 0;
-    if (cachedThermalState >= 2) {
-      upgradeBudget = Math.min(upgradeBudget, 1);
-      demotionBudget = Math.min(demotionBudget, 1);
     }
 
-    double camX = frameCameraX;
-    double camY = frameCameraY;
-    double camZ = frameCameraZ;
-    boolean haveCam = (frameCount > 0) && (camX != 0.0 || camY != 0.0 || camZ != 0.0);
-    if (!haveCam) {
-      camX = mc.player.getX();
-      camY = mc.player.getY();
-      camZ = mc.player.getZ();
-      haveCam = true;
-    }
-
-    java.util.ArrayList<LodCandidate> upgrades = lodUpgradeScratch;
-    java.util.ArrayList<LodCandidate> demotions = lodDemotionScratch;
-    upgrades.clear();
-    demotions.clear();
-    int meshCount = chunkMesher.getMeshSnapshotSize();
-    if (lodRingCursor < 0 || lodRingCursor >= meshCount) {
-      lodRingCursor = 0;
-    }
-    int slice = Math.min(meshCount, LOD_RING_SLICE_SIZE);
-    boolean sliced = meshCount > LOD_RING_SLICE_SIZE;
-    if (moved) {
-      lodRingCursor = 0;
-      if (!sliced) {
-        slice = meshCount;
-      }
-    }
-    for (int n = 0; n < slice; n++) {
-      int i = (lodRingCursor + n) % Math.max(1, meshCount);
-      CustomChunkMesher.ChunkMeshData mesh = chunkMesher.getMeshSnapshotAt(i);
-      if (mesh == null) {
-        continue;
-      }
-      int dx = mesh.chunkX - playerChunkX;
-      int dz = mesh.chunkZ - playerChunkZ;
-      if (dx > radius || dx < -radius || dz > radius || dz < -radius) {
-        continue;
-      }
-      int chunkDist = Math.max(Math.abs(dx), Math.abs(dz));
-      int targetLod = CustomChunkMesher.lodTierForDistance(chunkDist);
-      if (mesh.lodTier == targetLod) {
-        continue;
-      }
-      long key = packChunkKey(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
-      if (pendingBuildSet.contains(key) || chunkMesher.isBuildPending(mesh.chunkX, mesh.chunkY, mesh.chunkZ)) {
-        continue;
-      }
-      float distSq = (float) (dx * dx + dz * dz);
-      float viewScore = lodPolicy.computeViewScore(dx, dz, fwdX, fwdZ, distSq);
-      if (targetLod == 0) {
-        viewScore = 1.0f;
-      }
-      boolean visible = true;
-      if (haveCam) {
-        try {
-          float ox = (float) (mesh.chunkX * 16.0 - camX);
-          float oy = (float) (mesh.chunkY * 16.0 - camY);
-          float oz = (float) (mesh.chunkZ * 16.0 - camZ);
-          visible = frustumCuller.testBoundingBox(ox, oy, oz, ox + 16.0f, oy + 16.0f, oz + 16.0f);
-        } catch (Exception ignored) {
-          visible = true;
-        }
-      }
-      LodPolicy.Decision decision;
-      try {
-        decision = lodPolicy.observeAndDecide(key, mesh.lodTier, targetLod, visible, viewScore, demotionIdle);
-      } catch (Exception ignored) {
-        continue;
-      }
-      if (decision == LodPolicy.Decision.UPGRADE) {
-        if (upgrades.size() >= LOD_RING_COLLECT_CAP) {
-          lodRingBacklog = true;
-          continue;
-        }
-        float impact;
-        try {
-          impact = lodPolicy.computeUpgradeImpact(viewScore, distSq, mesh.quadCount);
-        } catch (Exception ignored) {
-          impact = -distSq;
-        }
-        upgrades.add(new LodCandidate(key, impact, mesh.chunkX, mesh.chunkY, mesh.chunkZ, targetLod));
-      } else if (decision == LodPolicy.Decision.DOWNGRADE) {
-        if (demotions.size() >= LOD_RING_COLLECT_CAP) {
-          lodRingBacklog = true;
-          continue;
-        }
-        float impact = distSq * (1.0f - Math.min(1.0f, Math.max(0.0f, viewScore)));
-        demotions.add(new LodCandidate(key, impact, mesh.chunkX, mesh.chunkY, mesh.chunkZ, targetLod));
-      }
-    }
-    if (meshCount > 0) {
-      lodRingCursor = (lodRingCursor + slice) % meshCount;
-      if (slice < meshCount) {
-        lodRingBacklog = true;
-      }
-    }
-
-    if (!upgrades.isEmpty() && upgradeBudget > 0) {
-      upgrades.sort((a, b) -> Float.compare(b.impact, a.impact));
-      int queued = 0;
-      for (LodCandidate c : upgrades) {
-        if (queued >= upgradeBudget) {
-          lodRingBacklog = true;
-          break;
-        }
-        if (pendingBuildSet.contains(c.key) || chunkMesher.isBuildPending(c.chunkX, c.chunkY, c.chunkZ)) {
-          continue;
-        }
-        if (chunkMesher.tryTierSwap(c.chunkX, c.chunkY, c.chunkZ, c.targetTier)) {
-          queued++;
-          continue;
-        }
-        chunkMesher.markDirty(c.chunkX, c.chunkY, c.chunkZ);
-        if (pendingBuildSet.add(c.key)) {
-          sortedListDirty = true;
-          if (lodRingBoostKeys.size() > 8192) {
-            lodRingBoostKeys.clear();
-          }
-          lodRingBoostKeys.add(c.key);
-          queued++;
-        }
-      }
-      if (queued < upgrades.size()) {
-        lodRingBacklog = true;
-      }
-    }
-    if (!demotions.isEmpty() && demotionBudget > 0) {
-      demotions.sort((a, b) -> Float.compare(b.impact, a.impact));
-      int queued = 0;
-      for (LodCandidate c : demotions) {
-        if (queued >= demotionBudget) {
-          lodRingBacklog = true;
-          break;
-        }
-        if (pendingBuildSet.contains(c.key) || chunkMesher.isBuildPending(c.chunkX, c.chunkY, c.chunkZ)) {
-          continue;
-        }
-        if (chunkMesher.tryTierSwap(c.chunkX, c.chunkY, c.chunkZ, c.targetTier)) {
-          queued++;
-          continue;
-        }
-        chunkMesher.markDirty(c.chunkX, c.chunkY, c.chunkZ);
-        if (pendingBuildSet.add(c.key)) {
-          sortedListDirty = true;
-          queued++;
-        }
-      }
-      if (queued < demotions.size()) {
-        lodRingBacklog = true;
-      }
-    }
-  }
-
-  private void refreshLodTiers(Minecraft mc) {    MetalRenderConfig config = MetalRenderClient.getConfig();
-    if (config == null || mc.player == null) {
-      return;
-    }
-    if (!config.enableDistanceLod) {
-      return;
-    }
-    lodPolicy.setEnabled(config.lodVisibilityGate, config.lodViewImpact, config.lodStickyTiers);
-    lodPolicy.beginScan();
-    int thermalBias = config.lodThermalAdaptive
-        ? (cachedThermalState >= 3 ? 2 : (cachedThermalState >= 2 ? 1 : 0))
-        : 0;
-    CustomChunkMesher.setLodThermalBias(thermalBias);
-    int playerChunkX = mc.player.chunkPosition().x();
-    int playerChunkZ = mc.player.chunkPosition().z();
-
-    if (playerChunkX == lodRefreshPlayerCX && playerChunkZ == lodRefreshPlayerCZ
-        && thermalBias == lodRefreshThermalBias
-        && pendingBuildSet.size() + chunkMesher.getPendingCount() >= CHUNK_BACKLOG_PRESSURE_THRESHOLD) {
-      return;
-    }
-    lodRefreshPlayerCX = playerChunkX;
-    lodRefreshPlayerCZ = playerChunkZ;
-    lodRefreshThermalBias = thermalBias;
-
-    float yaw = mc.player.getYRot();
-    float fwdX = (float) -Math.sin(Math.toRadians(yaw));
-    float fwdZ = (float) Math.cos(Math.toRadians(yaw));
-
-    int pending = pendingBuildSet.size();
-    int inFlight = chunkMesher.getPendingCount();
-    double ewmaMeshMs = 0.0;
-    try {
-      BuildBudgetEstimator estimator = PerformanceController.getBudgetEstimator();
-      if (estimator != null) {
-        ewmaMeshMs = estimator.getEwmaMeshMs();
-      }
-    } catch (Exception ignored) {
-    }
-    int upgradeBudget = config.lodThroughputBudget
-        ? lodPolicy.computeUpgradeBudget(pending, inFlight, ewmaMeshMs)
-        : LodPolicy.MAX_UPGRADES_PER_PASS;
-    boolean demotionIdle = pending < LOD_REFRESH_PENDING_LIMIT
-        && inFlight < LOD_REFRESH_IN_FLIGHT_LIMIT;
-    int demotionBudget = demotionIdle ? MAX_LOD_DEMOTIONS_PER_PASS : 0;
-
-    if (config.lodSkeletonFirst) {
-      int backlog = pending + inFlight;
-      if (backlog >= LodPolicy.SKELETON_BACKLOG_MEDIUM) {
-        upgradeBudget = Math.min(upgradeBudget, 2);
-        demotionBudget = Math.max(demotionBudget, 4);
-      }
-      if (backlog >= LodPolicy.SKELETON_BACKLOG_HEAVY) {
-        upgradeBudget = Math.min(upgradeBudget, 1);
-        demotionBudget = Math.max(demotionBudget, MAX_LOD_DEMOTIONS_PER_PASS);
-      }
-    }
-    if (cachedThermalState >= 2) {
-      upgradeBudget = Math.min(upgradeBudget, 1);
-      demotionBudget = Math.min(demotionBudget, 1);
-    }
-    upgradeBudget = Math.min(upgradeBudget, MAX_LOD_REFRESH_SUBMITS_PER_PASS);
-    if (upgradeBudget <= 0 && demotionBudget <= 0) {
-      return;
-    }
-    int meshCount = chunkMesher.getMeshSnapshotSize();
-    if (meshCount == 0) {
-      lodRefreshCursor = 0;
-      return;
-    }
-
-    java.util.ArrayList<LodCandidate> upgrades = lodUpgradeScratch;
-    java.util.ArrayList<LodCandidate> demotions = lodDemotionScratch;
-    upgrades.clear();
-    demotions.clear();
-
-    int inspected = 0;
-    int scanLimit = Math.min(meshCount, MAX_LOD_SCAN_PER_PASS);
-    double camX = frameCameraX;
-    double camY = frameCameraY;
-    double camZ = frameCameraZ;
-    boolean haveCam = (frameCount > 0) && (camX != 0.0 || camY != 0.0 || camZ != 0.0);
-    if (mc.player != null && !haveCam) {
-      camX = mc.player.getX();
-      camY = mc.player.getY();
-      camZ = mc.player.getZ();
-      haveCam = true;
-    }
-    while (inspected < scanLimit) {
-      if (lodRefreshCursor >= meshCount) {
+    public void onWorldUnload() {
+        worldLoaded = false;
+        renderingActive = false;
+        texturesReady = false;
+        entityRenderer.shutdown();
+        particleRenderer.shutdown();
+        cloudRenderer.shutdown();
+        weatherRenderer.shutdown();
+        textureManager.destroy();
+        ioSurfaceBlitter.destroy();
+        chunkMesher.clear();
+        shutdownOcclusionWorker();
+        clearOcclusionState();
+        vanillaAOTracked = false;
+        lodRingPlayerCX = Integer.MIN_VALUE;
+        lodRingPlayerCZ = Integer.MIN_VALUE;
+        lodRingMeshGen = Integer.MIN_VALUE;
+        lodRingThermalBias = Integer.MIN_VALUE;
+        lodRingCursor = 0;
+        lodRingBacklog = false;
+        lodRingBoostKeys.clear();
         lodRefreshCursor = 0;
-      }
-      CustomChunkMesher.ChunkMeshData mesh = chunkMesher.getMeshSnapshotAt(lodRefreshCursor++);
-      inspected++;
-      if (mesh == null) {
-        continue;
-      }
-      int dx = mesh.chunkX - playerChunkX;
-      int dz = mesh.chunkZ - playerChunkZ;
-      int chunkDist = Math.max(Math.abs(dx), Math.abs(dz));
-      int targetLod = CustomChunkMesher.lodTierForDistance(chunkDist);
-      if (mesh.lodTier == targetLod) {
-        continue;
-      }
-      long key = packChunkKey(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
-      if (pendingBuildSet.contains(key) || chunkMesher.isBuildPending(mesh.chunkX, mesh.chunkY, mesh.chunkZ)) {
-        continue;
-      }
-      float distSq = (float) (dx * dx + dz * dz);
-      float viewScore = lodPolicy.computeViewScore(dx, dz, fwdX, fwdZ, distSq);
-      if (targetLod == 0) {
-        viewScore = 1.0f;
-      }
-      boolean visible = true;
-      if (haveCam) {
+        lodRefreshPlayerCX = Integer.MIN_VALUE;
+        lodRefreshPlayerCZ = Integer.MIN_VALUE;
+        lodRefreshThermalBias = Integer.MIN_VALUE;
+        lodRefreshMeshGen = Integer.MIN_VALUE;
+        lastResizeW = -1;
+        lastResizeH = -1;
+        lastAppliedScale = -1.0f;
+        loggedChunkLoadDropNotReady = false;
+        loggedBlockUpdateDropNotReady = false;
+        loggedWorldLoadWithoutRenderer = false;
+        delayedBlockRebuildFrames.clear();
+        urgentEditSet.clear();
+        frameCount = 0;
+        lastDrawnChunkCount = 0;
+        if (meshShaderBackend != null) {
+            meshShaderBackend.shutdown();
+            meshShaderBackend = null;
+        }
+        gpuDrivenEnabled = false;
+        instance = null;
+        subChunkUploadBuffer = null;
+        chunkUniformsBuffer = null;
+        if (argumentBufferHandle != 0) {
+            NativeBridge.nDestroyBuffer(argumentBufferHandle);
+            argumentBufferHandle = 0;
+        }
+        com.pebbles_boon.metalrender.nativebridge.ResidencySetManager.shutdown();
+        cullingOrcreator.shutdown();
+        translucencySorter.shutdown();
+    }
+
+    public boolean metalActive() {
+        return worldLoaded && renderingActive &&
+                MetalRenderClient.isMetalAvailable() &&
+                MetalRenderClient.getConfig().enableMetalRendering;
+    }
+
+    private static int currentInFlightBudget() {
         try {
-          float ox = (float) (mesh.chunkX * 16.0 - camX);
-          float oy = (float) (mesh.chunkY * 16.0 - camY);
-          float oz = (float) (mesh.chunkZ * 16.0 - camZ);
-          visible = frustumCuller.testBoundingBox(ox, oy, oz, ox + 16.0f, oy + 16.0f, oz + 16.0f);
+            BuildBudgetEstimator estimator = PerformanceController.getBudgetEstimator();
+            if (estimator != null) {
+                return estimator.recommendedInFlight();
+            }
         } catch (Exception ignored) {
-          visible = true;
         }
-      }
-      LodPolicy.Decision decision;
-      try {
-        decision = lodPolicy.observeAndDecide(key, mesh.lodTier, targetLod, visible, viewScore, demotionIdle);
-      } catch (Exception ignored) {
-        continue;
-      }
-      if (decision == LodPolicy.Decision.UPGRADE) {
-        if (upgrades.size() >= MAX_LOD_REFRESH_SUBMITS_PER_PASS * 2) {
-          continue;
-        }
-        float impact;
+        return 256;
+    }
+
+    public void prepareMeshes() {
+        MetalRenderer renderer = MetalRenderClient.getRenderer();
+        if (renderer == null || !renderer.isAvailable())
+            return;
+        Minecraft mc = Minecraft.getInstance();
+        maxMeshes = shouldPinLoadedMeshes(mc) ? PINNED_MAX_MESHES : DEFAULT_MAX_MESHES;
         try {
-          impact = lodPolicy.computeUpgradeImpact(viewScore, distSq, mesh.quadCount);
+            boolean vanillaAO = true;
+            if (mc != null && mc.options != null && mc.options.ambientOcclusion() != null) {
+                Object v = mc.options.ambientOcclusion().get();
+                if (v instanceof Boolean b) {
+                    vanillaAO = b;
+                }
+            }
+            if (vanillaAOTracked && vanillaAO != lastVanillaAO) {
+                chunkMesher.markAllDirty();
+                MetalLogger.info("vanilla AO toggled (%s); rebuilding meshes to match",
+                        vanillaAO ? "on" : "off");
+            }
+            lastVanillaAO = vanillaAO;
+            vanillaAOTracked = true;
         } catch (Exception ignored) {
-          impact = -distSq;
         }
-        upgrades.add(new LodCandidate(key, impact, mesh.chunkX, mesh.chunkY, mesh.chunkZ, targetLod));
-      } else if (decision == LodPolicy.Decision.DOWNGRADE) {
-        if (demotions.size() >= MAX_LOD_DEMOTIONS_PER_PASS * 2) {
-          continue;
+        int w = mc.getWindow().getWidth();
+        int h = mc.getWindow().getHeight();
+        int refreshRate = mc.getWindow().getRefreshRate();
+        double budgetMs = refreshRate > 0 ? 1000.0 / refreshRate : 16.666;
+        if (!mc.options.enableVsync().get()) {
+            int fpsLimit = mc.options.framerateLimit().get();
+            if (fpsLimit > 0 && fpsLimit < 250) {
+                budgetMs = Math.min(budgetMs, 1000.0 / fpsLimit);
+            }
         }
+        AdaptiveResolutionController.getInstance().setFrameBudgetMs(budgetMs);
+        float scale = MetalRenderConfig.resolutionScale();
+        if (w != lastResizeW || h != lastResizeH || scale != lastAppliedScale) {
+            lastResizeW = w;
+            lastResizeH = h;
+            lastAppliedScale = scale;
+            renderer.resize(w, h);
+        }
+        if (!texturesReady && frameCount > 2) {
+            textureManager.loadBlockAtlas();
+            textureManager.loadLightmap();
+            texturesReady = textureManager.isBlockAtlasLoaded() &&
+                    textureManager.isLightmapLoaded();
+        } else if (texturesReady && textureManager.isUsingFallbackBlockAtlas() &&
+                frameCount % 120 == 0) {
+            textureManager.loadBlockAtlas();
+        } else if (texturesReady && !textureManager.isUsingFallbackBlockAtlas()) {
+            boolean textureSyncPressure = pendingBuildSet.size() >= TEXTURE_SYNC_PRESSURE_THRESHOLD ||
+                    chunkMesher.getPendingCount() >= TEXTURE_SYNC_PRESSURE_THRESHOLD;
+            updateTextureBackoffState();
+            textureManager.setAtlasBackoffActive(textureBackoffActive);
+            textureManager.updateBlockAtlas();
+            int lightmapInterval;
+            if (textureBackoffActive) {
+                lightmapInterval = BACKED_OFF_LIGHTMAP_SYNC_FRAME_INTERVAL;
+            } else if (textureSyncPressure) {
+                lightmapInterval = PRESSURED_LIGHTMAP_SYNC_FRAME_INTERVAL;
+            } else {
+                lightmapInterval = 1;
+            }
+            if (frameCount % lightmapInterval == 0) {
+                textureManager.updateLightmap();
+            }
+        }
+        long now = System.currentTimeMillis();
+        long diagInterval = chunkMesher.getMeshCount() < 2000 ? 1000 : 5000;
+        if (MetalRenderConfig.isDeepDebugActive() &&
+                now - lastDiagLogMs > diagInterval) {
+            lastDiagLogMs = now;
+            MetalLogger.info(
+                    "diag: texReady=" + texturesReady +
+                            " fb=" + textureManager.isUsingFallbackBlockAtlas() +
+                            " m=" + chunkMesher.getMeshCount());
+        }
+        if (MetalRenderClient.getConfig().enableMetalRendering) {
+            long buildStart = System.nanoTime();
+            refreshLodRing(mc);
+            if (frameCount % LOD_REFRESH_FRAME_INTERVAL == 0) {
+                refreshLodTiers(mc);
+                updateLodRecencyEviction(mc);
+            }
+            updateOcclusionCulling(mc);
 
-        float impact = distSq * (1.0f - Math.min(1.0f, Math.max(0.0f, viewScore)));
-        demotions.add(new LodCandidate(key, impact, mesh.chunkX, mesh.chunkY, mesh.chunkZ, targetLod));
-      }
+            if (frameCount % 120 == 60 && mc.player != null) {
+                try {
+                    org.joml.Vector3f pruneCam = new org.joml.Vector3f(
+                            (float) mc.player.getX(), (float) mc.player.getY(), (float) mc.player.getZ());
+                    pruneFarMeshes(mc, pruneCam);
+                } catch (Exception ignored) {
+                }
+            }
+            releaseDelayedBlockRebuilds();
+            buildPendingChunkMeshes(mc);
+            if ((frameCount % 240) == 0) {
+                try {
+                    chunkMesher.pruneStaleLatencyMaps(System.nanoTime(), 30_000_000_000L);
+                } catch (Exception ignored) {
+                }
+            }
+            jBuildAcc += System.nanoTime() - buildStart;
+            jProfCount++;
+            if (jProfCount >= 120) {
+                double buildMs = jBuildAcc / 1e6 / jProfCount;
+                MetalLogger.info(
+                        "java_profile: build=%.2f (avg/%d) p=%d q=%d m=%d "
+                                + "build=%d/%d inst=%d/%d int=%d/%d vis=%.2f/%d blk=%.2f/%d t=%d/%d",
+                        buildMs, jProfCount,
+                        pendingBuildSet.size(), chunkMesher.getPendingCount(),
+                        chunkMesher.getMeshCount(), chunkMesher.getBuilderActiveCount(),
+                        chunkMesher.getBuilderQueueDepth(),
+                        chunkMesher.getInstantActiveCount(),
+                        chunkMesher.getInstantQueueDepth(),
+                        chunkMesher.getInteractiveActiveCount(),
+                        chunkMesher.getInteractiveQueueDepth(),
+                        chunkMesher.getAverageVisibleSectionLatencyMs(),
+                        chunkMesher.getVisibleSectionLatencySamples(),
+                        chunkMesher.getAverageBlockUpdateLatencyMs(),
+                        chunkMesher.getBlockUpdateLatencySamples(),
+                        chunkMesher.getTrackedVisibleSectionCount(),
+                        chunkMesher.getTrackedBlockUpdateCount());
+                jBuildAcc = 0;
+                jProfCount = 0;
+            }
+        }
     }
 
-    if (!upgrades.isEmpty() && upgradeBudget > 0) {
-      upgrades.sort((a, b) -> Float.compare(b.impact, a.impact));
-      int queued = 0;
-      for (LodCandidate c : upgrades) {
-        if (queued >= upgradeBudget) {
-          break;
+    public void beginFrame(Camera camera, float tickDelta, Matrix4f projection,
+            Matrix4f modelView, double cameraX, double cameraY, double cameraZ) {
+        MetalRenderer renderer = MetalRenderClient.getRenderer();
+        if (renderer == null || !renderer.isAvailable())
+            return;
+        frameCameraX = cameraX;
+        frameCameraY = cameraY;
+        frameCameraZ = cameraZ;
+        if (chunkMesher != null) {
+            chunkMesher.flushMeshRegistrations();
         }
-        if (pendingBuildSet.contains(c.key) || chunkMesher.isBuildPending(c.chunkX, c.chunkY, c.chunkZ)) {
-          continue;
-        }
-        if (chunkMesher.tryTierSwap(c.chunkX, c.chunkY, c.chunkZ, c.targetTier)) {
-          queued++;
-          continue;
-        }
-        chunkMesher.markDirty(c.chunkX, c.chunkY, c.chunkZ);
-        if (pendingBuildSet.add(c.key)) {
-          sortedListDirty = true;
-          queued++;
-        }
-      }
-    }
-    if (!demotions.isEmpty() && demotionBudget > 0) {
-      demotions.sort((a, b) -> Float.compare(b.impact, a.impact));
-      int queued = 0;
-      for (LodCandidate c : demotions) {
-        if (queued >= demotionBudget) {
-          break;
-        }
-        if (pendingBuildSet.contains(c.key) || chunkMesher.isBuildPending(c.chunkX, c.chunkY, c.chunkZ)) {
-          continue;
-        }
-        if (chunkMesher.tryTierSwap(c.chunkX, c.chunkY, c.chunkZ, c.targetTier)) {
-          queued++;
-          continue;
-        }
-        chunkMesher.markDirty(c.chunkX, c.chunkY, c.chunkZ);
-        if (pendingBuildSet.add(c.key)) {
-          sortedListDirty = true;
-          queued++;
-        }
-      }
-    }
-  }
+        projectionMatrix.set(projection);
+        modelViewMatrix.set(modelView);
+        Vector3f camPos = asyncCamScratch.set((float) cameraX, (float) cameraY,
+                (float) cameraZ);
 
-  private void updateLodRecencyEviction(Minecraft mc) {
+        long cullStart = System.nanoTime();
+        frustumCuller.update(projectionMatrix, modelViewMatrix, camPos);
+        MetalRenderProfiler.getInstance().recordCullTime(System.nanoTime() - cullStart);
 
-    if (mc == null || mc.player == null) {
-      return;
+        boolean frustumStable = !cullingOrcreator.isActive();
+        if (cullingOrcreator.isActive()) {
+            vpScratch.set(projectionMatrix).mul(modelViewMatrix);
+            extractFrustumPlanes(vpScratch, gpuFrustumPlanes);
+            int chunkRadius = Minecraft.getInstance().options.renderDistance().get();
+            int clusterMinY = -64;
+            int clusterMaxY = 320;
+            try {
+                var clusterLevel = Minecraft.getInstance().level;
+                if (clusterLevel != null) {
+                    clusterMinY = clusterLevel.getMinSectionY() * 16;
+                    clusterMaxY = clusterLevel.getMaxSectionY() * 16 + 16;
+                }
+            } catch (Exception ignored) {
+            }
+            cullingOrcreator.rebuildFromFrustumCpu(frustumCuller, chunkRadius,
+                    camPos.x, camPos.y, camPos.z, clusterMinY, clusterMaxY);
+            cullingOrcreator.uploadToGpu(gpuFrustumPlanes);
+            frustumStable = true;
+            for (int i = 0; i < 24; i++) {
+                if (Float.floatToRawIntBits(gpuFrustumPlanes[i]) != Float.floatToRawIntBits(lastCullFrustum[i])) {
+                    frustumStable = false;
+                    break;
+                }
+            }
+        }
+        lastDrawnChunkCount = 0;
+        metalProjScratch.set(projectionMatrix);
+        metalProjScratch.m02(0.5f * metalProjScratch.m02() + 0.5f * metalProjScratch.m03());
+        metalProjScratch.m12(0.5f * metalProjScratch.m12() + 0.5f * metalProjScratch.m13());
+        metalProjScratch.m22(0.5f * metalProjScratch.m22() + 0.5f * metalProjScratch.m23());
+        metalProjScratch.m32(0.5f * metalProjScratch.m32() + 0.5f * metalProjScratch.m33());
+        renderer.setProjectionMatrix(metalProjScratch);
+        renderer.setModelViewMatrix(modelViewMatrix);
+        renderer.setCameraPosition(cameraX, cameraY, cameraZ);
+        camDirScratch.set(0.0f, 0.0f, 1.0f);
+        camera.rotation().transform(camDirScratch);
+        float invLen = 1.0f / Math.max(1e-6f, camDirScratch.length());
+        camDirScratch.mul(invLen);
+        if (NativeBridge.isLibLoaded()) {
+            NativeBridge.nSetCameraDirection(renderer.getHandle(), camDirScratch.x,
+                    camDirScratch.y, camDirScratch.z);
+            MetalRenderConfig config = MetalRenderClient.getConfig();
+            boolean wantFaceCull = config != null && config.enableCameraFacingCulling;
+            if (wantFaceCull != lastFaceCullApplied) {
+                NativeBridge.nSetCameraFacingCulling(wantFaceCull);
+                lastFaceCullApplied = wantFaceCull;
+            }
+        }
+        if (NativeBridge.isLibLoaded()) {
+            int wantRenderDistBlocks = Minecraft.getInstance().options.getEffectiveRenderDistance() * 16;
+            if (wantRenderDistBlocks != lastRenderDistApplied) {
+                NativeBridge.nSetRenderDistance(wantRenderDistBlocks);
+                lastRenderDistApplied = wantRenderDistBlocks;
+            }
+        }
+        if (texturesReady) {
+            long blockAtlas = textureManager.getBlockAtlasTexture();
+            if (blockAtlas != 0 && blockAtlas != lastAtlasApplied) {
+                renderer.bindTexture(blockAtlas, 0);
+                lastAtlasApplied = blockAtlas;
+            }
+            long lightmap = textureManager.getLightmapTexture();
+            if (lightmap != 0 && lightmap != lastLightmapApplied) {
+                renderer.bindTexture(lightmap, 1);
+                lastLightmapApplied = lightmap;
+            }
+        }
+        NativeBridge.nSetReuseTerrainFrame(false);
+        long frameCtx = renderer.frameCtx();
+        if (frameCtx != 0) {
+            if (MetalRenderClient.getConfig().enableMetalRendering) {
+                long inhousePipeline = renderer.getBackend().getInhousePipelineHandle();
+                if (inhousePipeline != 0) {
+                    NativeBridge.nSetPipelineState(frameCtx, inhousePipeline);
+                    lastPipelineApplied = inhousePipeline;
+                }
+                float skyFactor = resolveSkyLightFactor(camera, tickDelta);
+                if (Float.floatToRawIntBits(skyFactor) != Float.floatToRawIntBits(lastSkyApplied)) {
+                    NativeBridge.nSetSkyBrightness(frameCtx, skyFactor);
+                    lastSkyApplied = skyFactor;
+                }
+
+                try {
+                    if (fogR != lastFogAppliedR || fogG != lastFogAppliedG || fogB != lastFogAppliedB
+                            || fogEnvStart != lastFogAppliedEnvStart || fogEnvEnd != lastFogAppliedEnvEnd
+                            || fogRenderStart != lastFogAppliedRenderStart || fogRenderEnd != lastFogAppliedRenderEnd) {
+                        NativeBridge.nSetFog(fogR, fogG, fogB,
+                                fogEnvStart, fogEnvEnd, fogRenderStart, fogRenderEnd);
+                        lastFogAppliedR = fogR;
+                        lastFogAppliedG = fogG;
+                        lastFogAppliedB = fogB;
+                        lastFogAppliedEnvStart = fogEnvStart;
+                        lastFogAppliedEnvEnd = fogEnvEnd;
+                        lastFogAppliedRenderStart = fogRenderStart;
+                        lastFogAppliedRenderEnd = fogRenderEnd;
+                    }
+                } catch (Exception ignored) {
+                }
+                if (argumentBufferHandle == 0 && meshShaderBackend != null &&
+                        meshShaderBackend.areMeshShadersAvailable() &&
+                        NativeBridge.isLibLoaded()) {
+                    long handle0 = renderer.getBackend().getDeviceHandle();
+                    if (handle0 != 0) {
+                        argumentBufferHandle = NativeBridge.nCreateBuffer(handle0,
+                                subChunkUploadCapacity * 16,
+                                NativeMemory.STORAGE_MODE_SHARED);
+                    }
+                }
+                long ibHandle = chunkMesher.getGlobalIndexBuffer();
+                if (ibHandle != 0) {
+                    int drawn = NativeBridge.nDrawAllVisibleChunks(frameCtx, ibHandle);
+                    lastDrawnChunkCount = drawn;
+                    MetalRenderProfiler.getInstance().incrementChunksDrawn(drawn);
+                    if (frameCount < 10 || frameCount % 1000 == 0) {
+                        MetalLogger.info("frame %d: drew %d chunks",
+                                frameCount, lastDrawnChunkCount);
+                    }
+                } else {
+                    lastDrawnChunkCount = 0;
+                }
+            }
+        }
     }
-    MetalRenderConfig config = MetalRenderClient.getConfig();
-    if (config == null || !config.lodRecencyEviction) {
-      if (!lodRecencyAgeMap.isEmpty()) {
-        lodRecencyAgeMap.clear();
-      }
-      return;
+
+    private static void extractFrustumPlanes(Matrix4f vp, float[] out) {
+        out[0] = vp.m30() + vp.m00();
+        out[1] = vp.m31() + vp.m01();
+        out[2] = vp.m32() + vp.m02();
+        out[3] = vp.m33() + vp.m03();
+        normalizePlane(out, 0);
+        out[4] = vp.m30() - vp.m00();
+        out[5] = vp.m31() - vp.m01();
+        out[6] = vp.m32() - vp.m02();
+        out[7] = vp.m33() - vp.m03();
+        normalizePlane(out, 4);
+        out[8] = vp.m30() + vp.m10();
+        out[9] = vp.m31() + vp.m11();
+        out[10] = vp.m32() + vp.m12();
+        out[11] = vp.m33() + vp.m13();
+        normalizePlane(out, 8);
+        out[12] = vp.m30() - vp.m10();
+        out[13] = vp.m31() - vp.m11();
+        out[14] = vp.m32() - vp.m12();
+        out[15] = vp.m33() - vp.m13();
+        normalizePlane(out, 12);
+        out[16] = vp.m30() + vp.m20();
+        out[17] = vp.m31() + vp.m21();
+        out[18] = vp.m32() + vp.m22();
+        out[19] = vp.m33() + vp.m23();
+        normalizePlane(out, 16);
+        out[20] = vp.m30() - vp.m20();
+        out[21] = vp.m31() - vp.m21();
+        out[22] = vp.m32() - vp.m22();
+        out[23] = vp.m33() - vp.m23();
+        normalizePlane(out, 20);
     }
-    if (++lodRecencyPullCounter < LOD_RECENCY_PULL_INTERVAL) {
-      return;
-    }
-    lodRecencyPullCounter = 0;
-    int snapshotSize = chunkMesher.getMeshSnapshotSize();
-    if (snapshotSize == 0) {
-      return;
-    }
-    double camX = frameCameraX;
-    double camY = frameCameraY;
-    double camZ = frameCameraZ;
-    boolean haveCam = (frameCount > 0) && (camX != 0.0 || camY != 0.0 || camZ != 0.0);
-    if (!haveCam) {
-      camX = mc.player.getX();
-      camY = mc.player.getY();
-      camZ = mc.player.getZ();
-      haveCam = true;
-    }
-    int count = Math.min(snapshotSize, lodRecencyKeys.length);
-    int currentFrame = frameCount;
-    for (int i = 0; i < count; i++) {
-      CustomChunkMesher.ChunkMeshData mesh = chunkMesher.getMeshSnapshotAt(i);
-      if (mesh == null) {
-        continue;
-      }
-      long key = packChunkKey(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
-      boolean visible = true;
-      if (haveCam) {
+
+    private static float resolveSkyLightFactor(Camera camera, float tickDelta) {
+        if (camera == null || skyLightLookupFailed) {
+            return 1.0f;
+        }
+        Object attributeProbe = camera.attributeProbe();
+        if (attributeProbe == null) {
+            return 1.0f;
+        }
         try {
-          float ox = (float) (mesh.chunkX * 16.0 - camX);
-          float oy = (float) (mesh.chunkY * 16.0 - camY);
-          float oz = (float) (mesh.chunkZ * 16.0 - camZ);
-          visible = frustumCuller.testBoundingBox(ox, oy, oz, ox + 16.0f, oy + 16.0f, oz + 16.0f);
+            java.lang.reflect.Field factorField = skyLightFactorField;
+            java.lang.reflect.Method getValueMethod = skyLightProbeGetValueMethod;
+            if (factorField == null || getValueMethod == null) {
+                Class<?> attributesClass = Class.forName(
+                        "net.minecraft.world.attribute.EnvironmentAttributes");
+                factorField = attributesClass.getField("SKY_LIGHT_FACTOR");
+                getValueMethod = attributeProbe.getClass().getMethod(
+                        "getValue", factorField.getType(), float.class);
+                skyLightFactorField = factorField;
+                skyLightProbeGetValueMethod = getValueMethod;
+            }
+            Object value = getValueMethod.invoke(attributeProbe,
+                    factorField.get(null), tickDelta);
+            if (value instanceof Number number) {
+                return number.floatValue();
+            }
+        } catch (ReflectiveOperationException | RuntimeException ignored) {
+            skyLightLookupFailed = true;
+        }
+        return 1.0f;
+    }
+
+    private static void normalizePlane(float[] planes, int offset) {
+        float a = planes[offset], b = planes[offset + 1], c = planes[offset + 2];
+        float len = (float) Math.sqrt(a * a + b * b + c * c);
+        if (len > 0.0f) {
+            float invLen = 1.0f / len;
+            planes[offset] *= invLen;
+            planes[offset + 1] *= invLen;
+            planes[offset + 2] *= invLen;
+            planes[offset + 3] *= invLen;
+        }
+    }
+
+    public void endFrame() {
+        MetalRenderer renderer = MetalRenderClient.getRenderer();
+        if (renderer == null || !renderer.isAvailable())
+            return;
+        long frameCtx = renderer.frameCtx();
+        if (frameCtx != 0) {
+            boolean inWater = false;
+            Minecraft mc = Minecraft.getInstance();
+            net.minecraft.client.Camera camera = null;
+            float tickDelta = 0.0f;
+            if (mc != null) {
+                if (mc.getCameraEntity() != null) {
+                    inWater = mc.getCameraEntity().isUnderWater();
+                }
+                try {
+                    camera = mc.gameRenderer.getMainCamera();
+                    tickDelta = mc.getDeltaTracker().getGameTimeDeltaPartialTick(true);
+                } catch (Exception ignored) {
+                }
+            }
+            entityRenderer.renderCapturedEntities(frameCtx, inWater);
+            if (camera != null) {
+
+                try {
+                    cloudRenderer.render(frameCtx, camera, tickDelta);
+                } catch (Exception ignored) {
+                }
+                try {
+                    weatherRenderer.render(frameCtx, camera, tickDelta);
+                } catch (Exception ignored) {
+                }
+            }
+            NativeBridge.nDrawDeferredWaterPass(frameCtx);
+            NativeBridge.nDrawOITPass(frameCtx);
+            particleRenderer.render(frameCtx);
+            renderBlockOutline(frameCtx);
+        }
+        renderer.endFrame();
+        frameCount++;
+    }
+
+    public MetalCloudRenderer getCloudRenderer() {
+        return cloudRenderer;
+    }
+
+    public MetalWeatherRenderer getWeatherRenderer() {
+        return weatherRenderer;
+    }
+
+    private void renderBlockOutline(long frameCtx) {
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc == null || mc.level == null || mc.hitResult == null ||
+                    mc.hitResult.getType() != HitResult.Type.BLOCK) {
+                return;
+            }
+            BlockHitResult hit = (BlockHitResult) mc.hitResult;
+            BlockPos pos = hit.getBlockPos();
+            long posKey = pos.asLong();
+            float bx = (float) (pos.getX() - frameCameraX);
+            float by = (float) (pos.getY() - frameCameraY);
+            float bz = (float) (pos.getZ() - frameCameraZ);
+            int lineVertexCount;
+            int drawVertexCount;
+            int scalarCount;
+            if (posKey == outlineCachePos && outlineLocalCount > 0
+                    && mc.level.getBlockState(pos) == outlineCacheState) {
+                lineVertexCount = outlineLocalCount;
+                drawVertexCount = outlineCacheCount;
+                scalarCount = lineVertexCount * 3;
+                if (outlineVerts.length < scalarCount) {
+                    outlineVerts = new float[Math.max(scalarCount, outlineVerts.length * 2)];
+                }
+                float[] local = outlineLocalVerts;
+                float[] out = outlineVerts;
+                int vi = 0;
+                for (int i = 0; i < scalarCount; i += 3) {
+                    out[vi++] = local[i] + bx;
+                    out[vi++] = local[i + 1] + by;
+                    out[vi++] = local[i + 2] + bz;
+                }
+            } else {
+                BlockState state = mc.level.getBlockState(pos);
+                if (state.isAir() || !mc.level.getWorldBorder().isWithinBounds(pos)) {
+                    return;
+                }
+
+                CollisionContext context = mc.getCameraEntity() != null
+                        ? CollisionContext.of(mc.getCameraEntity())
+                        : CollisionContext.empty();
+                VoxelShape shape = state.getShape(mc.level, pos, context);
+                if (shape.isEmpty()) {
+                    return;
+                }
+
+                outlineEdges.clear();
+                shape.forAllEdges((x0, y0, z0, x1, y1, z1) -> outlineEdges.add(new float[] {
+                        (float) x0, (float) y0, (float) z0,
+                        (float) x1, (float) y1, (float) z1
+                }));
+                if (outlineEdges.isEmpty()) {
+                    return;
+                }
+
+                lineVertexCount = outlineEdges.size() * 2;
+                drawVertexCount = outlineEdges.size() * 6;
+                scalarCount = lineVertexCount * 3;
+                if (outlineLocalVerts.length < scalarCount) {
+                    outlineLocalVerts = new float[Math.max(scalarCount, outlineLocalVerts.length * 2)];
+                }
+                int li = 0;
+                for (float[] edge : outlineEdges) {
+                    outlineLocalVerts[li++] = edge[0];
+                    outlineLocalVerts[li++] = edge[1];
+                    outlineLocalVerts[li++] = edge[2];
+                    outlineLocalVerts[li++] = edge[3];
+                    outlineLocalVerts[li++] = edge[4];
+                    outlineLocalVerts[li++] = edge[5];
+                }
+                outlineLocalCount = lineVertexCount;
+                outlineCachePos = posKey;
+                outlineCacheCount = drawVertexCount;
+                outlineCacheState = state;
+                if (outlineVerts.length < scalarCount) {
+                    outlineVerts = new float[Math.max(scalarCount, outlineVerts.length * 2)];
+                }
+                float[] local = outlineLocalVerts;
+                float[] out = outlineVerts;
+                int vi = 0;
+                for (int i = 0; i < scalarCount; i += 3) {
+                    out[vi++] = local[i] + bx;
+                    out[vi++] = local[i + 1] + by;
+                    out[vi++] = local[i + 2] + bz;
+                }
+            }
+
+            int dataLen = scalarCount * Float.BYTES;
+            if (outlineDirectBuf == null || outlineDirectBuf.capacity() < dataLen) {
+                outlineDirectBuf = java.nio.ByteBuffer.allocateDirect(Math.max(dataLen, 4096))
+                        .order(java.nio.ByteOrder.nativeOrder());
+            }
+            outlineDirectBuf.clear();
+            outlineDirectBuf.limit(dataLen);
+            java.nio.FloatBuffer fb = outlineDirectBuf.asFloatBuffer();
+            fb.put(outlineVerts, 0, scalarCount);
+            outlineDirectBuf.position(0);
+            MetalRenderer renderer = MetalRenderClient.getRenderer();
+            if (renderer == null) {
+                return;
+            }
+            long device = renderer.getBackend().getDeviceHandle();
+            if (outlineBufferHandle == 0 || dataLen > outlineBufferSize) {
+                if (outlineBufferHandle != 0) {
+                    NativeBridge.nDestroyBuffer(outlineBufferHandle);
+                }
+                outlineBufferHandle = NativeBridge.nCreateBuffer(
+                        device, dataLen, NativeMemory.STORAGE_MODE_SHARED);
+                outlineBufferSize = dataLen;
+            }
+            NativeBridge.nUploadBufferDataDirect(outlineBufferHandle, outlineDirectBuf, 0, dataLen);
+            NativeBridge.nSetDebugColor(frameCtx, 0.0f, 0.0f, 0.0f, 0.4f);
+            NativeBridge.nDrawTriangleBuffer(frameCtx, outlineBufferHandle, drawVertexCount);
+        } catch (Exception e) {
+            MetalLogger.error("[blockoutline] eww: %s", e.getMessage());
+        }
+    }
+
+    private int outlineBufferSize = 0;
+
+    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet pendingBuildSet = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+    private final it.unimi.dsi.fastutil.longs.LongArrayList sortedBuildList = new it.unimi.dsi.fastutil.longs.LongArrayList();
+    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet urgentEditSet = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+    private static final int URGENT_EDIT_MAX_PER_FRAME = 32;
+    private long[] sortKeyScratch = new long[1024];
+    private final it.unimi.dsi.fastutil.longs.LongArrayList sortReorderScratch = new it.unimi.dsi.fastutil.longs.LongArrayList();
+    private boolean sortedListDirty = true;
+    private int lastSortedSize = 0;
+    private int consecutiveHighMeshMsFrames = 0;
+    private int consecutiveCoolMeshMsFrames = 0;
+    private boolean textureBackoffActive = false;
+    private int framesSinceLastSort = 0;
+    private float cachedForwardX = 0, cachedForwardZ = 1;
+    private int lastScanPlayerCX = Integer.MIN_VALUE, lastScanPlayerCZ = Integer.MIN_VALUE;
+    private int lastSortedPlayerCX = Integer.MIN_VALUE, lastSortedPlayerCZ = Integer.MIN_VALUE;
+    private int lastScanRenderDist = -1;
+    private int turnPriorityFrames = 0;
+    private int remainingPrioritizedBuilds = PRIORITIZED_BUILD_STREAK_LIMIT;
+    private int cachedThermalState = 0;
+    private int lodRefreshCursor = 0;
+    private int lodRefreshPlayerCX = Integer.MIN_VALUE;
+    private int lodRefreshPlayerCZ = Integer.MIN_VALUE;
+    private int lodRefreshThermalBias = Integer.MIN_VALUE;
+    private int lodRefreshMeshGen = Integer.MIN_VALUE;
+    private int lodRingPlayerCX = Integer.MIN_VALUE;
+    private int lodRingPlayerCZ = Integer.MIN_VALUE;
+    private int lodRingMeshGen = Integer.MIN_VALUE;
+    private int lodRingThermalBias = Integer.MIN_VALUE;
+    private int lodRingCursor;
+    private boolean lodRingBacklog = false;
+    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet lodRingBoostKeys = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+    private final it.unimi.dsi.fastutil.longs.LongArrayList pruneScratch = new it.unimi.dsi.fastutil.longs.LongArrayList(
+            256);
+    private final LodPolicy lodPolicy = new LodPolicy();
+
+    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet occlusionHidden = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet occlusionVisited = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<CustomChunkMesher.ChunkMeshData> occlusionMeshIndex = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet faceHiddenSections = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet lastAppliedVisible = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+    private final it.unimi.dsi.fastutil.longs.LongOpenHashSet appliedVisibleScratch = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+    private boolean appliedVisibleValid = false;
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<CustomChunkMesher.ChunkMeshData> occlusionHiddenMesh = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private long lastOcclusionSubmitKey = Long.MIN_VALUE;
+    private int lastOcclusionSubmitGen = Integer.MIN_VALUE;
+    private float lastOcclusionSubmitSearch = -1.0f;
+    private int lastOcclusionSubmitYawQ = Integer.MIN_VALUE;
+    private int lastOcclusionSubmitPitchQ = Integer.MIN_VALUE;
+    private static final int OCCLUSION_POS_QUANTUM_BLOCKS = 8;
+    private int lastOcclusionSubmitBX = Integer.MIN_VALUE;
+    private int lastOcclusionSubmitBY = Integer.MIN_VALUE;
+    private int lastOcclusionSubmitBZ = Integer.MIN_VALUE;
+    private int lastOcclusionIndexGen = Integer.MIN_VALUE;
+    private int lastFallbackVisCount = 0;
+    private it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<long[]> occlusionSnapshotMap;
+    private boolean scanDirty = true;
+
+    private int lastResizeW = -1;
+    private int lastResizeH = -1;
+    private float lastAppliedScale = -1.0f;
+    private boolean lastVanillaAO = true;
+    private boolean vanillaAOTracked = false;
+
+    private float fogR = 0.0f;
+    private float fogG = 0.0f;
+    private float fogB = 0.0f;
+    private float fogEnvStart = com.pebbles_boon.metalrender.render.fog.VanillaFog.NO_FOG_DIST;
+    private float fogEnvEnd = com.pebbles_boon.metalrender.render.fog.VanillaFog.NO_FOG_DIST;
+    private float fogRenderStart = com.pebbles_boon.metalrender.render.fog.VanillaFog.NO_FOG_DIST;
+    private float fogRenderEnd = com.pebbles_boon.metalrender.render.fog.VanillaFog.NO_FOG_DIST;
+
+    public void setFogState(com.pebbles_boon.metalrender.render.fog.VanillaFog.FogState fog) {
+        if (fog == null || !fog.isFinite()) {
+            return;
+        }
+        fogR = fog.r();
+        fogG = fog.g();
+        fogB = fog.b();
+        fogEnvStart = fog.envStart();
+        fogEnvEnd = fog.envEnd();
+        fogRenderStart = fog.renderStart();
+        fogRenderEnd = fog.renderEnd();
+    }
+
+    private final long[] lodRecencyKeys = new long[LOD_RECENCY_SCRATCH_SIZE];
+    private final int[] lodRecencyFrames = new int[LOD_RECENCY_SCRATCH_SIZE];
+    private final it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap lodRecencyAgeMap = new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap(
+            LOD_RECENCY_SCRATCH_SIZE);
+    private boolean lodRecencyNativeEnabled;
+    private int lodRecencyPullCounter;
+    private int lodDiagScanCounter;
+
+    private static final class LodCandidate {
+        final long key;
+        final float impact;
+        final int chunkX, chunkY, chunkZ;
+        final int targetTier;
+
+        LodCandidate(long key, float impact, int chunkX, int chunkY, int chunkZ,
+                int targetTier) {
+            this.key = key;
+            this.impact = impact;
+            this.chunkX = chunkX;
+            this.chunkY = chunkY;
+            this.chunkZ = chunkZ;
+            this.targetTier = targetTier;
+        }
+    }
+
+    private static final class PendingBuildCandidate {
+        final long key;
+        final int index;
+        final int chunkX;
+        final int chunkY;
+        final int chunkZ;
+        final int chunkDist;
+
+        PendingBuildCandidate(long key, int index, int chunkX, int chunkY,
+                int chunkZ, int chunkDist) {
+            this.key = key;
+            this.index = index;
+            this.chunkX = chunkX;
+            this.chunkY = chunkY;
+            this.chunkZ = chunkZ;
+            this.chunkDist = chunkDist;
+        }
+    }
+
+    private static long packChunkKey(int cx, int cy, int cz) {
+        return ((long) (cx & 0x3FFFFF) << 42) | ((long) (cy & 0xFFFFF) << 22) |
+                (cz & 0x3FFFFF);
+    }
+
+    private static int unpackChunkX(long key) {
+        int chunkX = (int) ((key >> 42) & 0x3FFFFF);
+        if ((chunkX & 0x200000) != 0) {
+            chunkX |= ~0x3FFFFF;
+        }
+        return chunkX;
+    }
+
+    private static int unpackChunkY(long key) {
+        int chunkY = (int) ((key >> 22) & 0xFFFFF);
+        if ((chunkY & 0x80000) != 0) {
+            chunkY |= ~0xFFFFF;
+        }
+        return chunkY;
+    }
+
+    private static int unpackChunkZ(long key) {
+        int chunkZ = (int) (key & 0x3FFFFF);
+        if ((chunkZ & 0x200000) != 0) {
+            chunkZ |= ~0x3FFFFF;
+        }
+        return chunkZ;
+    }
+
+    private void buildPendingChunkMeshes(Minecraft mc) {
+        if (mc.player == null || mc.level == null) {
+            return;
+        }
+        if (mc.getOverlay() != null) {
+            return;
+        }
+        if (mc.player != null) {
+            float yaw = mc.player.getYRot();
+            float nextForwardX = (float) -Math.sin(Math.toRadians(yaw));
+            float nextForwardZ = (float) Math.cos(Math.toRadians(yaw));
+            float turnDot = cachedForwardX * nextForwardX + cachedForwardZ * nextForwardZ;
+            cachedForwardX = nextForwardX;
+            cachedForwardZ = nextForwardZ;
+            if (turnDot < BUILD_SORT_REORDER_DOT_THRESHOLD) {
+                if (turnPriorityFrames == 0) {
+                    if (!pendingBuildSet.isEmpty()) {
+                        sortedListDirty = true;
+                    }
+                    turnPriorityFrames = TURN_PRIORITY_SCAN_FRAMES;
+                    scanFrontierRing = HOT_LOAD_REBUILD_RANGE + 1;
+                    scanFrameCounter = 0;
+                }
+            }
+        }
+        if (pendingBuildSet.size() < CHUNK_SCAN_SATURATED_THRESHOLD ||
+                (frameCount & 1) == 0) {
+            scanForPendingChunks(mc);
+        }
+        if (mc.player != null && chunkMesher.getMeshCount() < maxMeshes) {
+            int playerChunkX = mc.player.chunkPosition().x();
+            int playerChunkZ = mc.player.chunkPosition().z();
+            int playerSectionY = mc.player.getBlockY() >> 4;
+            boolean turnBurstActive = turnPriorityFrames > 0;
+            int mesherPending = chunkMesher.getPendingCount();
+            int visibleBacklog = pendingBuildSet.size() + mesherPending;
+            boolean fpsPriorityMode = MetalRenderClient.getConfig() != null &&
+                    MetalRenderClient.getConfig().prioritizeFpsOverTps;
+            long buildBudget = turnBurstActive ? CHUNK_TURN_BUILD_BURST_NS : CHUNK_BUILD_BUDGET_NS;
+            int minBuilds = turnBurstActive ? MIN_CHUNK_TURN_BUILDS_PER_FRAME
+                    : MIN_CHUNK_BUILDS_PER_FRAME;
+            int highPrioritySubmissions = turnBurstActive ? TURN_HIGH_PRIORITY_SUBMISSIONS_PER_PASS
+                    : BASE_HIGH_PRIORITY_SUBMISSIONS_PER_PASS;
+            if (mesherPending >= CHUNK_SCAN_SATURATED_THRESHOLD) {
+                buildBudget = Math.min(buildBudget, CHUNK_SATURATED_BUILD_BUDGET_NS);
+                minBuilds = Math.min(minBuilds, MIN_CHUNK_SATURATED_BUILDS_PER_FRAME);
+                highPrioritySubmissions = Math.min(highPrioritySubmissions,
+                        SATURATED_HIGH_PRIORITY_SUBMISSIONS_PER_PASS);
+            } else if (visibleBacklog >= CHUNK_BACKLOG_HEAVY_THRESHOLD) {
+                buildBudget = Math.max(buildBudget, CHUNK_HEAVY_BACKLOG_BUILD_BURST_NS);
+                minBuilds = Math.max(minBuilds, MIN_CHUNK_HEAVY_BACKLOG_BUILDS_PER_FRAME);
+                highPrioritySubmissions = Math.max(highPrioritySubmissions,
+                        HEAVY_BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS);
+            } else if (visibleBacklog >= CHUNK_BACKLOG_PRESSURE_THRESHOLD) {
+                buildBudget = Math.max(buildBudget, CHUNK_BACKLOG_BUILD_BURST_NS);
+                minBuilds = Math.max(minBuilds, MIN_CHUNK_BACKLOG_BUILDS_PER_FRAME);
+                highPrioritySubmissions = Math.max(highPrioritySubmissions,
+                        BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS);
+            }
+            if (fpsPriorityMode) {
+                buildBudget = Math.max(buildBudget, CHUNK_BACKLOG_BUILD_BURST_NS);
+                minBuilds = Math.max(
+                        minBuilds, MIN_CHUNK_BACKLOG_BUILDS_PER_FRAME);
+                highPrioritySubmissions = Math.max(
+                        highPrioritySubmissions,
+                        BACKLOG_HIGH_PRIORITY_SUBMISSIONS_PER_PASS);
+            }
+            drainUrgentBlockEdits();
+            buildFromPendingSet(playerChunkX, playerSectionY, playerChunkZ,
+                    buildBudget, minBuilds, highPrioritySubmissions);
+
+            if (turnPriorityFrames > 0) {
+                turnPriorityFrames--;
+            }
+        }
+    }
+
+    private int scanFrameCounter = 0;
+    private int scanFrontierRing = 0;
+    private long lastFullRescanNs = 0L;
+
+    private void scanForPendingChunks(Minecraft mc) {
+        ClientLevel world = mc.level;
+        if (world == null)
+            return;
+        if (mc.player == null)
+            return;
+        int renderDist = mc.options.renderDistance().get();
+        int mesherPending = chunkMesher.getPendingCount();
+        int visibleBacklog = pendingBuildSet.size() + mesherPending;
+        boolean scanPressured = visibleBacklog >= CHUNK_SCAN_PRESSURE_THRESHOLD;
+        boolean scanSaturated = visibleBacklog >= CHUNK_SCAN_SATURATED_THRESHOLD;
+        int closeRange = Math.min(HOT_LOAD_REBUILD_RANGE, renderDist);
+        if (scanSaturated) {
+            closeRange = Math.min(closeRange, SATURATED_CLOSE_SCAN_RANGE);
+        } else if (scanPressured) {
+            closeRange = Math.min(closeRange, PRESSURED_CLOSE_SCAN_RANGE);
+        }
+        int playerChunkX = mc.player.chunkPosition().x();
+        int playerChunkZ = mc.player.chunkPosition().z();
+        int playerSectionY = mc.player.getBlockY() >> 4;
+        if (scanSaturated) {
+            if ((frameCount % 10) == 0) {
+                trimPendingBuildSet(playerChunkX, playerChunkZ, closeRange);
+                visibleBacklog = pendingBuildSet.size() + mesherPending;
+                scanPressured = visibleBacklog >= CHUNK_SCAN_PRESSURE_THRESHOLD;
+                scanSaturated = visibleBacklog >= CHUNK_SCAN_SATURATED_THRESHOLD;
+            }
+        }
+        boolean playerMovedChunk = (playerChunkX != lastScanPlayerCX || playerChunkZ != lastScanPlayerCZ);
+        boolean renderDistChanged = (renderDist != lastScanRenderDist);
+        if (playerMovedChunk || renderDistChanged) {
+            lastScanPlayerCX = playerChunkX;
+            lastScanPlayerCZ = playerChunkZ;
+            lastScanRenderDist = renderDist;
+            sortedListDirty = true;
+            if (renderDistChanged) {
+                pendingBuildSet.clear();
+                scanRingsInRange(world, playerChunkX, playerChunkZ, playerSectionY, 0,
+                        closeRange);
+                scanFrontierRing = closeRange + 1;
+                scanFrameCounter = 0;
+            } else {
+                scanRingsInRange(world, playerChunkX, playerChunkZ, playerSectionY, 0,
+                        closeRange);
+                scanFrontierRing = closeRange + 1;
+            }
+        }
+        long nowNs = System.nanoTime();
+        boolean fullRescanDue = lastFullRescanNs == 0L ||
+                nowNs - lastFullRescanNs >= FULL_RENDERDIST_RESCAN_INTERVAL_NS;
+        scanFrameCounter++;
+        if (fullRescanDue) {
+            scanRingsInRange(world, playerChunkX, playerChunkZ, playerSectionY, 0,
+                    closeRange);
+            lastFullRescanNs = nowNs;
+            scanFrameCounter = 0;
+            scanFrontierRing = closeRange + 1;
+            scanDirty = false;
+        } else {
+            boolean queuePressure = !pendingBuildSet.isEmpty() || chunkMesher.getPendingCount() > 0;
+            boolean needScan = scanDirty || playerMovedChunk || queuePressure;
+            if (!needScan) {
+                if (turnPriorityFrames > 0 && !scanPressured) {
+                    scanForwardSector(world, playerChunkX, playerChunkZ, playerSectionY,
+                            renderDist);
+                }
+                return;
+            }
+            int closeRangeRescanInterval = queuePressure
+                    ? ACTIVE_CLOSE_RANGE_RESCAN_INTERVAL
+                    : IDLE_CLOSE_RANGE_RESCAN_INTERVAL;
+            if (!playerMovedChunk &&
+                    scanFrameCounter % closeRangeRescanInterval == 0) {
+                scanRingsInRange(world, playerChunkX, playerChunkZ, playerSectionY, 0,
+                        closeRange);
+            }
+            int frontierStart = Math.max(closeRange + 1, scanFrontierRing);
+            int frontierSpan = NORMAL_FRONTIER_RING_SCAN_SPAN;
+            if (scanSaturated) {
+                frontierSpan = 1;
+            } else if (scanPressured) {
+                frontierSpan = Math.min(frontierSpan, 2);
+            }
+            int frontierEnd = Math.min(frontierStart + frontierSpan - 1, renderDist);
+            if (frontierStart <= renderDist) {
+                scanRingsInRange(world, playerChunkX, playerChunkZ, playerSectionY,
+                        frontierStart, frontierEnd);
+                scanFrontierRing = frontierEnd + 1;
+                if (scanFrontierRing > renderDist) {
+                    scanFrontierRing = closeRange + 1;
+                }
+            }
+            scanDirty = false;
+        }
+        if (turnPriorityFrames > 0 && !scanPressured) {
+            scanForwardSector(world, playerChunkX, playerChunkZ, playerSectionY,
+                    renderDist);
+        }
+    }
+
+    private void scanRingsInRange(ClientLevel world, int playerChunkX,
+            int playerChunkZ, int playerSectionY,
+            int startRing, int endRing) {
+        for (int ring = startRing; ring <= endRing; ring++) {
+            for (int dx = -ring; dx <= ring; dx++) {
+                for (int dz = -ring; dz <= ring; dz++) {
+                    if (ring > 0 && Math.abs(dx) < ring && Math.abs(dz) < ring)
+                        continue;
+                    int cx = playerChunkX + dx;
+                    int cz = playerChunkZ + dz;
+                    queueChunkSectionsIfMissing(world, cx, cz, playerSectionY,
+                            Math.max(Math.abs(dx), Math.abs(dz)));
+                }
+            }
+        }
+    }
+
+    private void scanForwardSector(ClientLevel world, int playerChunkX,
+            int playerChunkZ, int playerSectionY,
+            int renderDist) {
+        int startRing = Math.min(HOT_LOAD_REBUILD_RANGE, renderDist) + 1;
+        scanForwardSector(world, playerChunkX, playerChunkZ, playerSectionY,
+                startRing, renderDist);
+    }
+
+    private void scanForwardSector(ClientLevel world, int playerChunkX,
+            int playerChunkZ, int playerSectionY,
+            int startRing, int endRing) {
+        float minForwardDotSq = TURN_PRIORITY_SCAN_COS_THRESHOLD * TURN_PRIORITY_SCAN_COS_THRESHOLD;
+        for (int ring = startRing; ring <= endRing; ring++) {
+            for (int dx = -ring; dx <= ring; dx++) {
+                for (int dz = -ring; dz <= ring; dz++) {
+                    if (ring > 0 && Math.abs(dx) < ring && Math.abs(dz) < ring) {
+                        continue;
+                    }
+                    if (dx == 0 && dz == 0) {
+                        continue;
+                    }
+                    float forwardDot = dx * cachedForwardX + dz * cachedForwardZ;
+                    if (forwardDot <= 0.0f) {
+                        continue;
+                    }
+                    float distSq = (dx * dx) + (dz * dz);
+                    if (forwardDot * forwardDot < distSq * minForwardDotSq) {
+                        continue;
+                    }
+                    queueChunkSectionsIfMissing(world, playerChunkX + dx,
+                            playerChunkZ + dz, playerSectionY, ring);
+                }
+            }
+        }
+    }
+
+    private long lastTrimLogMs = 0;
+
+    private void trimPendingBuildSet(int playerChunkX, int playerChunkZ,
+            int keepRange) {
+        if (pendingBuildSet.isEmpty()) {
+            return;
+        }
+        boolean removed = false;
+        it.unimi.dsi.fastutil.longs.LongIterator iterator = pendingBuildSet.iterator();
+        while (iterator.hasNext()) {
+            long key = iterator.nextLong();
+            int chunkX = unpackChunkX(key);
+            int chunkZ = unpackChunkZ(key);
+            int dx = chunkX - playerChunkX;
+            int dz = chunkZ - playerChunkZ;
+            int chunkDistance = Math.max(Math.abs(dx), Math.abs(dz));
+            if (chunkDistance <= keepRange || isInForwardPriorityCone(dx, dz)) {
+                continue;
+            }
+            iterator.remove();
+            removed = true;
+        }
+        if (removed) {
+            sortedListDirty = true;
+            long now = System.currentTimeMillis();
+            if (now - lastTrimLogMs >= 2000) {
+                lastTrimLogMs = now;
+                MetalLogger.info(
+                        "queue_trim: keep=%d player=[%d,%d] p=%d cp=%d m=%d",
+                        keepRange, playerChunkX, playerChunkZ, pendingBuildSet.size(),
+                        chunkMesher.getPendingCount(), chunkMesher.getMeshCount());
+            }
+        }
+    }
+
+    private int getScanVerticalRange(int chunkDistance) {
+        if (chunkDistance <= HOT_LOAD_REBUILD_RANGE) {
+            return Integer.MAX_VALUE;
+        }
+        if (chunkDistance < 16) {
+            return MID_DISTANCE_SCAN_VERTICAL_RANGE;
+        }
+        if (chunkDistance < 24) {
+            return FAR_DISTANCE_SCAN_VERTICAL_RANGE;
+        }
+        return EXTREME_DISTANCE_SCAN_VERTICAL_RANGE;
+    }
+
+    private void queueChunkSectionsIfMissing(ClientLevel world, int chunkX,
+            int chunkZ, int playerSectionY,
+            int chunkDistance) {
+        LevelChunk chunk = world.getChunkSource().getChunkNow(chunkX, chunkZ);
+        if (chunk == null) {
+            if (MetalRenderConfig.isDeepDebugActive()) {
+                MetalLogger.debug("scan_skip: chunk [%d,%d]", chunkX, chunkZ);
+            }
+            return;
+        }
+        LevelChunkSection[] sections = chunk.getSections();
+        int maxVerticalRange = getScanVerticalRange(chunkDistance);
+        int highestNonAirSection = Integer.MIN_VALUE;
+        if (maxVerticalRange != Integer.MAX_VALUE) {
+            for (int sy = sections.length - 1; sy >= 0; sy--) {
+                LevelChunkSection section = sections[sy];
+                if (section != null && !section.hasOnlyAir()) {
+                    highestNonAirSection = chunk.getSectionYFromSectionIndex(sy);
+                    break;
+                }
+            }
+        }
+        for (int sy = 0; sy < sections.length; sy++) {
+            LevelChunkSection section = sections[sy];
+            if (section == null || section.hasOnlyAir())
+                continue;
+            int worldY = chunk.getSectionYFromSectionIndex(sy);
+            if (maxVerticalRange != Integer.MAX_VALUE) {
+                boolean withinVerticalWindow = Math.abs(worldY - playerSectionY) <= maxVerticalRange;
+                boolean withinSurfaceBand = highestNonAirSection != Integer.MIN_VALUE &&
+                        worldY >= highestNonAirSection - SURFACE_SECTION_EXTRA_DEPTH;
+                if (!withinVerticalWindow && !withinSurfaceBand) {
+                    continue;
+                }
+            }
+            long sectionKey = packChunkKey(chunkX, worldY, chunkZ);
+            if (pendingBuildSet.contains(sectionKey))
+                continue;
+            if (!chunkMesher.hasMesh(chunkX, worldY, chunkZ)) {
+                chunkMesher.noteSectionAvailable(chunkX, worldY, chunkZ);
+                if (pendingBuildSet.add(sectionKey)) {
+                    sortedListDirty = true;
+                    if (MetalRenderConfig.isDeepDebugActive()) {
+                        MetalLogger.debug(
+                                "queue_add: chunk=[%d,%d,%d] dist=%d p=%d",
+                                chunkX, worldY, chunkZ, chunkDistance, pendingBuildSet.size());
+                    }
+                }
+            }
+        }
+    }
+
+    private int buildFromPendingSet(int playerChunkX, int playerSectionY,
+            int playerChunkZ, long budgetNanos,
+            int minBuilds, int highPrioritySubmissions) {
+        if (pendingBuildSet.isEmpty())
+            return 0;
+        readinessCache.clear();
+        lightReadinessCache.clear();
+        int lightSkipped = 0;
+        if (sortedListDirty) {
+            int currentSize = pendingBuildSet.size();
+            int sortInterval = currentSize > 25000 ? 30
+                    : (currentSize > 15000 ? 20
+                            : (currentSize > 5000 ? 10
+                                    : (currentSize > 1000 ? 5 : 3)));
+            int playerMovedSinceSort = Math.max(
+                    Math.abs(playerChunkX - lastSortedPlayerCX),
+                    Math.abs(playerChunkZ - lastSortedPlayerCZ));
+            boolean shouldSort = turnPriorityFrames == TURN_PRIORITY_SCAN_FRAMES
+                    || currentSize > lastSortedSize + 256
+                    || currentSize < lastSortedSize * 3 / 4
+                    || framesSinceLastSort >= sortInterval
+                    || playerMovedSinceSort > 4
+                    || sortedBuildList.isEmpty();
+            if (shouldSort) {
+                sortedBuildList.clear();
+                sortedBuildList.addAll(pendingBuildSet);
+                final int pcx = playerChunkX;
+                final int pcy = playerSectionY;
+                final int pcz = playerChunkZ;
+                final float fwdX = cachedForwardX;
+                final float fwdZ = cachedForwardZ;
+                int n = sortedBuildList.size();
+                if (sortKeyScratch.length < n) {
+                    sortKeyScratch = new long[Math.max(n * 2, 1024)];
+                }
+                for (int i = 0; i < n; i++) {
+                    long key = sortedBuildList.getLong(i);
+                    int cx = unpackChunkX(key);
+                    int cy = unpackChunkY(key);
+                    int cz = unpackChunkZ(key);
+                    float dot = (cx - pcx) * fwdX + (cz - pcz) * fwdZ;
+                    int front = dot >= 0 ? 1 : 0;
+                    int dist = Math.abs(cx - pcx) + Math.abs(cz - pcz);
+                    int vd = Math.abs(cy - pcy);
+                    sortKeyScratch[i] = ((long) front << 63) | ((long) dist << 40)
+                            | ((long) vd << 32) | (i & 0xFFFFFFFFL);
+                }
+                java.util.Arrays.sort(sortKeyScratch, 0, n);
+                sortReorderScratch.clear();
+                for (int i = 0; i < n; i++) {
+                    sortReorderScratch.add(sortedBuildList.getLong(
+                            (int) (sortKeyScratch[i] & 0xFFFFFFFFL)));
+                }
+                sortedBuildList.clear();
+                sortedBuildList.addAll(sortReorderScratch);
+                lastSortedSize = sortedBuildList.size();
+                lastSortedPlayerCX = playerChunkX;
+                lastSortedPlayerCZ = playerChunkZ;
+                framesSinceLastSort = 0;
+            } else {
+                framesSinceLastSort++;
+            }
+            sortedListDirty = false;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        ClientLevel world = mc != null ? mc.level : null;
+        if (world == null) {
+            return 0;
+        }
+        long deadline = budgetNanos > 0 ? System.nanoTime() + budgetNanos : Long.MAX_VALUE;
+        int maxSubmit = pendingBuildSet.size() > 20000 ? 200 : 500;
+        int thermalState = 0;
+        if ((frameCount & 31) == 0) {
+            cachedThermalState = NativeBridge.isLibLoaded() ? NativeBridge.nGetThermalState() : 0;
+        }
+        thermalState = cachedThermalState;
+        if (thermalState >= 2) {
+            budgetNanos = Math.min(budgetNanos, 3_000_000L);
+            maxSubmit = Math.min(maxSubmit, 100);
+        }
+        int built = 0;
+        int importantSubmitted = 0;
+        int backgroundSubmissions = 0;
+        boolean fpsPriorityMode = MetalRenderClient.getConfig() != null &&
+                MetalRenderClient.getConfig().prioritizeFpsOverTps;
+        int maxInFlightBuildTasks = currentInFlightBudget();
+        int reserveSlots = fpsPriorityMode ? 0 : RESERVED_PRIORITY_IN_FLIGHT_SLOTS;
+        int backgroundInFlightLimit = Math.max(1, maxInFlightBuildTasks - reserveSlots);
+        int backgroundSubmissionBudget = turnPriorityFrames > 0
+                ? TURN_PRIORITY_BACKGROUND_SUBMISSIONS_PER_PASS
+                : NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS;
+        if (fpsPriorityMode) {
+            backgroundInFlightLimit = maxInFlightBuildTasks;
+            backgroundSubmissionBudget = Math.max(
+                    backgroundSubmissionBudget,
+                    FPS_PRIORITY_NORMAL_BACKGROUND_SUBMISSIONS_PER_PASS);
+        }
+        int currentMeshCount = chunkMesher.getMeshCount();
+        while (!sortedBuildList.isEmpty() && built < maxSubmit &&
+                currentMeshCount < maxMeshes) {
+            if (budgetNanos > 0 && built >= minBuilds &&
+                    System.nanoTime() >= deadline)
+                break;
+            int currentPending = chunkMesher.getPendingCount();
+            if (currentPending >= maxInFlightBuildTasks) {
+                break;
+            }
+            PendingBuildCandidate importantCandidate = null;
+            PendingBuildCandidate normalCandidate = null;
+            int index = 0;
+            final int baseScanLimit = (pendingBuildSet.size() > 10000 && budgetNanos > 3_000_000L) ? 256 : 128;
+            int scanLimit = Math.min(baseScanLimit, sortedBuildList.size());
+            while (true) {
+                while (index < scanLimit) {
+                    long key = sortedBuildList.get(index);
+                    int cx = unpackChunkX(key);
+                    int cy = unpackChunkY(key);
+                    int cz = unpackChunkZ(key);
+                    if (chunkMesher.hasMesh(cx, cy, cz)) {
+                        pendingBuildSet.remove(key);
+                        sortedBuildList.remove(index);
+                        scanLimit = Math.min(baseScanLimit, sortedBuildList.size());
+                        continue;
+                    }
+                    int dx = cx - playerChunkX;
+                    int dz = cz - playerChunkZ;
+                    int chunkDist = Math.max(Math.abs(dx), Math.abs(dz));
+                    boolean bypassReadiness = chunkDist <= IMPORTANT_REBUILD_CHUNK_RANGE;
+                    if (!bypassReadiness && !isSectionBuildReady(world, cx, cy, cz)) {
+                        if (MetalRenderConfig.isDeepDebugActive()) {
+                            MetalLogger.debug(
+                                    "build_defer: chunk=[%d,%d,%d] dist=%d",
+                                    cx, cy, cz, chunkDist);
+                        }
+                        index++;
+                        continue;
+                    }
+                    if (!isSectionLightReady(world, cx, cy, cz)) {
+                        lightSkipped++;
+                        index++;
+                        continue;
+                    }
+                    PendingBuildCandidate candidate = new PendingBuildCandidate(
+                            key, index, cx, cy, cz, chunkDist);
+                    boolean ringBoost = lodRingBoostKeys.contains(key);
+                    boolean importantBuild = (importantSubmitted < highPrioritySubmissions &&
+                            isImportantPendingBuild(dx, dz, chunkDist)) || ringBoost;
+                    if (importantBuild) {
+                        importantCandidate = candidate;
+                    } else if (normalCandidate == null) {
+                        normalCandidate = candidate;
+                    }
+                    if (importantCandidate != null && normalCandidate != null) {
+                        break;
+                    }
+                    index++;
+                }
+                if (importantCandidate != null || normalCandidate != null) {
+                    break;
+                }
+                if (scanLimit >= sortedBuildList.size()) {
+                    break;
+                }
+                scanLimit = Math.min(scanLimit + 128, sortedBuildList.size());
+            }
+
+            if (importantCandidate == null && normalCandidate == null) {
+                break;
+            }
+
+            final PendingBuildCandidate candidate;
+            final boolean highPriority;
+            if (importantCandidate == null) {
+                candidate = normalCandidate;
+                highPriority = false;
+                remainingPrioritizedBuilds = PRIORITIZED_BUILD_STREAK_LIMIT;
+            } else if (normalCandidate == null) {
+                candidate = importantCandidate;
+                highPriority = true;
+                remainingPrioritizedBuilds = Math.max(0, remainingPrioritizedBuilds - 1);
+            } else if (remainingPrioritizedBuilds <= 0) {
+                candidate = normalCandidate;
+                highPriority = false;
+                remainingPrioritizedBuilds = PRIORITIZED_BUILD_STREAK_LIMIT;
+            } else if (importantCandidate.index <= normalCandidate.index) {
+                candidate = importantCandidate;
+                highPriority = true;
+                remainingPrioritizedBuilds = Math.max(0, remainingPrioritizedBuilds - 1);
+            } else {
+                candidate = normalCandidate;
+                highPriority = false;
+                remainingPrioritizedBuilds = PRIORITIZED_BUILD_STREAK_LIMIT;
+            }
+
+            pendingBuildSet.remove(candidate.key);
+            sortedBuildList.remove(candidate.index);
+            lodRingBoostKeys.remove(candidate.key);
+
+            boolean interactivePriority = highPriority &&
+                    candidate.chunkDist <= INTERACTIVE_PRIORITY_CHUNK_RANGE &&
+                    turnPriorityFrames > 0 &&
+                    chunkMesher.getInteractiveQueueDepth() < MAX_INTERACTIVE_PRIORITY_QUEUE_DEPTH;
+            if (!highPriority && !interactivePriority) {
+                if (backgroundSubmissions >= backgroundSubmissionBudget) {
+                    break;
+                }
+                if (chunkMesher.getPendingCount() >= backgroundInFlightLimit) {
+                    break;
+                }
+            }
+            boolean submitted;
+            if (interactivePriority) {
+                submitted = chunkMesher.buildMeshFromWorldInteractive(
+                        candidate.chunkX, candidate.chunkY, candidate.chunkZ);
+            } else {
+                submitted = chunkMesher.buildMeshFromWorld(candidate.chunkX, candidate.chunkY,
+                        candidate.chunkZ, highPriority);
+            }
+            if (!submitted) {
+                pendingBuildSet.add(candidate.key);
+                sortedListDirty = true;
+                break;
+            }
+            if (built < 5 || MetalRenderConfig.isDeepDebugActive()) {
+                MetalLogger.debug(
+                        "build_queue: chunk=[%d,%d,%d] high=%s int=%s p=%d m=%d",
+                        candidate.chunkX, candidate.chunkY, candidate.chunkZ,
+                        highPriority, interactivePriority,
+                        pendingBuildSet.size(), chunkMesher.getMeshCount());
+            }
+            if (highPriority) {
+                importantSubmitted++;
+            } else {
+                backgroundSubmissions++;
+            }
+            built++;
+        }
+        if (built > 0 && System.currentTimeMillis() - lastQueuePressureLogMs >= 1000) {
+            lastQueuePressureLogMs = System.currentTimeMillis();
+            MetalLogger.info(
+                    "build_pass: built=%d imp=%d bg=%d p=%d cp=%d m=%d bud=%d",
+                    built, importantSubmitted, backgroundSubmissions,
+                    pendingBuildSet.size(), chunkMesher.getPendingCount(),
+                    chunkMesher.getMeshCount(), budgetNanos);
+        }
+        if (lightSkipped > 0 && System.currentTimeMillis() - lastLightWaitLogMs >= 5000) {
+            lastLightWaitLogMs = System.currentTimeMillis();
+            MetalLogger.info("light_wait: %d sections held for skylight data (p=%d)",
+                    lightSkipped, pendingBuildSet.size());
+        }
+        return built;
+    }
+
+    public MetalEntityRenderer getEntityRenderer() {
+        return entityRenderer;
+    }
+
+    public MetalParticleRenderer getParticleRenderer() {
+        return particleRenderer;
+    }
+
+    public CustomChunkMesher getChunkMesher() {
+        return chunkMesher;
+    }
+
+    public int getLastDrawnChunkCount() {
+        return lastDrawnChunkCount;
+    }
+
+    public MetalTextureManager getTextureManager() {
+        return textureManager;
+    }
+
+    private void refreshLodRing(Minecraft mc) {
+        MetalRenderConfig config = MetalRenderClient.getConfig();
+        if (config == null || mc.player == null || !config.enableDistanceLod) {
+            return;
+        }
+        int playerChunkX = mc.player.chunkPosition().x();
+        int playerChunkZ = mc.player.chunkPosition().z();
+        int thermalBias = config.lodThermalAdaptive
+                ? (cachedThermalState >= 3 ? 2 : (cachedThermalState >= 2 ? 1 : 0))
+                : 0;
+        int meshGen = chunkMesher.getMeshUpdateGeneration();
+        boolean moved = playerChunkX != lodRingPlayerCX
+                || playerChunkZ != lodRingPlayerCZ
+                || thermalBias != lodRingThermalBias;
+        boolean fpsPriorityMode = config.prioritizeFpsOverTps;
+        int maxInFlight = currentInFlightBudget();
+        int reserveSlots = fpsPriorityMode ? 0 : RESERVED_PRIORITY_IN_FLIGHT_SLOTS;
+        boolean saturated = chunkMesher.getPendingCount() >= maxInFlight - reserveSlots;
+        if (!moved) {
+            if (!lodRingBacklog && meshGen == lodRingMeshGen) {
+                return;
+            }
+            if (!lodRingBacklog && frameCount - lodRingRunFrame < 3) {
+                return;
+            }
+        }
+        boolean rebuildAllowed = !saturated
+                && pendingBuildSet.size() + chunkMesher.getPendingCount() < CHUNK_BACKLOG_PRESSURE_THRESHOLD;
+        lodRingRunFrame = frameCount;
+        lodRingPlayerCX = playerChunkX;
+        lodRingPlayerCZ = playerChunkZ;
+        lodRingMeshGen = meshGen;
+        lodRingThermalBias = thermalBias;
+        lodRingBacklog = false;
+        lodRingBoostKeys.clear();
+
+        lodPolicy.setEnabled(config.lodVisibilityGate, config.lodViewImpact, config.lodStickyTiers);
+        lodPolicy.beginScan();
+
+        float yaw = mc.player.getYRot();
+        float fwdX = (float) -Math.sin(Math.toRadians(yaw));
+        float fwdZ = (float) Math.cos(Math.toRadians(yaw));
+
+        int radius = Math.max(config.lodMidChunks, config.lodNearChunks) + LOD_RING_MARGIN;
+        int upgradeBudget = LOD_RING_UPGRADES_PER_FRAME;
+        boolean demotionIdle = pendingBuildSet.size() < LOD_REFRESH_PENDING_LIMIT
+                && chunkMesher.getPendingCount() < LOD_REFRESH_IN_FLIGHT_LIMIT;
+        int demotionBudget = demotionIdle ? LOD_RING_DEMOTIONS_PER_FRAME : 0;
+        if (cachedThermalState >= 2) {
+            upgradeBudget = Math.min(upgradeBudget, 1);
+            demotionBudget = Math.min(demotionBudget, 1);
+        }
+
+        double camX = frameCameraX;
+        double camY = frameCameraY;
+        double camZ = frameCameraZ;
+        boolean haveCam = (frameCount > 0) && (camX != 0.0 || camY != 0.0 || camZ != 0.0);
+        if (!haveCam) {
+            camX = mc.player.getX();
+            camY = mc.player.getY();
+            camZ = mc.player.getZ();
+            haveCam = true;
+        }
+
+        java.util.ArrayList<LodCandidate> upgrades = lodUpgradeScratch;
+        java.util.ArrayList<LodCandidate> demotions = lodDemotionScratch;
+        upgrades.clear();
+        demotions.clear();
+        int meshCount = chunkMesher.getMeshSnapshotSize();
+        if (lodRingCursor < 0 || lodRingCursor >= meshCount) {
+            lodRingCursor = 0;
+        }
+        int sliceStart;
+        int slice;
+        if (moved) {
+            sliceStart = 0;
+            slice = meshCount;
+        } else {
+            sliceStart = lodRingCursor;
+            slice = Math.min(meshCount, LOD_RING_SLICE_SIZE);
+        }
+        for (int n = 0; n < slice; n++) {
+            int i = (sliceStart + n) % Math.max(1, meshCount);
+            CustomChunkMesher.ChunkMeshData mesh = chunkMesher.getMeshSnapshotAt(i);
+            if (mesh == null) {
+                continue;
+            }
+            int dx = mesh.chunkX - playerChunkX;
+            int dz = mesh.chunkZ - playerChunkZ;
+            if (dx > radius || dx < -radius || dz > radius || dz < -radius) {
+                continue;
+            }
+            int chunkDist = Math.max(Math.abs(dx), Math.abs(dz));
+            int targetLod = CustomChunkMesher.lodTierForDistance(chunkDist);
+            if (mesh.lodTier == targetLod) {
+                continue;
+            }
+            long key = packChunkKey(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
+            if (pendingBuildSet.contains(key) || chunkMesher.isBuildPending(mesh.chunkX, mesh.chunkY, mesh.chunkZ)) {
+                continue;
+            }
+            float distSq = (float) (dx * dx + dz * dz);
+            float viewScore = lodPolicy.computeViewScore(dx, dz, fwdX, fwdZ, distSq);
+            if (targetLod == 0) {
+                viewScore = 1.0f;
+            }
+            boolean visible = true;
+            if (haveCam) {
+                try {
+                    float ox = (float) (mesh.chunkX * 16.0 - camX);
+                    float oy = (float) (mesh.chunkY * 16.0 - camY);
+                    float oz = (float) (mesh.chunkZ * 16.0 - camZ);
+                    visible = frustumCuller.testBoundingBox(ox, oy, oz, ox + 16.0f, oy + 16.0f, oz + 16.0f);
+                } catch (Exception ignored) {
+                    visible = true;
+                }
+            }
+            LodPolicy.Decision decision;
+            try {
+                decision = lodPolicy.observeAndDecide(key, mesh.lodTier, targetLod, visible, viewScore, demotionIdle);
+            } catch (Exception ignored) {
+                continue;
+            }
+            if (decision == LodPolicy.Decision.UPGRADE) {
+                if (upgrades.size() >= LOD_RING_COLLECT_CAP) {
+                    lodRingBacklog = true;
+                    continue;
+                }
+                float impact;
+                try {
+                    impact = lodPolicy.computeUpgradeImpact(viewScore, distSq, mesh.quadCount);
+                } catch (Exception ignored) {
+                    impact = -distSq;
+                }
+                upgrades.add(new LodCandidate(key, impact, mesh.chunkX, mesh.chunkY, mesh.chunkZ, targetLod));
+            } else if (decision == LodPolicy.Decision.DOWNGRADE) {
+                if (demotions.size() >= LOD_RING_COLLECT_CAP) {
+                    lodRingBacklog = true;
+                    continue;
+                }
+                float impact = distSq * (1.0f - Math.min(1.0f, Math.max(0.0f, viewScore)));
+                demotions.add(new LodCandidate(key, impact, mesh.chunkX, mesh.chunkY, mesh.chunkZ, targetLod));
+            }
+        }
+        if (meshCount > 0) {
+            lodRingCursor = (sliceStart + slice) % meshCount;
+            if (slice < meshCount) {
+                lodRingBacklog = true;
+            }
+        }
+
+        if (!upgrades.isEmpty()) {
+            upgrades.sort((a, b) -> Float.compare(b.impact, a.impact));
+            int queued = 0;
+            boolean editsIdle = urgentEditSet.isEmpty();
+            int fastLaneLeft = editsIdle ? LOD_FAST_LANE_PER_FRAME : 0;
+            for (LodCandidate c : upgrades) {
+                if (pendingBuildSet.contains(c.key) || chunkMesher.isBuildPending(c.chunkX, c.chunkY, c.chunkZ)) {
+                    continue;
+                }
+                if (chunkMesher.tryTierSwap(c.chunkX, c.chunkY, c.chunkZ, c.targetTier)) {
+                    continue;
+                }
+                if (fastLaneLeft > 0
+                        && Math.max(Math.abs(c.chunkX - playerChunkX),
+                                Math.abs(c.chunkZ - playerChunkZ)) <= LOD_FAST_LANE_CHUNK_RANGE) {
+                    chunkMesher.markDirty(c.chunkX, c.chunkY, c.chunkZ);
+                    if (chunkMesher.buildMeshFromWorldInteractive(c.chunkX, c.chunkY, c.chunkZ)) {
+                        fastLaneLeft--;
+                        continue;
+                    }
+                }
+                if (!rebuildAllowed || queued >= upgradeBudget) {
+                    lodRingBacklog = true;
+                    break;
+                }
+                chunkMesher.markDirty(c.chunkX, c.chunkY, c.chunkZ);
+                if (pendingBuildSet.add(c.key)) {
+                    sortedListDirty = true;
+                    if (lodRingBoostKeys.size() > 65536) {
+                        lodRingBoostKeys.clear();
+                    }
+                    lodRingBoostKeys.add(c.key);
+                    queued++;
+                }
+            }
+            if (queued < upgrades.size()) {
+                lodRingBacklog = true;
+            }
+        }
+        if (!demotions.isEmpty()) {
+            demotions.sort((a, b) -> Float.compare(b.impact, a.impact));
+            int queued = 0;
+            for (LodCandidate c : demotions) {
+                if (pendingBuildSet.contains(c.key) || chunkMesher.isBuildPending(c.chunkX, c.chunkY, c.chunkZ)) {
+                    continue;
+                }
+                if (chunkMesher.tryTierSwap(c.chunkX, c.chunkY, c.chunkZ, c.targetTier)) {
+                    continue;
+                }
+                if (!rebuildAllowed || queued >= demotionBudget) {
+                    lodRingBacklog = true;
+                    break;
+                }
+                chunkMesher.markDirty(c.chunkX, c.chunkY, c.chunkZ);
+                if (pendingBuildSet.add(c.key)) {
+                    sortedListDirty = true;
+                    queued++;
+                }
+            }
+            if (queued < demotions.size()) {
+                lodRingBacklog = true;
+            }
+        }
+    }
+
+    private void refreshLodTiers(Minecraft mc) {
+        MetalRenderConfig config = MetalRenderClient.getConfig();
+        if (config == null || mc.player == null) {
+            return;
+        }
+        if (!config.enableDistanceLod) {
+            return;
+        }
+        lodPolicy.setEnabled(config.lodVisibilityGate, config.lodViewImpact, config.lodStickyTiers);
+        lodPolicy.beginScan();
+        int thermalBias = config.lodThermalAdaptive
+                ? (cachedThermalState >= 3 ? 2 : (cachedThermalState >= 2 ? 1 : 0))
+                : 0;
+        CustomChunkMesher.setLodThermalBias(thermalBias);
+        int playerChunkX = mc.player.chunkPosition().x();
+        int playerChunkZ = mc.player.chunkPosition().z();
+        int tiersMeshGen = chunkMesher.getMeshUpdateGeneration();
+
+        if (playerChunkX == lodRefreshPlayerCX && playerChunkZ == lodRefreshPlayerCZ
+                && thermalBias == lodRefreshThermalBias && tiersMeshGen == lodRefreshMeshGen) {
+            return;
+        }
+        lodRefreshPlayerCX = playerChunkX;
+        lodRefreshPlayerCZ = playerChunkZ;
+        lodRefreshThermalBias = thermalBias;
+        lodRefreshMeshGen = tiersMeshGen;
+
+        float yaw = mc.player.getYRot();
+        float fwdX = (float) -Math.sin(Math.toRadians(yaw));
+        float fwdZ = (float) Math.cos(Math.toRadians(yaw));
+
+        int pending = pendingBuildSet.size();
+        int inFlight = chunkMesher.getPendingCount();
+        double ewmaMeshMs = 0.0;
+        try {
+            BuildBudgetEstimator estimator = PerformanceController.getBudgetEstimator();
+            if (estimator != null) {
+                ewmaMeshMs = estimator.getEwmaMeshMs();
+            }
         } catch (Exception ignored) {
-          visible = true;
         }
-      }
-      if (visible) {
-        lodRecencyAgeMap.put(key, currentFrame);
-      } else if (!lodRecencyAgeMap.containsKey(key)) {
-        lodRecencyAgeMap.put(key, currentFrame);
-      }
-    }
+        int upgradeBudget = config.lodThroughputBudget
+                ? lodPolicy.computeUpgradeBudget(pending, inFlight, ewmaMeshMs)
+                : LodPolicy.MAX_UPGRADES_PER_PASS;
+        boolean demotionIdle = pending < LOD_REFRESH_PENDING_LIMIT
+                && inFlight < LOD_REFRESH_IN_FLIGHT_LIMIT;
+        int demotionBudget = demotionIdle ? MAX_LOD_DEMOTIONS_PER_PASS : 0;
 
-    if (lodRecencyAgeMap.size() > LOD_RECENCY_SCRATCH_SIZE * 2) {
-      lodRecencyAgeMap.clear();
-    }
-  }
-
-  private void pruneFarMeshes(Minecraft mc, org.joml.Vector3f camPos) {
-    if (mc.player == null)
-      return;
-    int renderDist = mc.options.renderDistance().get();
-    int extraMarginChunks = shouldPinLoadedMeshes(mc) ? 8 : 2;
-    float maxDist = (renderDist + extraMarginChunks) * 16.0f;
-    float maxDistSq = maxDist * maxDist;
-    var iter = chunkMesher.getAllMeshes().iterator();
-    pruneScratch.clear();
-    while (iter.hasNext()) {
-      CustomChunkMesher.ChunkMeshData mesh = iter.next();
-      float dx = mesh.chunkX * 16.0f + 8.0f - camPos.x;
-      float dz = mesh.chunkZ * 16.0f + 8.0f - camPos.z;
-      if (dx * dx + dz * dz > maxDistSq) {
-        pruneScratch.add(packChunkKey(mesh.chunkX, mesh.chunkY, mesh.chunkZ));
-      }
-    }
-    for (int i = 0; i < pruneScratch.size(); i++) {
-      long prunedKey = pruneScratch.getLong(i);
-      chunkMesher.removeMesh(unpackChunkX(prunedKey), unpackChunkY(prunedKey), unpackChunkZ(prunedKey));
-      occlusionHidden.remove(prunedKey);
-      lodRingBoostKeys.remove(prunedKey);
-    }
-  }
-
-  private void shutdownOcclusionWorker() {
-    occlusionEpoch++;
-    if (occlusionExecutor != null) {
-      occlusionExecutor.shutdownNow();
-      occlusionExecutor = null;
-    }
-    occlusionTaskRunning.set(false);
-    occlusionTaskResult.set(null);
-  }
-
-  private void clearOcclusionState() {
-    occlusionHidden.clear();
-    occlusionVisited.clear();
-    occlusionMeshIndex.clear();
-    sectionVisibilityMap.clear();
-    graphCuller.clearCache();
-    lastOcclusionSubmitKey = Long.MIN_VALUE;
-    lastOcclusionSubmitGen = Integer.MIN_VALUE;
-    lastOcclusionSubmitSearch = -1.0f;
-  }
-
-  private void restoreAllOcclusionHidden() {
-    if (occlusionHidden.isEmpty()) {
-      return;
-    }
-    var it = occlusionHidden.iterator();
-    while (it.hasNext()) {
-      long key = it.nextLong();
-      CustomChunkMesher.ChunkMeshData mesh = chunkMesher.getMesh(
-          unpackChunkX(key), unpackChunkY(key), unpackChunkZ(key));
-      if (mesh != null) {
-        chunkMesher.queueDrawRegistration(mesh);
-      }
-      it.remove();
-    }
-  }
-
-  private static final class OcclusionTaskResult {
-    final long[] visibleKeys;
-    final int wideCount;
-    final int regularCount;
-    final int localCount;
-    final int fallbackCount;
-    final int meshTotal;
-    final long cullNs;
-    final float searchRegular;
-    final float searchLocal;
-    final int camSX;
-    final int camSY;
-    final int camSZ;
-    final int camBX;
-    final int camBY;
-    final int camBZ;
-
-    OcclusionTaskResult(long[] visibleKeys, int wideCount, int regularCount, int localCount,
-        int fallbackCount, int meshTotal, long cullNs, float searchRegular, float searchLocal,
-        int camSX, int camSY, int camSZ, int camBX, int camBY, int camBZ) {
-      this.visibleKeys = visibleKeys;
-      this.wideCount = wideCount;
-      this.regularCount = regularCount;
-      this.localCount = localCount;
-      this.fallbackCount = fallbackCount;
-      this.meshTotal = meshTotal;
-      this.cullNs = cullNs;
-      this.searchRegular = searchRegular;
-      this.searchLocal = searchLocal;
-      this.camSX = camSX;
-      this.camSY = camSY;
-      this.camSZ = camSZ;
-      this.camBX = camBX;
-      this.camBY = camBY;
-      this.camBZ = camBZ;
-    }
-  }
-
-  private void updateOcclusionCulling(Minecraft mc) {
-    if (mc == null || mc.player == null || mc.level == null) {
-      return;
-    }
-    MetalRenderConfig config = MetalRenderClient.getConfig();
-    if (config == null || !config.enableOcclusionCulling) {
-      occlusionTaskResult.set(null);
-      restoreAllOcclusionHidden();
-      return;
-    }
-    double camX = frameCameraX;
-    double camY = frameCameraY;
-    double camZ = frameCameraZ;
-    if (frameCount <= 0 && camX == 0.0 && camY == 0.0 && camZ == 0.0) {
-      camX = mc.player.getX();
-      camY = mc.player.getY();
-      camZ = mc.player.getZ();
-    }
-    int camSX = (int) Math.floor(camX) >> 4;
-    int camSY = (int) Math.floor(camY) >> 4;
-    int camSZ = (int) Math.floor(camZ) >> 4;
-    long camKey = packChunkKey(camSX, camSY, camSZ);
-    int meshGen = chunkMesher.getMeshUpdateGeneration();
-    occlusionMeshIndex.clear();
-    sectionVisibilityMap.clear();
-    int meshTotal = 0;
-    int fallbackVisCount = 0;
-    try {
-      for (CustomChunkMesher.ChunkMeshData m : chunkMesher.getAllMeshes()) {
-        if (m == null) {
-          continue;
+        if (config.lodSkeletonFirst) {
+            int backlog = pending + inFlight;
+            if (backlog >= LodPolicy.SKELETON_BACKLOG_MEDIUM) {
+                upgradeBudget = Math.min(upgradeBudget, 2);
+                demotionBudget = Math.max(demotionBudget, 4);
+            }
+            if (backlog >= LodPolicy.SKELETON_BACKLOG_HEAVY) {
+                upgradeBudget = Math.min(upgradeBudget, 1);
+                demotionBudget = Math.max(demotionBudget, MAX_LOD_DEMOTIONS_PER_PASS);
+            }
         }
-        long key = packChunkKey(m.chunkX, m.chunkY, m.chunkZ);
-        occlusionMeshIndex.put(key, m);
-        long[] vis = m.sectionVisibility;
-        if (vis == null) {
-          vis = new long[] { visibilityFromFaceMask(m.faceOcclusionMask) };
-          fallbackVisCount++;
+        if (cachedThermalState >= 2) {
+            upgradeBudget = Math.min(upgradeBudget, 1);
+            demotionBudget = Math.min(demotionBudget, 1);
         }
-        sectionVisibilityMap.put(key, vis);
-        meshTotal++;
-      }
-    } catch (Exception ignored) {
-      return;
-    }
-    if (meshTotal == 0) {
-      if (MetalRenderConfig.isDeepDebugActive()) {
-        MetalLogger.info("occlusion: no meshes cam=[%d,%d,%d]", camSX, camSY, camSZ);
-      }
-      return;
-    }
-    int minSY = Integer.MIN_VALUE;
-    int maxSY = Integer.MAX_VALUE;
-    try {
-      minSY = mc.level.getMinSectionY();
-      maxSY = mc.level.getMaxSectionY();
-    } catch (Exception ignored) {
-      minSY = -4;
-      maxSY = 20;
-    }
-    int renderDist = 32;
-    try {
-      renderDist = mc.options.renderDistance().get();
-    } catch (Exception ignored) {
-    }
-    float searchRegular = (float) (renderDist * 16);
-    float searchLocal = (float) (renderDist * 16);
-    try {
-      float fogEnd = fogRenderEnd;
-      if (fogEnd > 0.0f && fogEnd < searchRegular) {
-        searchLocal = fogEnd;
-      }
-    } catch (Exception ignored) {
-    }
-    CustomChunkMesher.ChunkMeshData camMesh = occlusionMeshIndex.get(camKey);
-    if (camMesh != null && (camMesh.faceOcclusionMask & 0x3F) == 0x3F) {
-      restoreAllOcclusionHidden();
-      lastOcclusionSubmitKey = camKey;
-      lastOcclusionSubmitGen = meshGen;
-      lastOcclusionSubmitSearch = searchRegular;
-      MetalLogger.info("occlusion: camera inside sealed section meshes=%d cam=[%d,%d,%d]",
-          meshTotal, camSX, camSY, camSZ);
-      return;
-    }
-    OcclusionTaskResult done = occlusionTaskResult.getAndSet(null);
-    if (done != null) {
-      applyOcclusionResult(done);
-    }
-    boolean occlusionInputsChanged = camKey != lastOcclusionSubmitKey || meshGen != lastOcclusionSubmitGen || searchRegular != lastOcclusionSubmitSearch;
-    if (occlusionInputsChanged && !occlusionTaskRunning.get()) {
-      submitOcclusionTask(camX, camY, camZ, camSX, camSY, camSZ, camKey, meshGen, searchRegular, searchLocal, minSY, maxSY, meshTotal, fallbackVisCount);
-    }
-  }
+        upgradeBudget = Math.min(upgradeBudget, MAX_LOD_REFRESH_SUBMITS_PER_PASS);
+        int meshCount = chunkMesher.getMeshSnapshotSize();
+        if (meshCount == 0) {
+            lodRefreshCursor = 0;
+            return;
+        }
 
-  private void submitOcclusionTask(double camX, double camY, double camZ, int camSX, int camSY, int camSZ, long camKey, int meshGen, float searchRegular, float searchLocal, int minSY, int maxSY, int meshTotal, int fallbackVisCount) {
-    if (!occlusionTaskRunning.compareAndSet(false, true)) {
-      return;
-    }
-    it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<long[]> taskMap = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>(sectionVisibilityMap);
-    FrustumCuller frustumCopy = new FrustumCuller();
-    try {
-      frustumCopy.copyFrom(this.frustumCuller);
-    } catch (Exception ignored) {
-    }
-    if (occlusionExecutor == null || occlusionExecutor.isShutdown()) {
-      occlusionExecutor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
-        Thread t = new Thread(r, "MetalRender-Occlusion");
-        t.setDaemon(true);
-        t.setPriority(Thread.NORM_PRIORITY - 1);
-        return t;
-      });
-    }
-    lastOcclusionSubmitKey = camKey;
-    lastOcclusionSubmitGen = meshGen;
-    lastOcclusionSubmitSearch = searchRegular;
-    final int epochAtSubmit = occlusionEpoch;
-    final double fCamX = camX;
-    final double fCamY = camY;
-    final double fCamZ = camZ;
-    occlusionExecutor.execute(() -> runOcclusionTask(taskMap, frustumCopy, fCamX, fCamY, fCamZ, camSX, camSY, camSZ, searchRegular, searchLocal, minSY, maxSY, meshTotal, fallbackVisCount, epochAtSubmit));
-  }
+        java.util.ArrayList<LodCandidate> upgrades = lodUpgradeScratch;
+        java.util.ArrayList<LodCandidate> demotions = lodDemotionScratch;
+        upgrades.clear();
+        demotions.clear();
 
-  private void runOcclusionTask(it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<long[]> taskMap, FrustumCuller frustum, double camX, double camY, double camZ, int camSX, int camSY, int camSZ, float searchRegular, float searchLocal, int minSY, int maxSY, int meshTotal, int fallbackVisCount, int epochAtSubmit) {
-    long cullStartNs = System.nanoTime();
-    try {
-      it.unimi.dsi.fastutil.longs.LongOpenHashSet wideSet = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
-      it.unimi.dsi.fastutil.longs.LongOpenHashSet regularSet = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
-      it.unimi.dsi.fastutil.longs.LongOpenHashSet localSet = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
-      final double fCamX = camX;
-      final double fCamY = camY;
-      final double fCamZ = camZ;
-      final FrustumCuller frustumForCull = frustum;
-      com.pebbles_boon.metalrender.culling.SectionOcclusionCuller.GraphOcclusionVisitor wideV = (node, inFrustum) -> {
-        wideSet.add(packChunkKey(node.chunkX, node.chunkY, node.chunkZ));
-      };
-      com.pebbles_boon.metalrender.culling.SectionOcclusionCuller.GraphOcclusionVisitor regularV = (node, inFrustum) -> {
-        regularSet.add(packChunkKey(node.chunkX, node.chunkY, node.chunkZ));
-      };
-      com.pebbles_boon.metalrender.culling.SectionOcclusionCuller.VisibilityTestingVisitor localV = new com.pebbles_boon.metalrender.culling.SectionOcclusionCuller.VisibilityTestingVisitor() {
-        @Override
-        public boolean visitTestVisible(com.pebbles_boon.metalrender.culling.SectionOcclusionCuller.Node section) {
-          float minX = (float) (section.getOriginX() - fCamX);
-          float minY = (float) (section.getOriginY() - fCamY);
-          float minZ = (float) (section.getOriginZ() - fCamZ);
-          boolean vis = frustumForCull.testBoundingBox(minX, minY, minZ, minX + 16.0f, minY + 16.0f, minZ + 16.0f);
-          if (vis) {
-            localSet.add(packChunkKey(section.chunkX, section.chunkY, section.chunkZ));
-          }
-          return vis;
+        int inspected = 0;
+        int scanLimit = Math.min(meshCount, MAX_LOD_SCAN_PER_PASS);
+        double camX = frameCameraX;
+        double camY = frameCameraY;
+        double camZ = frameCameraZ;
+        boolean haveCam = (frameCount > 0) && (camX != 0.0 || camY != 0.0 || camZ != 0.0);
+        if (mc.player != null && !haveCam) {
+            camX = mc.player.getX();
+            camY = mc.player.getY();
+            camZ = mc.player.getZ();
+            haveCam = true;
         }
-        @Override
-        public void visit(com.pebbles_boon.metalrender.culling.SectionOcclusionCuller.Node visit, boolean inFrustum) {
-          if (inFrustum) {
-            localSet.add(packChunkKey(visit.chunkX, visit.chunkY, visit.chunkZ));
-          }
-        }
-      };
-      graphCuller.syncNodes(taskMap);
-      graphCuller.findVisible(wideV, regularV, localV, frustumForCull, fCamX, fCamY, fCamZ, taskMap, searchRegular, searchLocal, true, minSY, maxSY);
-      graphCuller.pruneFarNodes(camSX, camSY, camSZ, searchRegular + 128.0f);
-      int wideCount = wideSet.size();
-      int regularCount = regularSet.size();
-      int localCount = localSet.size();
-      wideSet.addAll(regularSet);
-      it.unimi.dsi.fastutil.longs.LongArrayList visibleKeys = new it.unimi.dsi.fastutil.longs.LongArrayList(wideSet.size());
-      var unionIt = wideSet.iterator();
-      while (unionIt.hasNext()) {
-        long k = unionIt.nextLong();
-        if (taskMap.containsKey(k)) {
-          visibleKeys.add(k);
-        }
-      }
-      long cullElapsedNs = System.nanoTime() - cullStartNs;
-      int camBX = (int) Math.floor(camX);
-      int camBY = (int) Math.floor(camY);
-      int camBZ = (int) Math.floor(camZ);
-      OcclusionTaskResult res = new OcclusionTaskResult(visibleKeys.toLongArray(), wideCount, regularCount, localCount, fallbackVisCount, meshTotal, cullElapsedNs, searchRegular, searchLocal, camSX, camSY, camSZ, camBX, camBY, camBZ);
-      if (epochAtSubmit == occlusionEpoch) {
-        occlusionTaskResult.set(res);
-      }
-    } catch (Exception ignored) {
-    } finally {
-      occlusionTaskRunning.set(false);
-    }
-  }
+        while (inspected < scanLimit) {
+            if (lodRefreshCursor >= meshCount) {
+                lodRefreshCursor = 0;
+            }
+            CustomChunkMesher.ChunkMeshData mesh = chunkMesher.getMeshSnapshotAt(lodRefreshCursor++);
+            inspected++;
+            if (mesh == null) {
+                continue;
+            }
+            int dx = mesh.chunkX - playerChunkX;
+            int dz = mesh.chunkZ - playerChunkZ;
+            int chunkDist = Math.max(Math.abs(dx), Math.abs(dz));
+            int targetLod = CustomChunkMesher.lodTierForDistance(chunkDist);
+            if (mesh.lodTier == targetLod) {
+                continue;
+            }
+            long key = packChunkKey(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
+            if (pendingBuildSet.contains(key) || chunkMesher.isBuildPending(mesh.chunkX, mesh.chunkY, mesh.chunkZ)) {
+                continue;
+            }
+            float distSq = (float) (dx * dx + dz * dz);
+            float viewScore = lodPolicy.computeViewScore(dx, dz, fwdX, fwdZ, distSq);
+            if (targetLod == 0) {
+                viewScore = 1.0f;
+            }
+            boolean visible = true;
+            if (haveCam) {
+                try {
+                    float ox = (float) (mesh.chunkX * 16.0 - camX);
+                    float oy = (float) (mesh.chunkY * 16.0 - camY);
+                    float oz = (float) (mesh.chunkZ * 16.0 - camZ);
+                    visible = frustumCuller.testBoundingBox(ox, oy, oz, ox + 16.0f, oy + 16.0f, oz + 16.0f);
+                } catch (Exception ignored) {
+                    visible = true;
+                }
+            }
+            LodPolicy.Decision decision;
+            try {
+                decision = lodPolicy.observeAndDecide(key, mesh.lodTier, targetLod, visible, viewScore, demotionIdle);
+            } catch (Exception ignored) {
+                continue;
+            }
+            if (decision == LodPolicy.Decision.UPGRADE) {
+                if (upgrades.size() >= MAX_LOD_REFRESH_SUBMITS_PER_PASS * 2) {
+                    continue;
+                }
+                float impact;
+                try {
+                    impact = lodPolicy.computeUpgradeImpact(viewScore, distSq, mesh.quadCount);
+                } catch (Exception ignored) {
+                    impact = -distSq;
+                }
+                upgrades.add(new LodCandidate(key, impact, mesh.chunkX, mesh.chunkY, mesh.chunkZ, targetLod));
+            } else if (decision == LodPolicy.Decision.DOWNGRADE) {
+                if (demotions.size() >= MAX_LOD_DEMOTIONS_PER_PASS * 2) {
+                    continue;
+                }
 
-  private void applyOcclusionResult(OcclusionTaskResult res) {
-    occlusionVisited.clear();
-    for (long k : res.visibleKeys) {
-      if (occlusionMeshIndex.containsKey(k)) {
-        occlusionVisited.add(k);
-      }
-    }
-    if (!occlusionHidden.isEmpty()) {
-      var hit = occlusionHidden.iterator();
-      while (hit.hasNext()) {
-        if (!occlusionMeshIndex.containsKey(hit.nextLong())) {
-          hit.remove();
+                float impact = distSq * (1.0f - Math.min(1.0f, Math.max(0.0f, viewScore)));
+                demotions.add(new LodCandidate(key, impact, mesh.chunkX, mesh.chunkY, mesh.chunkZ, targetLod));
+            }
         }
-      }
+
+        if (!upgrades.isEmpty()) {
+            upgrades.sort((a, b) -> Float.compare(b.impact, a.impact));
+            int queued = 0;
+            for (LodCandidate c : upgrades) {
+                if (pendingBuildSet.contains(c.key) || chunkMesher.isBuildPending(c.chunkX, c.chunkY, c.chunkZ)) {
+                    continue;
+                }
+                if (chunkMesher.tryTierSwap(c.chunkX, c.chunkY, c.chunkZ, c.targetTier)) {
+                    continue;
+                }
+                if (queued >= upgradeBudget) {
+                    break;
+                }
+                chunkMesher.markDirty(c.chunkX, c.chunkY, c.chunkZ);
+                if (pendingBuildSet.add(c.key)) {
+                    sortedListDirty = true;
+                    queued++;
+                }
+            }
+        }
+        if (!demotions.isEmpty()) {
+            demotions.sort((a, b) -> Float.compare(b.impact, a.impact));
+            int queued = 0;
+            for (LodCandidate c : demotions) {
+                if (pendingBuildSet.contains(c.key) || chunkMesher.isBuildPending(c.chunkX, c.chunkY, c.chunkZ)) {
+                    continue;
+                }
+                if (chunkMesher.tryTierSwap(c.chunkX, c.chunkY, c.chunkZ, c.targetTier)) {
+                    continue;
+                }
+                if (queued >= demotionBudget) {
+                    break;
+                }
+                chunkMesher.markDirty(c.chunkX, c.chunkY, c.chunkZ);
+                if (pendingBuildSet.add(c.key)) {
+                    sortedListDirty = true;
+                    queued++;
+                }
+            }
+        }
     }
-    int unregistered = 0;
-    int reregistered = 0;
-    int faceSkippedMeshes = 0;
-    var entryIter = occlusionMeshIndex.long2ObjectEntrySet().fastIterator();
-    while (entryIter.hasNext()) {
-      var entry = entryIter.next();
-      long key = entry.getLongKey();
-      CustomChunkMesher.ChunkMeshData mesh = entry.getValue();
-      boolean visible = occlusionVisited.contains(key);
-      boolean hidden = occlusionHidden.contains(key);
-      int dirMask = com.pebbles_boon.metalrender.culling.CameraFaceCuller.getVisibleFacesDirectionMask(res.camBX, res.camBY, res.camBZ, mesh.chunkX, mesh.chunkY, mesh.chunkZ);
-      int geomMask = 0;
-      int[] facingCounts = mesh.facingQuadCounts;
-      if (facingCounts != null) {
+
+    private void updateLodRecencyEviction(Minecraft mc) {
+
+        if (mc == null || mc.player == null) {
+            return;
+        }
+        MetalRenderConfig config = MetalRenderClient.getConfig();
+        if (config == null || !config.lodRecencyEviction) {
+            if (!lodRecencyAgeMap.isEmpty()) {
+                lodRecencyAgeMap.clear();
+            }
+            return;
+        }
+        if (++lodRecencyPullCounter < LOD_RECENCY_PULL_INTERVAL) {
+            return;
+        }
+        lodRecencyPullCounter = 0;
+        int snapshotSize = chunkMesher.getMeshSnapshotSize();
+        if (snapshotSize == 0) {
+            return;
+        }
+        double camX = frameCameraX;
+        double camY = frameCameraY;
+        double camZ = frameCameraZ;
+        boolean haveCam = (frameCount > 0) && (camX != 0.0 || camY != 0.0 || camZ != 0.0);
+        if (!haveCam) {
+            camX = mc.player.getX();
+            camY = mc.player.getY();
+            camZ = mc.player.getZ();
+            haveCam = true;
+        }
+        int count = Math.min(snapshotSize, lodRecencyKeys.length);
+        int currentFrame = frameCount;
+        for (int i = 0; i < count; i++) {
+            CustomChunkMesher.ChunkMeshData mesh = chunkMesher.getMeshSnapshotAt(i);
+            if (mesh == null) {
+                continue;
+            }
+            long key = packChunkKey(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
+            boolean visible = true;
+            if (haveCam) {
+                try {
+                    float ox = (float) (mesh.chunkX * 16.0 - camX);
+                    float oy = (float) (mesh.chunkY * 16.0 - camY);
+                    float oz = (float) (mesh.chunkZ * 16.0 - camZ);
+                    visible = frustumCuller.testBoundingBox(ox, oy, oz, ox + 16.0f, oy + 16.0f, oz + 16.0f);
+                } catch (Exception ignored) {
+                    visible = true;
+                }
+            }
+            if (visible) {
+                lodRecencyAgeMap.put(key, currentFrame);
+            } else if (!lodRecencyAgeMap.containsKey(key)) {
+                lodRecencyAgeMap.put(key, currentFrame);
+            }
+        }
+
+        if (lodRecencyAgeMap.size() > LOD_RECENCY_SCRATCH_SIZE * 2) {
+            lodRecencyAgeMap.clear();
+        }
+    }
+
+    private void pruneFarMeshes(Minecraft mc, org.joml.Vector3f camPos) {
+        if (mc.player == null)
+            return;
+        int renderDist = mc.options.renderDistance().get();
+        int extraMarginChunks = shouldPinLoadedMeshes(mc) ? 8 : 2;
+        float maxDist = (renderDist + extraMarginChunks) * 16.0f;
+        float maxDistSq = maxDist * maxDist;
+        var iter = chunkMesher.getAllMeshes().iterator();
+        pruneScratch.clear();
+        while (iter.hasNext()) {
+            CustomChunkMesher.ChunkMeshData mesh = iter.next();
+            float dx = mesh.chunkX * 16.0f + 8.0f - camPos.x;
+            float dz = mesh.chunkZ * 16.0f + 8.0f - camPos.z;
+            if (dx * dx + dz * dz > maxDistSq) {
+                pruneScratch.add(packChunkKey(mesh.chunkX, mesh.chunkY, mesh.chunkZ));
+            }
+        }
+        for (int i = 0; i < pruneScratch.size(); i++) {
+            long prunedKey = pruneScratch.getLong(i);
+            chunkMesher.removeMesh(unpackChunkX(prunedKey), unpackChunkY(prunedKey), unpackChunkZ(prunedKey));
+            occlusionHidden.remove(prunedKey);
+            occlusionHiddenMesh.remove(prunedKey);
+            faceHiddenSections.remove(prunedKey);
+            lastAppliedVisible.remove(prunedKey);
+            lodRingBoostKeys.remove(prunedKey);
+        }
+    }
+
+    private void shutdownOcclusionWorker() {
+        occlusionEpoch++;
+        if (occlusionExecutor != null) {
+            occlusionExecutor.shutdownNow();
+            occlusionExecutor = null;
+        }
+        occlusionTaskRunning.set(false);
+        occlusionTaskResult.set(null);
+    }
+
+    private void clearOcclusionState() {
+        occlusionHidden.clear();
+        occlusionVisited.clear();
+        occlusionMeshIndex.clear();
+        sectionVisibilityMap.clear();
+        faceHiddenSections.clear();
+        lastAppliedVisible.clear();
+        appliedVisibleScratch.clear();
+        appliedVisibleValid = false;
+        occlusionHiddenMesh.clear();
+        occlusionSnapshotMap = null;
+        lastOcclusionIndexGen = Integer.MIN_VALUE;
+        lastFallbackVisCount = 0;
+        graphCuller.clearCache();
+        lastOcclusionSubmitKey = Long.MIN_VALUE;
+        lastOcclusionSubmitGen = Integer.MIN_VALUE;
+        lastOcclusionSubmitSearch = -1.0f;
+        lastOcclusionSubmitYawQ = Integer.MIN_VALUE;
+        lastOcclusionSubmitPitchQ = Integer.MIN_VALUE;
+        lastOcclusionSubmitBX = Integer.MIN_VALUE;
+        lastOcclusionSubmitBY = Integer.MIN_VALUE;
+        lastOcclusionSubmitBZ = Integer.MIN_VALUE;
+    }
+
+    private void restoreAllOcclusionHidden() {
+        if (occlusionHidden.isEmpty()) {
+            faceHiddenSections.clear();
+            lastAppliedVisible.clear();
+            appliedVisibleValid = false;
+            occlusionHiddenMesh.clear();
+            return;
+        }
+        var it = occlusionHidden.iterator();
+        while (it.hasNext()) {
+            long key = it.nextLong();
+            CustomChunkMesher.ChunkMeshData mesh = chunkMesher.getMesh(
+                    unpackChunkX(key), unpackChunkY(key), unpackChunkZ(key));
+            if (mesh != null) {
+                chunkMesher.queueDrawRegistration(mesh);
+            }
+            it.remove();
+        }
+        faceHiddenSections.clear();
+        lastAppliedVisible.clear();
+        appliedVisibleValid = false;
+        occlusionHiddenMesh.clear();
+    }
+
+    private static final class OcclusionTaskResult {
+        final long[] visibleKeys;
+        final int wideCount;
+        final int regularCount;
+        final int localCount;
+        final int fallbackCount;
+        final int meshTotal;
+        final long cullNs;
+        final float searchRegular;
+        final float searchLocal;
+        final int camSX;
+        final int camSY;
+        final int camSZ;
+        final int camBX;
+        final int camBY;
+        final int camBZ;
+
+        OcclusionTaskResult(long[] visibleKeys, int wideCount, int regularCount, int localCount,
+                int fallbackCount, int meshTotal, long cullNs, float searchRegular, float searchLocal,
+                int camSX, int camSY, int camSZ, int camBX, int camBY, int camBZ) {
+            this.visibleKeys = visibleKeys;
+            this.wideCount = wideCount;
+            this.regularCount = regularCount;
+            this.localCount = localCount;
+            this.fallbackCount = fallbackCount;
+            this.meshTotal = meshTotal;
+            this.cullNs = cullNs;
+            this.searchRegular = searchRegular;
+            this.searchLocal = searchLocal;
+            this.camSX = camSX;
+            this.camSY = camSY;
+            this.camSZ = camSZ;
+            this.camBX = camBX;
+            this.camBY = camBY;
+            this.camBZ = camBZ;
+        }
+    }
+
+    private void updateOcclusionCulling(Minecraft mc) {
+        if (mc == null || mc.player == null || mc.level == null) {
+            return;
+        }
+        MetalRenderConfig config = MetalRenderClient.getConfig();
+        if (config == null || !config.enableOcclusionCulling) {
+            occlusionTaskResult.set(null);
+            restoreAllOcclusionHidden();
+            return;
+        }
+        double camX = frameCameraX;
+        double camY = frameCameraY;
+        double camZ = frameCameraZ;
+        if (frameCount <= 0 && camX == 0.0 && camY == 0.0 && camZ == 0.0) {
+            camX = mc.player.getX();
+            camY = mc.player.getY();
+            camZ = mc.player.getZ();
+        }
+        int camSX = (int) Math.floor(camX) >> 4;
+        int camSY = (int) Math.floor(camY) >> 4;
+        int camSZ = (int) Math.floor(camZ) >> 4;
+        long camKey = packChunkKey(camSX, camSY, camSZ);
+        int meshGen = chunkMesher.getMeshUpdateGeneration();
+        int meshTotal;
+        int fallbackVisCount;
+        if (meshGen != lastOcclusionIndexGen) {
+            occlusionMeshIndex.clear();
+            sectionVisibilityMap.clear();
+            meshTotal = 0;
+            fallbackVisCount = 0;
+            try {
+                for (CustomChunkMesher.ChunkMeshData m : chunkMesher.getAllMeshes()) {
+                    if (m == null) {
+                        continue;
+                    }
+                    long key = packChunkKey(m.chunkX, m.chunkY, m.chunkZ);
+                    occlusionMeshIndex.put(key, m);
+                    long[] vis = m.sectionVisibility;
+                    if (vis == null) {
+                        vis = new long[] { visibilityFromFaceMask(m.faceOcclusionMask) };
+                        fallbackVisCount++;
+                    }
+                    sectionVisibilityMap.put(key, vis);
+                    meshTotal++;
+                }
+            } catch (Exception ignored) {
+                return;
+            }
+            lastOcclusionIndexGen = meshGen;
+            lastFallbackVisCount = fallbackVisCount;
+            occlusionSnapshotMap = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>(sectionVisibilityMap);
+            rehideResurrectedMeshes();
+        } else {
+            meshTotal = occlusionMeshIndex.size();
+            fallbackVisCount = lastFallbackVisCount;
+        }
+        if (meshTotal == 0) {
+            if (MetalRenderConfig.isDeepDebugActive()) {
+                MetalLogger.info("occlusion: no meshes cam=[%d,%d,%d]", camSX, camSY, camSZ);
+            }
+            return;
+        }
+        revalidateFaceHidden(camX, camY, camZ);
+        int minSY = Integer.MIN_VALUE;
+        int maxSY = Integer.MAX_VALUE;
+        try {
+            minSY = mc.level.getMinSectionY();
+            maxSY = mc.level.getMaxSectionY();
+        } catch (Exception ignored) {
+            minSY = -4;
+            maxSY = 20;
+        }
+        int renderDist = 32;
+        try {
+            renderDist = mc.options.renderDistance().get();
+        } catch (Exception ignored) {
+        }
+        float searchRegular = (float) (renderDist * 16);
+        float searchLocal = (float) (renderDist * 16);
+        try {
+            float fogEnd = fogRenderEnd;
+            if (fogEnd > 0.0f && fogEnd < searchRegular) {
+                searchLocal = fogEnd;
+            }
+        } catch (Exception ignored) {
+        }
+        CustomChunkMesher.ChunkMeshData camMesh = occlusionMeshIndex.get(camKey);
+        int yawQ = 0;
+        int pitchQ = 0;
+        try {
+            yawQ = (int) Math.floor(mc.player.getYRot() / 4.0f);
+            pitchQ = (int) Math.floor(mc.player.getXRot() / 4.0f);
+        } catch (Exception ignored) {
+        }
+        int camBX = (int) Math.floor(camX);
+        int camBY = (int) Math.floor(camY);
+        int camBZ = (int) Math.floor(camZ);
+        if (camMesh != null && (camMesh.faceOcclusionMask & 0x3F) == 0x3F) {
+            restoreAllOcclusionHidden();
+            lastOcclusionSubmitKey = camKey;
+            lastOcclusionSubmitGen = meshGen;
+            lastOcclusionSubmitSearch = searchRegular;
+            lastOcclusionSubmitYawQ = yawQ;
+            lastOcclusionSubmitPitchQ = pitchQ;
+            lastOcclusionSubmitBX = camBX;
+            lastOcclusionSubmitBY = camBY;
+            lastOcclusionSubmitBZ = camBZ;
+            MetalLogger.info("occlusion: camera inside sealed section meshes=%d cam=[%d,%d,%d]",
+                    meshTotal, camSX, camSY, camSZ);
+            return;
+        }
+        OcclusionTaskResult done = occlusionTaskResult.getAndSet(null);
+        if (done != null) {
+            applyOcclusionResult(done);
+        }
+        boolean occlusionInputsChanged = camKey != lastOcclusionSubmitKey || meshGen != lastOcclusionSubmitGen
+                || searchRegular != lastOcclusionSubmitSearch
+                || yawQ != lastOcclusionSubmitYawQ || pitchQ != lastOcclusionSubmitPitchQ
+                || Math.abs(camBX - lastOcclusionSubmitBX) >= OCCLUSION_POS_QUANTUM_BLOCKS
+                || Math.abs(camBY - lastOcclusionSubmitBY) >= OCCLUSION_POS_QUANTUM_BLOCKS
+                || Math.abs(camBZ - lastOcclusionSubmitBZ) >= OCCLUSION_POS_QUANTUM_BLOCKS;
+        if (occlusionInputsChanged && !occlusionTaskRunning.get() && occlusionSnapshotMap != null) {
+            submitOcclusionTask(camX, camY, camZ, camSX, camSY, camSZ, camKey, meshGen, searchRegular, searchLocal,
+                    minSY,
+                    maxSY, meshTotal, fallbackVisCount, yawQ, pitchQ, camBX, camBY, camBZ, occlusionSnapshotMap);
+        }
+    }
+
+    private void submitOcclusionTask(double camX, double camY, double camZ, int camSX, int camSY, int camSZ,
+            long camKey,
+            int meshGen, float searchRegular, float searchLocal, int minSY, int maxSY, int meshTotal,
+            int fallbackVisCount,
+            int yawQ, int pitchQ, int camBX, int camBY, int camBZ,
+            it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<long[]> taskMap) {
+        if (!occlusionTaskRunning.compareAndSet(false, true)) {
+            return;
+        }
+        lastOcclusionSubmitKey = camKey;
+        lastOcclusionSubmitGen = meshGen;
+        lastOcclusionSubmitSearch = searchRegular;
+        lastOcclusionSubmitYawQ = yawQ;
+        lastOcclusionSubmitPitchQ = pitchQ;
+        lastOcclusionSubmitBX = camBX;
+        lastOcclusionSubmitBY = camBY;
+        lastOcclusionSubmitBZ = camBZ;
+        FrustumCuller frustumCopy = new FrustumCuller();
+        try {
+            frustumCopy.copyFrom(this.frustumCuller);
+        } catch (Exception ignored) {
+        }
+        if (occlusionExecutor == null || occlusionExecutor.isShutdown()) {
+            occlusionExecutor = java.util.concurrent.Executors.newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "MetalRender-Occlusion");
+                t.setDaemon(true);
+                t.setPriority(Thread.NORM_PRIORITY - 1);
+                return t;
+            });
+        }
+        lastOcclusionSubmitPitchQ = pitchQ;
+        final int epochAtSubmit = occlusionEpoch;
+        final double fCamX = camX;
+        final double fCamY = camY;
+        final double fCamZ = camZ;
+        occlusionExecutor.execute(() -> runOcclusionTask(taskMap, frustumCopy, fCamX, fCamY, fCamZ, camSX, camSY, camSZ,
+                searchRegular, searchLocal, minSY, maxSY, meshTotal, fallbackVisCount, epochAtSubmit));
+    }
+
+    private void runOcclusionTask(it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<long[]> taskMap,
+            FrustumCuller frustum, double camX, double camY, double camZ, int camSX, int camSY, int camSZ,
+            float searchRegular, float searchLocal, int minSY, int maxSY, int meshTotal, int fallbackVisCount,
+            int epochAtSubmit) {
+        long cullStartNs = System.nanoTime();
+        try {
+            it.unimi.dsi.fastutil.longs.LongOpenHashSet wideSet = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+            it.unimi.dsi.fastutil.longs.LongOpenHashSet regularSet = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+            it.unimi.dsi.fastutil.longs.LongOpenHashSet localSet = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+            final double fCamX = camX;
+            final double fCamY = camY;
+            final double fCamZ = camZ;
+            final FrustumCuller frustumForCull = frustum;
+            com.pebbles_boon.metalrender.culling.SectionOcclusionCuller.GraphOcclusionVisitor wideV = (node,
+                    inFrustum) -> {
+                wideSet.add(packChunkKey(node.chunkX, node.chunkY, node.chunkZ));
+            };
+            com.pebbles_boon.metalrender.culling.SectionOcclusionCuller.GraphOcclusionVisitor regularV = (node,
+                    inFrustum) -> {
+                regularSet.add(packChunkKey(node.chunkX, node.chunkY, node.chunkZ));
+            };
+            com.pebbles_boon.metalrender.culling.SectionOcclusionCuller.VisibilityTestingVisitor localV = new com.pebbles_boon.metalrender.culling.SectionOcclusionCuller.VisibilityTestingVisitor() {
+                @Override
+                public boolean visitTestVisible(
+                        com.pebbles_boon.metalrender.culling.SectionOcclusionCuller.Node section) {
+                    float minX = (float) (section.getOriginX() - fCamX);
+                    float minY = (float) (section.getOriginY() - fCamY);
+                    float minZ = (float) (section.getOriginZ() - fCamZ);
+                    boolean vis = frustumForCull.testBoundingBox(minX, minY, minZ, minX + 16.0f, minY + 16.0f,
+                            minZ + 16.0f);
+                    if (vis) {
+                        localSet.add(packChunkKey(section.chunkX, section.chunkY, section.chunkZ));
+                    }
+                    return vis;
+                }
+
+                @Override
+                public void visit(com.pebbles_boon.metalrender.culling.SectionOcclusionCuller.Node visit,
+                        boolean inFrustum) {
+                    if (inFrustum) {
+                        localSet.add(packChunkKey(visit.chunkX, visit.chunkY, visit.chunkZ));
+                    }
+                }
+            };
+            graphCuller.syncNodes(taskMap);
+            graphCuller.findVisible(wideV, regularV, localV, frustumForCull, fCamX, fCamY, fCamZ, taskMap,
+                    searchRegular,
+                    searchLocal, true, minSY, maxSY);
+            graphCuller.pruneFarNodes(camSX, camSY, camSZ, searchRegular + 128.0f);
+            int wideCount = wideSet.size();
+            int regularCount = regularSet.size();
+            int localCount = localSet.size();
+            wideSet.addAll(regularSet);
+            it.unimi.dsi.fastutil.longs.LongArrayList visibleKeys = new it.unimi.dsi.fastutil.longs.LongArrayList(
+                    wideSet.size());
+            var unionIt = wideSet.iterator();
+            while (unionIt.hasNext()) {
+                long k = unionIt.nextLong();
+                if (taskMap.containsKey(k)) {
+                    visibleKeys.add(k);
+                }
+            }
+            long cullElapsedNs = System.nanoTime() - cullStartNs;
+            int camBX = (int) Math.floor(camX);
+            int camBY = (int) Math.floor(camY);
+            int camBZ = (int) Math.floor(camZ);
+            OcclusionTaskResult res = new OcclusionTaskResult(visibleKeys.toLongArray(), wideCount, regularCount,
+                    localCount,
+                    fallbackVisCount, meshTotal, cullElapsedNs, searchRegular, searchLocal, camSX, camSY, camSZ, camBX,
+                    camBY,
+                    camBZ);
+            if (epochAtSubmit == occlusionEpoch) {
+                occlusionTaskResult.set(res);
+            }
+        } catch (Exception ignored) {
+        } finally {
+            occlusionTaskRunning.set(false);
+        }
+    }
+
+    private void applyOcclusionResult(OcclusionTaskResult res) {
+        occlusionVisited.clear();
+        appliedVisibleScratch.clear();
+        for (long k : res.visibleKeys) {
+            if (occlusionMeshIndex.containsKey(k)) {
+                occlusionVisited.add(k);
+                appliedVisibleScratch.add(k);
+            }
+        }
+        if (!occlusionHidden.isEmpty()) {
+            var hit = occlusionHidden.iterator();
+            while (hit.hasNext()) {
+                long hk = hit.nextLong();
+                if (!occlusionMeshIndex.containsKey(hk)) {
+                    hit.remove();
+                    faceHiddenSections.remove(hk);
+                    lastAppliedVisible.remove(hk);
+                    occlusionHiddenMesh.remove(hk);
+                }
+            }
+        }
+        int unregistered = 0;
+        int reregistered = 0;
+        int faceHiddenNow = 0;
+        if (!appliedVisibleValid) {
+            var entryIter = occlusionMeshIndex.long2ObjectEntrySet().fastIterator();
+            while (entryIter.hasNext()) {
+                var entry = entryIter.next();
+                long key = entry.getLongKey();
+                if (appliedVisibleScratch.contains(key) || occlusionHidden.contains(key)) {
+                    continue;
+                }
+                CustomChunkMesher.ChunkMeshData mesh = entry.getValue();
+                if (mesh == null) {
+                    continue;
+                }
+                try {
+                    NativeBridge.nUnregisterChunkMesh(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
+                } catch (Exception ignored) {
+                }
+                occlusionHidden.add(key);
+                occlusionHiddenMesh.put(key, mesh);
+                unregistered++;
+            }
+            var firstShowIt = appliedVisibleScratch.iterator();
+            while (firstShowIt.hasNext()) {
+                long key = firstShowIt.nextLong();
+                if (occlusionHidden.contains(key)) {
+                    continue;
+                }
+                CustomChunkMesher.ChunkMeshData mesh = occlusionMeshIndex.get(key);
+                if (mesh == null) {
+                    continue;
+                }
+                if (isMeshBackFacing(res.camBX, res.camBY, res.camBZ, mesh)) {
+                    try {
+                        NativeBridge.nUnregisterChunkMesh(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
+                    } catch (Exception ignored) {
+                    }
+                    occlusionHidden.add(key);
+                    occlusionHiddenMesh.put(key, mesh);
+                    faceHiddenSections.add(key);
+                    faceHiddenNow++;
+                    unregistered++;
+                }
+            }
+            appliedVisibleValid = true; // hide and seek maybe :>
+        } else {
+            var goneIt = lastAppliedVisible.iterator();
+            while (goneIt.hasNext()) {
+                long key = goneIt.nextLong();
+                if (appliedVisibleScratch.contains(key)) {
+                    continue;
+                }
+                CustomChunkMesher.ChunkMeshData mesh = occlusionMeshIndex.get(key);
+                if (mesh == null) {
+                    continue;
+                }
+                if (!occlusionHidden.contains(key)) {
+                    try {
+                        NativeBridge.nUnregisterChunkMesh(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
+                    } catch (Exception ignored) {
+                    }
+                    occlusionHidden.add(key);
+                    occlusionHiddenMesh.put(key, mesh);
+                    unregistered++;
+                }
+            }
+        }
+        var showIt = appliedVisibleScratch.iterator();
+        while (showIt.hasNext()) {
+            long key = showIt.nextLong();
+            boolean wasApplied = lastAppliedVisible.contains(key);
+            boolean hidden = occlusionHidden.contains(key);
+            if (wasApplied && !hidden) {
+                continue;
+            }
+            CustomChunkMesher.ChunkMeshData mesh = occlusionMeshIndex.get(key);
+            if (mesh == null) {
+                continue;
+            }
+            if (isMeshBackFacing(res.camBX, res.camBY, res.camBZ, mesh)) {
+                if (!hidden) {
+                    try {
+                        NativeBridge.nUnregisterChunkMesh(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
+                    } catch (Exception ignored) {
+                    }
+                    occlusionHidden.add(key);
+                    occlusionHiddenMesh.put(key, mesh);
+                    unregistered++;
+                }
+                faceHiddenSections.add(key);
+                faceHiddenNow++;
+                continue;
+            }
+            if (hidden) {
+                chunkMesher.queueDrawRegistration(mesh);
+                occlusionHidden.remove(key);
+                occlusionHiddenMesh.remove(key);
+                faceHiddenSections.remove(key);
+                reregistered++;
+            }
+        }
+        lastAppliedVisible.clear();
+        lastAppliedVisible.addAll(appliedVisibleScratch);
+        if ((unregistered + reregistered) > 0 || MetalRenderConfig.isDeepDebugActive()) {
+            MetalLogger.info(
+                    "occlusion: hidden=%d (+%d -%d) visited=%d/%d meshes=%d wide=%d regular=%d local=%d fallback=%d facehidden=%d cullms=%.2f search=%.0f/%.0f cam=[%d,%d,%d] async",
+                    occlusionHidden.size(), unregistered, reregistered,
+                    occlusionVisited.size(), res.wideCount + res.regularCount, res.meshTotal,
+                    res.wideCount, res.regularCount, res.localCount,
+                    res.fallbackCount, faceHiddenNow, res.cullNs / 1000000.0,
+                    res.searchRegular, res.searchLocal, res.camSX, res.camSY, res.camSZ);
+        }
+    }
+
+    private static boolean isMeshBackFacing(int camBX, int camBY, int camBZ,
+            CustomChunkMesher.ChunkMeshData mesh) {
+        int[] facingCounts = mesh.facingQuadCounts;
+        if (facingCounts == null) {
+            return false;
+        }
+        int geomMask = 0;
+        int opaqueSum = 0;
         for (int fi = 0; fi < 7 && fi < facingCounts.length; fi++) {
-          if (facingCounts[fi] > 0) {
-            geomMask |= 1 << fi;
-          }
+            int c = facingCounts[fi];
+            if (c > 0) {
+                geomMask |= 1 << fi;
+                opaqueSum += c;
+            }
         }
-      }
-      if ((dirMask & geomMask) == 0) {
-        faceSkippedMeshes++;
-      }
-      if (!visible && !hidden) {
+        if (opaqueSum <= 0 || mesh.quadCount > opaqueSum) {
+            return false;
+        }
+        int dirMask = com.pebbles_boon.metalrender.culling.CameraFaceCuller.getVisibleFacesDirectionMask(
+                camBX, camBY, camBZ, mesh.chunkX, mesh.chunkY, mesh.chunkZ);
+        return (dirMask & geomMask) == 0;
+    }
+
+    private void rehideResurrectedMeshes() {
+        if (occlusionHidden.isEmpty()) {
+            return;
+        }
+        var it = occlusionHidden.iterator();
+        while (it.hasNext()) {
+            long key = it.nextLong();
+            CustomChunkMesher.ChunkMeshData mesh = occlusionMeshIndex.get(key);
+            if (mesh == null) {
+                it.remove();
+                faceHiddenSections.remove(key);
+                lastAppliedVisible.remove(key);
+                occlusionHiddenMesh.remove(key);
+                continue;
+            }
+            if (occlusionHiddenMesh.get(key) != mesh) {
+                try {
+                    NativeBridge.nUnregisterChunkMesh(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
+                } catch (Exception ignored) {
+                }
+                occlusionHiddenMesh.put(key, mesh);
+            }
+        }
+    }
+
+    private void revalidateFaceHidden(double camX, double camY, double camZ) {
+        if (faceHiddenSections.isEmpty()) {
+            return;
+        }
+        int camBX = (int) Math.floor(camX);
+        int camBY = (int) Math.floor(camY);
+        int camBZ = (int) Math.floor(camZ);
+        var it = faceHiddenSections.iterator();
+        while (it.hasNext()) {
+            long key = it.nextLong();
+            CustomChunkMesher.ChunkMeshData mesh = occlusionMeshIndex.get(key);
+            if (mesh == null) {
+                it.remove();
+                occlusionHidden.remove(key);
+                occlusionHiddenMesh.remove(key);
+                lastAppliedVisible.remove(key);
+                continue;
+            }
+            if (!isMeshBackFacing(camBX, camBY, camBZ, mesh)) {
+                chunkMesher.queueDrawRegistration(mesh);
+                it.remove();
+                occlusionHidden.remove(key);
+                occlusionHiddenMesh.remove(key);
+            }
+        }
+    }
+
+    private static long visibilityFromFaceMask(byte mask) {
+        int m = mask & 0x3F;
+        if (m == 0x3F) {
+            return 0L;
+        }
+        if (m == 0) {
+            return 0xFFFFFFFFFFFFL;
+        }
+        long v = 0L;
+        for (int from = 0; from < 6; from++) {
+            if ((m & (1 << from)) != 0) {
+                continue;
+            }
+            for (int to = 0; to < 6; to++) {
+                if ((m & (1 << to)) != 0) {
+                    continue;
+                }
+                v |= 1L << com.pebbles_boon.metalrender.culling.VisibilityEncoding.bit(from, to);
+            }
+        }
+        return v;
+    }
+
+    public static boolean shouldBlitAt(String timingPoint) {
+        return "flip_head".equals(timingPoint) || "before_hand".equals(timingPoint);
+    }
+
+    private boolean shouldPinLoadedMeshes(Minecraft mc) {
+        return mc != null &&
+                mc.options.renderDistance().get() >= PINNED_RENDER_DISTANCE;
+    }
+
+    public static String getBlitTimingMode() {
+        return "flip_head";
+    }
+
+    public void forceBlitNow() {
+        if (shouldSuspendBlitForScreenshot()) {
+            return;
+        }
+        MetalRenderer renderer = MetalRenderClient.getRenderer();
+        if (renderer == null || !renderer.isAvailable())
+            return;
+        long handle = renderer.getHandle();
+        if (handle == 0)
+            return;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc != null && mc.getMainRenderTarget() != null) {
+            CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
+            try (RenderPass pass = encoder.createRenderPass(
+                    () -> "metalrender_terrain_blit",
+                    mc.getMainRenderTarget().getColorTextureView(),
+                    java.util.OptionalInt.empty())) {
+                ioSurfaceBlitter.blit(handle);
+            }
+        } else {
+            ioSurfaceBlitter.blit(handle);
+        }
+    }
+
+    private boolean shouldSuspendBlitForScreenshot() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.options == null || mc.options.keyScreenshot == null) {
+            return false;
+        }
+        if (mc.options.keyScreenshot.isDown()) {
+            screenshotBlitCooldownFrames = 4;
+            return true;
+        }
+        if (screenshotBlitCooldownFrames > 0) {
+            screenshotBlitCooldownFrames--;
+            return true;
+        }
+        return false;
+    }
+
+    public void forceBlitDepthNow(int width, int height) {
+        MetalRenderer renderer = MetalRenderClient.getRenderer();
+        if (renderer == null || !renderer.isAvailable())
+            return;
+        long handle = renderer.getHandle();
+        if (handle == 0)
+            return;
+        ioSurfaceBlitter.blitDepth(handle, width, height);
+    }
+
+    public boolean uploadDepthDirect(int mcDepthTexId, int width, int height) {
+        MetalRenderer renderer = MetalRenderClient.getRenderer();
+        if (renderer == null || !renderer.isAvailable())
+            return false;
+        long handle = renderer.getHandle();
+        if (handle == 0)
+            return false;
+        return ioSurfaceBlitter.uploadDepthDirect(handle, mcDepthTexId, width,
+                height);
+    }
+
+    public boolean blitDepthViaFBO(int mcDepthTexId, int mcFboId, int width,
+            int height) {
+        MetalRenderer renderer = MetalRenderClient.getRenderer();
+        if (renderer == null || !renderer.isAvailable())
+            return false;
+        long handle = renderer.getHandle();
+        if (handle == 0)
+            return false;
+        return ioSurfaceBlitter.blitDepthViaFBO(handle, mcDepthTexId, mcFboId,
+                width, height);
+    }
+
+    public boolean isReady() {
+        return worldLoaded && renderingActive;
+    }
+
+    public void applyFeatureConfig(MetalRenderConfig config) {
+        if (config == null) {
+            return;
+        }
+        gpuDrivenEnabled = false;
+        cullingOrcreator.setActive(config.enableClusterFrustumCulling);
+        cullingOrcreator.setCpuFallbackEnabled(config.enableClusterFrustumCulling);
+        translucencySorter.setActive(config.enableGpuTranslucencySort);
+        boolean requestArgumentBuffers = config.enableArgumentBuffers || config.enableIndirectCommandBuffers;
+        if (NativeBridge.isLibLoaded()) {
+            NativeBridge.nSetFeatureFlags(
+                    config.enableIndirectCommandBuffers, config.enableMeshShaders,
+                    requestArgumentBuffers, config.enableProgrammableBlending);
+            NativeBridge.nSetCameraFacingCulling(config.enableCameraFacingCulling);
+            gpuDrivenEnabled = NativeBridge.nIsGPUDrivenActive();
+            MetalLogger.info(
+                    "runtime_features: mesh=%s gpu=%s arg=%s",
+                    NativeBridge.nAreMeshShadersActive(), gpuDrivenEnabled,
+                    NativeBridge.nAreArgumentBuffersActive());
+        }
+    }
+
+    public void onConfigScreenClosed() {
+        if (!worldLoaded || !renderingActive) {
+            return;
+        }
+        chunkMesher.clearAllMeshes();
+        clearOcclusionState();
+        vanillaAOTracked = false;
+        lodRingPlayerCX = Integer.MIN_VALUE;
+        lodRingPlayerCZ = Integer.MIN_VALUE;
+        lodRingMeshGen = Integer.MIN_VALUE;
+        lodRingThermalBias = Integer.MIN_VALUE;
+        lodRingCursor = 0;
+        lodRingBacklog = false;
+        lodRingBoostKeys.clear();
+        lodRefreshCursor = 0;
+        lodRefreshPlayerCX = Integer.MIN_VALUE;
+        lodRefreshPlayerCZ = Integer.MIN_VALUE;
+        lodRefreshThermalBias = Integer.MIN_VALUE;
+        lodRefreshMeshGen = Integer.MIN_VALUE;
+        pendingBuildSet.clear();
+        sortedBuildList.clear();
+        urgentEditSet.clear();
+        sortedListDirty = true;
+        scanFrameCounter = 0;
+        scanFrontierRing = 0;
+        lastScanPlayerCX = Integer.MIN_VALUE;
+        lastScanPlayerCZ = Integer.MIN_VALUE;
+        lastScanRenderDist = -1;
+        Minecraft mc = Minecraft.getInstance();
+        if (mc != null && mc.player != null && mc.level != null) {
+            int playerChunkX = mc.player.chunkPosition().x();
+            int playerChunkZ = mc.player.chunkPosition().z();
+            int playerSectionY = mc.player.getBlockY() >> 4;
+            int renderDist = mc.options.renderDistance().get();
+            scanRingsInRange(mc.level, playerChunkX, playerChunkZ, playerSectionY, 0,
+                    renderDist);
+        }
+    }
+
+    public void onChunkLoaded(int chunkX, int chunkZ, LevelChunk chunk) {
+        if (!worldLoaded || !renderingActive) {
+            if (!loggedChunkLoadDropNotReady) {
+                loggedChunkLoadDropNotReady = true;
+                MetalLogger.warn(
+                        "chunk load drop [%d,%d] (loaded=%s active=%s)",
+                        chunkX, chunkZ, worldLoaded, renderingActive);
+            }
+            return;
+        }
+        loggedChunkLoadDropNotReady = false;
+        boolean highPriorityChunk = shouldPrioritizeLoadedChunk(chunkX, chunkZ);
+        Minecraft mc = Minecraft.getInstance();
+        int playerChunkX = mc != null && mc.player != null
+                ? mc.player.chunkPosition().x()
+                : Integer.MIN_VALUE;
+        int playerChunkZ = mc != null && mc.player != null
+                ? mc.player.chunkPosition().z()
+                : Integer.MIN_VALUE;
+        int loadedChunkDistance = mc != null && mc.player != null
+                ? Math.max(Math.abs(chunkX - playerChunkX),
+                        Math.abs(chunkZ - playerChunkZ))
+                : Integer.MAX_VALUE;
+        boolean immediateBuildChunk = loadedChunkDistance <= IMMEDIATE_LOADED_CHUNK_BUILD_RANGE;
+        int playerSectionY = mc != null && mc.player != null
+                ? mc.player.getBlockY() >> 4
+                : Integer.MIN_VALUE;
+        LevelChunkSection[] sections = chunk.getSections();
+        int nonAirSections = 0;
+        for (int sy = 0; sy < sections.length; sy++) {
+            LevelChunkSection section = sections[sy];
+            if (section == null || section.hasOnlyAir())
+                continue;
+            nonAirSections++;
+            int worldY = chunk.getSectionYFromSectionIndex(sy);
+            chunkMesher.noteSectionAvailable(chunkX, worldY, chunkZ);
+            boolean highPrioritySection = highPriorityChunk
+                    && Math.abs(worldY - playerSectionY) <= HIGH_PRIORITY_LOADED_VERTICAL_RANGE;
+            if (highPrioritySection && immediateBuildChunk && mc != null &&
+                    mc.level != null &&
+                    isSectionBuildReady(mc.level, chunkX, worldY, chunkZ) &&
+                    isSectionLightReady(mc.level, chunkX, worldY, chunkZ) &&
+                    !chunkMesher.hasMesh(chunkX, worldY, chunkZ)) {
+                if (!chunkMesher.buildMeshFromWorld(chunkX, worldY, chunkZ, false, true)) {
+                    enqueueSectionBuild(chunkX, worldY, chunkZ);
+                }
+            } else {
+                enqueueSectionBuild(chunkX, worldY, chunkZ);
+            }
+            refreshLoadedHorizontalNeighbor(chunkX, worldY, chunkZ, chunkX - 1, chunkZ);
+            refreshLoadedHorizontalNeighbor(chunkX, worldY, chunkZ, chunkX + 1, chunkZ);
+            refreshLoadedNeighborSection(chunkX, worldY - 1, chunkZ);
+            refreshLoadedNeighborSection(chunkX, worldY + 1, chunkZ);
+            refreshLoadedHorizontalNeighbor(chunkX, worldY, chunkZ, chunkX, chunkZ - 1);
+            refreshLoadedHorizontalNeighbor(chunkX, worldY, chunkZ, chunkX, chunkZ + 1);
+        }
+        if (MetalRenderConfig.isDeepDebugActive()) {
+            MetalLogger.info(
+                    "chunk_load: c=[%d,%d] sec=%d air=%d d=%d imm=%s pri=%s p=%d cp=%d",
+                    chunkX, chunkZ, sections.length, nonAirSections, loadedChunkDistance,
+                    immediateBuildChunk, highPriorityChunk, pendingBuildSet.size(),
+                    chunkMesher.getPendingCount());
+        }
+        requeueNeighboursNowReady(mc, chunkX - 1, chunkZ);
+        requeueNeighboursNowReady(mc, chunkX + 1, chunkZ);
+        requeueNeighboursNowReady(mc, chunkX, chunkZ - 1);
+        requeueNeighboursNowReady(mc, chunkX, chunkZ + 1);
+    }
+
+    private void requeueNeighboursNowReady(Minecraft mc, int chunkX, int chunkZ) {
+        if (mc == null || mc.level == null || mc.player == null) {
+            return;
+        }
+        LevelChunk chunk = mc.level.getChunkSource().getChunkNow(chunkX, chunkZ);
+        if (chunk == null) {
+            return;
+        }
+        LevelChunkSection[] sections = chunk.getSections();
+        int queued = 0;
+        for (int sy = 0; sy < sections.length; sy++) {
+            LevelChunkSection section = sections[sy];
+            if (section == null || section.hasOnlyAir()) {
+                continue;
+            }
+            MetalRenderProfiler.getInstance().incrementChunksScanned(1);
+            int worldY = chunk.getSectionYFromSectionIndex(sy);
+            if (!chunkMesher.hasMesh(chunkX, worldY, chunkZ) &&
+                    isSectionBuildReady(mc.level, chunkX, worldY, chunkZ) &&
+                    isSectionLightReady(mc.level, chunkX, worldY, chunkZ)) {
+                chunkMesher.noteSectionAvailable(chunkX, worldY, chunkZ);
+                if (pendingBuildSet.add(packChunkKey(chunkX, worldY, chunkZ))) {
+                    sortedListDirty = true;
+                    queued++;
+                }
+            }
+        }
+        if (queued > 0 || MetalRenderConfig.isDeepDebugActive()) {
+            MetalLogger.debug("requeue_ready: nb=[%d,%d] q=%d p=%d",
+                    chunkX, chunkZ, queued, pendingBuildSet.size());
+        }
+    }
+
+    private boolean shouldPrioritizeLoadedChunk(int chunkX, int chunkZ) {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.player == null)
+            return false;
+        int playerChunkX = mc.player.chunkPosition().x();
+        int playerChunkZ = mc.player.chunkPosition().z();
+        int dx = chunkX - playerChunkX;
+        int dz = chunkZ - playerChunkZ;
+        int chunkDistance = Math.max(Math.abs(dx), Math.abs(dz));
+        if (chunkDistance <= HOT_LOAD_REBUILD_RANGE) {
+            return true;
+        }
+        if (turnPriorityFrames <= 0 ||
+                chunkDistance > TURN_PRIORITY_LOADED_CHUNK_RANGE) {
+            return false;
+        }
+        return isInForwardPriorityCone(dx, dz);
+    }
+
+    private boolean isInForwardPriorityCone(int dx, int dz) {
+        float forwardDot = dx * cachedForwardX + dz * cachedForwardZ;
+        if (forwardDot <= 0.0f) {
+            return false;
+        }
+        float distSq = (dx * dx) + (dz * dz);
+        float minForwardDotSq = TURN_PRIORITY_SCAN_COS_THRESHOLD * TURN_PRIORITY_SCAN_COS_THRESHOLD;
+        return forwardDot * forwardDot >= distSq * minForwardDotSq;
+    }
+
+    private boolean isImportantPendingBuild(int dx, int dz, int chunkDist) {
+        if (chunkDist <= IMPORTANT_REBUILD_CHUNK_RANGE) {
+            return true;
+        }
+        return turnPriorityFrames > 0 &&
+                chunkDist <= TURN_PRIORITY_LOADED_CHUNK_RANGE &&
+                isInForwardPriorityCone(dx, dz);
+    }
+
+    private boolean isSectionBuildReady(ClientLevel world, int chunkX, int chunkY,
+            int chunkZ) {
+        long pKey = readinessColumnKey(chunkX, chunkZ);
+        if (readinessCache.containsKey(pKey)) {
+            return readinessCache.get(pKey);
+        }
+        var source = world.getChunkSource();
+        if (source.getChunkNow(chunkX, chunkZ) == null) {
+            readinessCache.put(pKey, false);
+            return false;
+        }
+        readinessCache.put(pKey, true);
+        return true;
+    }
+
+    private boolean isSectionLightReady(ClientLevel world, int chunkX, int chunkY,
+            int chunkZ) {
+        long key = packChunkKey(chunkX, chunkY, chunkZ);
+        if (lightReadinessCache.containsKey(key)) {
+            return lightReadinessCache.get(key);
+        }
+        boolean ready = isSectionLightReadyUncached(world, chunkX, chunkY, chunkZ);
+        lightReadinessCache.put(key, ready);
+        return ready;
+    }
+
+    private boolean isSectionLightReadyUncached(ClientLevel world, int chunkX,
+            int chunkY, int chunkZ) {
         try {
-          NativeBridge.nUnregisterChunkMesh(mesh.chunkX, mesh.chunkY, mesh.chunkZ);
+            if (!world.dimensionType().hasSkyLight()) {
+                return true;
+            }
+            var skyListener = world.getChunkSource().getLightEngine()
+                    .getLayerListener(LightLayer.SKY);
+            if (skyListener == null) {
+                return true;
+            }
+            if (skyListener.getDataLayerData(SectionPos.of(chunkX, chunkY, chunkZ)) != null) {
+                return true;
+            }
+        } catch (Exception ignored) {
+            return true;
+        }
+        long firstSeen = chunkMesher.getSectionAvailableNanos(chunkX, chunkY, chunkZ);
+        return firstSeen == 0L || System.nanoTime() - firstSeen >= LIGHT_GRACE_NANOS;
+    }
+
+    public void onLightDataApplied(int chunkX, int chunkY, int chunkZ) {
+        onLightDataApplied(chunkX, chunkY, chunkZ, false, false, 0L);
+    }
+
+    public void onLightDataApplied(int chunkX, int chunkY, int chunkZ,
+            boolean skyLayer, boolean hasData, long incomingHash) {
+        if (!worldLoaded || !renderingActive) {
+            return;
+        }
+        try {
+            if (!RenderSystem.isOnRenderThread()) {
+                return;
+            }
+        } catch (Exception ignored) {
+            return;
+        }
+        try {
+            if (!chunkMesher.hasMeshIgnoreDirty(chunkX, chunkY, chunkZ)
+                    && !chunkMesher.isBuildPending(chunkX, chunkY, chunkZ)) {
+                return;
+            }
+            if (chunkMesher.shouldRebuildForLight(chunkX, chunkY, chunkZ, skyLayer,
+                    incomingHash, hasData)) {
+                chunkMesher.contentChanged(chunkX, chunkY, chunkZ);
+                enqueueSectionBuild(chunkX, chunkY, chunkZ);
+            }
         } catch (Exception ignored) {
         }
-        occlusionHidden.add(key);
-        unregistered++;
-      } else if (visible && hidden) {
-        chunkMesher.queueDrawRegistration(mesh);
-        occlusionHidden.remove(key);
-        reregistered++;
-      }
     }
-    if ((unregistered + reregistered) > 0 || MetalRenderConfig.isDeepDebugActive()) {
-      MetalLogger.info("occlusion: hidden=%d (+%d -%d) visited=%d/%d meshes=%d wide=%d regular=%d local=%d fallback=%d faceskipped=%d cullms=%.2f search=%.0f/%.0f cam=[%d,%d,%d] async",
-          occlusionHidden.size(), unregistered, reregistered,
-          occlusionVisited.size(), res.wideCount + res.regularCount, res.meshTotal,
-          res.wideCount, res.regularCount, res.localCount,
-          res.fallbackCount, faceSkippedMeshes, res.cullNs / 1000000.0,
-          res.searchRegular, res.searchLocal, res.camSX, res.camSY, res.camSZ);
+
+    private static long readinessColumnKey(int chunkX, int chunkZ) {
+        return ((long) chunkX << 32) | (chunkZ & 0xFFFFFFFFL);
     }
-  }
-  private static long visibilityFromFaceMask(byte mask) {
-    int m = mask & 0x3F;
-    if (m == 0x3F) {
-      return 0L;
-    }
-    if (m == 0) {
-      return 0xFFFFFFFFFFFFL;
-    }
-    long v = 0L;
-    for (int from = 0; from < 6; from++) {
-      if ((m & (1 << from)) != 0) {
-        continue;
-      }
-      for (int to = 0; to < 6; to++) {
-        if ((m & (1 << to)) != 0) {
-          continue;
+
+    private void updateTextureBackoffState() {
+        BuildBudgetEstimator estimator = PerformanceController.getBudgetEstimator();
+        double meshMs = estimator != null ? estimator.getEwmaMeshMs() : 0.0;
+        if (meshMs > TEXTURE_BACKOFF_HARD_TRIP_MESH_MS) {
+            textureBackoffActive = true;
+            consecutiveHighMeshMsFrames = TEXTURE_BACKOFF_TRIP_CONSEC;
+            consecutiveCoolMeshMsFrames = 0;
+            return;
         }
-        v |= 1L << com.pebbles_boon.metalrender.culling.VisibilityEncoding.bit(from, to);
-      }
-    }
-    return v;
-  }
-
-  public static boolean shouldBlitAt(String timingPoint) {
-    return "flip_head".equals(timingPoint) || "before_hand".equals(timingPoint);
-  }
-
-  private boolean shouldPinLoadedMeshes(Minecraft mc) {
-    return mc != null &&
-        mc.options.renderDistance().get() >= PINNED_RENDER_DISTANCE;
-  }
-
-  public static String getBlitTimingMode() {
-    return "flip_head";
-  }
-
-  public void forceBlitNow() {
-    if (shouldSuspendBlitForScreenshot()) {
-      return;
-    }
-    MetalRenderer renderer = MetalRenderClient.getRenderer();
-    if (renderer == null || !renderer.isAvailable())
-      return;
-    long handle = renderer.getHandle();
-    if (handle == 0)
-      return;
-    Minecraft mc = Minecraft.getInstance();
-    if (mc != null && mc.getMainRenderTarget() != null) {
-      CommandEncoder encoder = RenderSystem.getDevice().createCommandEncoder();
-      try (RenderPass pass = encoder.createRenderPass(
-          () -> "metalrender_terrain_blit",
-          mc.getMainRenderTarget().getColorTextureView(),
-          java.util.OptionalInt.empty())) {
-        ioSurfaceBlitter.blit(handle);
-      }
-    } else {
-      ioSurfaceBlitter.blit(handle);
-    }
-  }
-
-  private boolean shouldSuspendBlitForScreenshot() {
-    Minecraft mc = Minecraft.getInstance();
-    if (mc == null || mc.options == null || mc.options.keyScreenshot == null) {
-      return false;
-    }
-    if (mc.options.keyScreenshot.isDown()) {
-      screenshotBlitCooldownFrames = 4;
-      return true;
-    }
-    if (screenshotBlitCooldownFrames > 0) {
-      screenshotBlitCooldownFrames--;
-      return true;
-    }
-    return false;
-  }
-
-  public void forceBlitDepthNow(int width, int height) {
-    MetalRenderer renderer = MetalRenderClient.getRenderer();
-    if (renderer == null || !renderer.isAvailable())
-      return;
-    long handle = renderer.getHandle();
-    if (handle == 0)
-      return;
-    ioSurfaceBlitter.blitDepth(handle, width, height);
-  }
-
-  public boolean uploadDepthDirect(int mcDepthTexId, int width, int height) {
-    MetalRenderer renderer = MetalRenderClient.getRenderer();
-    if (renderer == null || !renderer.isAvailable())
-      return false;
-    long handle = renderer.getHandle();
-    if (handle == 0)
-      return false;
-    return ioSurfaceBlitter.uploadDepthDirect(handle, mcDepthTexId, width,
-        height);
-  }
-
-  public boolean blitDepthViaFBO(int mcDepthTexId, int mcFboId, int width,
-      int height) {
-    MetalRenderer renderer = MetalRenderClient.getRenderer();
-    if (renderer == null || !renderer.isAvailable())
-      return false;
-    long handle = renderer.getHandle();
-    if (handle == 0)
-      return false;
-    return ioSurfaceBlitter.blitDepthViaFBO(handle, mcDepthTexId, mcFboId,
-        width, height);
-  }
-
-  public boolean isReady() {
-    return worldLoaded && renderingActive;
-  }
-
-  public void applyFeatureConfig(MetalRenderConfig config) {
-    if (config == null) {
-      return;
-    }
-    gpuDrivenEnabled = false;
-    cullingOrcreator.setActive(config.enableClusterFrustumCulling);
-    cullingOrcreator.setCpuFallbackEnabled(config.enableClusterFrustumCulling);
-    translucencySorter.setActive(config.enableGpuTranslucencySort);
-    boolean requestArgumentBuffers = config.enableArgumentBuffers || config.enableIndirectCommandBuffers;
-    if (NativeBridge.isLibLoaded()) {
-      NativeBridge.nSetFeatureFlags(
-          config.enableIndirectCommandBuffers, config.enableMeshShaders,
-          requestArgumentBuffers, config.enableProgrammableBlending);
-      NativeBridge.nSetCameraFacingCulling(config.enableCameraFacingCulling);
-      gpuDrivenEnabled = NativeBridge.nIsGPUDrivenActive();
-      MetalLogger.info(
-          "runtime_features: mesh=%s gpu=%s arg=%s",
-          NativeBridge.nAreMeshShadersActive(), gpuDrivenEnabled,
-          NativeBridge.nAreArgumentBuffersActive());
-    }
-  }
-
-  public void onConfigScreenClosed() {
-    if (!worldLoaded || !renderingActive) {
-      return;
-    }
-    chunkMesher.clearAllMeshes();
-    clearOcclusionState();
-    vanillaAOTracked = false;
-    lodRingPlayerCX = Integer.MIN_VALUE;
-    lodRingPlayerCZ = Integer.MIN_VALUE;
-    lodRingMeshGen = Integer.MIN_VALUE;
-    lodRingThermalBias = Integer.MIN_VALUE;
-    lodRingCursor = 0;
-    lodRingBacklog = false;
-    lodRingBoostKeys.clear();
-    pendingBuildSet.clear();
-    sortedBuildList.clear();
-    sortedListDirty = true;
-    scanFrameCounter = 0;
-    scanFrontierRing = 0;
-    lastScanPlayerCX = Integer.MIN_VALUE;
-    lastScanPlayerCZ = Integer.MIN_VALUE;
-    lastScanRenderDist = -1;
-    Minecraft mc = Minecraft.getInstance();
-    if (mc != null && mc.player != null && mc.level != null) {
-      int playerChunkX = mc.player.chunkPosition().x();
-      int playerChunkZ = mc.player.chunkPosition().z();
-      int playerSectionY = mc.player.getBlockY() >> 4;
-      int renderDist = mc.options.renderDistance().get();
-      scanRingsInRange(mc.level, playerChunkX, playerChunkZ, playerSectionY, 0,
-          renderDist);
-    }
-  }
-
-  public void onChunkLoaded(int chunkX, int chunkZ, LevelChunk chunk) {
-    if (!worldLoaded || !renderingActive) {
-      if (!loggedChunkLoadDropNotReady) {
-        loggedChunkLoadDropNotReady = true;
-        MetalLogger.warn(
-            "chunk load drop [%d,%d] (loaded=%s active=%s)",
-            chunkX, chunkZ, worldLoaded, renderingActive);
-      }
-      return;
-    }
-    loggedChunkLoadDropNotReady = false;
-    boolean highPriorityChunk = shouldPrioritizeLoadedChunk(chunkX, chunkZ);
-    Minecraft mc = Minecraft.getInstance();
-    int playerChunkX = mc != null && mc.player != null
-        ? mc.player.chunkPosition().x()
-        : Integer.MIN_VALUE;
-    int playerChunkZ = mc != null && mc.player != null
-        ? mc.player.chunkPosition().z()
-        : Integer.MIN_VALUE;
-    int loadedChunkDistance = mc != null && mc.player != null
-        ? Math.max(Math.abs(chunkX - playerChunkX),
-            Math.abs(chunkZ - playerChunkZ))
-        : Integer.MAX_VALUE;
-    boolean immediateBuildChunk = loadedChunkDistance <= IMMEDIATE_LOADED_CHUNK_BUILD_RANGE;
-    int playerSectionY = mc != null && mc.player != null
-        ? mc.player.getBlockY() >> 4
-        : Integer.MIN_VALUE;
-    LevelChunkSection[] sections = chunk.getSections();
-    int nonAirSections = 0;
-    for (int sy = 0; sy < sections.length; sy++) {
-      LevelChunkSection section = sections[sy];
-      if (section == null || section.hasOnlyAir())
-        continue;
-      nonAirSections++;
-      int worldY = chunk.getSectionYFromSectionIndex(sy);
-      chunkMesher.noteSectionAvailable(chunkX, worldY, chunkZ);
-      boolean highPrioritySection = highPriorityChunk
-          && Math.abs(worldY - playerSectionY) <= HIGH_PRIORITY_LOADED_VERTICAL_RANGE;
-      if (highPrioritySection && immediateBuildChunk && mc != null &&
-          mc.level != null &&
-          isSectionBuildReady(mc.level, chunkX, worldY, chunkZ) &&
-          isSectionLightReady(mc.level, chunkX, worldY, chunkZ) &&
-          !chunkMesher.hasMesh(chunkX, worldY, chunkZ)) {
-        if (!chunkMesher.buildMeshFromWorld(chunkX, worldY, chunkZ, false, true)) {
-          enqueueSectionBuild(chunkX, worldY, chunkZ);
+        if (meshMs > TEXTURE_BACKOFF_TRIP_MESH_MS) {
+            consecutiveHighMeshMsFrames++;
+            consecutiveCoolMeshMsFrames = 0;
+            if (consecutiveHighMeshMsFrames >= TEXTURE_BACKOFF_TRIP_CONSEC) {
+                textureBackoffActive = true;
+            }
+        } else if (meshMs < TEXTURE_BACKOFF_RECOVERY_MESH_MS) {
+            consecutiveCoolMeshMsFrames++;
+            consecutiveHighMeshMsFrames = 0;
+            if (consecutiveCoolMeshMsFrames >= TEXTURE_BACKOFF_RECOVER_CONSEC) {
+                textureBackoffActive = false;
+            }
+        } else {
+            consecutiveHighMeshMsFrames = 0;
+            consecutiveCoolMeshMsFrames = 0;
         }
-      } else {
+    }
+
+    private void enqueueSectionBuild(int chunkX, int worldY, int chunkZ) {
+        if (!chunkMesher.hasMesh(chunkX, worldY, chunkZ)) {
+            if (pendingBuildSet.add(packChunkKey(chunkX, worldY, chunkZ))) {
+                sortedListDirty = true;
+                scanDirty = true;
+            }
+        }
+    }
+
+    private void refreshLoadedNeighborSection(int chunkX, int worldY,
+            int chunkZ) {
+        if (!chunkMesher.hasMeshIgnoreDirty(chunkX, worldY, chunkZ)) {
+            return;
+        }
+
+        chunkMesher.contentChanged(chunkX, worldY, chunkZ);
         enqueueSectionBuild(chunkX, worldY, chunkZ);
-      }
-      refreshLoadedHorizontalNeighbor(chunkX, worldY, chunkZ, chunkX - 1, chunkZ);
-      refreshLoadedHorizontalNeighbor(chunkX, worldY, chunkZ, chunkX + 1, chunkZ);
-      refreshLoadedNeighborSection(chunkX, worldY - 1, chunkZ);
-      refreshLoadedNeighborSection(chunkX, worldY + 1, chunkZ);
-      refreshLoadedHorizontalNeighbor(chunkX, worldY, chunkZ, chunkX, chunkZ - 1);
-      refreshLoadedHorizontalNeighbor(chunkX, worldY, chunkZ, chunkX, chunkZ + 1);
     }
-    if (MetalRenderConfig.isDeepDebugActive()) {
-      MetalLogger.info(
-          "chunk_load: c=[%d,%d] sec=%d air=%d d=%d imm=%s pri=%s p=%d cp=%d",
-          chunkX, chunkZ, sections.length, nonAirSections, loadedChunkDistance,
-          immediateBuildChunk, highPriorityChunk, pendingBuildSet.size(),
-          chunkMesher.getPendingCount());
-    }
-    requeueNeighboursNowReady(mc, chunkX - 1, chunkZ);
-    requeueNeighboursNowReady(mc, chunkX + 1, chunkZ);
-    requeueNeighboursNowReady(mc, chunkX, chunkZ - 1);
-    requeueNeighboursNowReady(mc, chunkX, chunkZ + 1);
-  }
 
-  private void requeueNeighboursNowReady(Minecraft mc, int chunkX, int chunkZ) {
-    if (mc == null || mc.level == null || mc.player == null) {
-      return;
-    }
-    LevelChunk chunk = mc.level.getChunkSource().getChunkNow(chunkX, chunkZ);
-    if (chunk == null) {
-      return;
-    }
-    LevelChunkSection[] sections = chunk.getSections();
-    int queued = 0;
-    for (int sy = 0; sy < sections.length; sy++) {
-      LevelChunkSection section = sections[sy];
-      if (section == null || section.hasOnlyAir()) {
-        continue;
-      }
-      MetalRenderProfiler.getInstance().incrementChunksScanned(1);
-      int worldY = chunk.getSectionYFromSectionIndex(sy);
-      if (!chunkMesher.hasMesh(chunkX, worldY, chunkZ) &&
-          isSectionBuildReady(mc.level, chunkX, worldY, chunkZ) &&
-          isSectionLightReady(mc.level, chunkX, worldY, chunkZ)) {
-        chunkMesher.noteSectionAvailable(chunkX, worldY, chunkZ);
-        if (pendingBuildSet.add(packChunkKey(chunkX, worldY, chunkZ))) {
-          sortedListDirty = true;
-          queued++;
+    private void refreshLoadedHorizontalNeighbor(int fromChunkX, int worldY, int fromChunkZ,
+            int nx, int nz) {
+        if (!chunkMesher.hasMeshIgnoreDirty(nx, worldY, nz)) {
+            return;
         }
-      }
-    }
-    if (queued > 0 || MetalRenderConfig.isDeepDebugActive()) {
-      MetalLogger.debug("requeue_ready: nb=[%d,%d] q=%d p=%d",
-          chunkX, chunkZ, queued, pendingBuildSet.size());
-    }
-  }
+        int missingBit = 0;
+        if (nx == fromChunkX - 1) {
+            missingBit = CustomChunkMesher.NEIGHBOR_MISSING_PLUS_X;
+        } else if (nx == fromChunkX + 1) {
+            missingBit = CustomChunkMesher.NEIGHBOR_MISSING_MINUS_X;
+        } else if (nz == fromChunkZ - 1) {
+            missingBit = CustomChunkMesher.NEIGHBOR_MISSING_PLUS_Z;
+        } else if (nz == fromChunkZ + 1) {
+            missingBit = CustomChunkMesher.NEIGHBOR_MISSING_MINUS_Z;
+        }
 
-  private boolean shouldPrioritizeLoadedChunk(int chunkX, int chunkZ) {
-    Minecraft mc = Minecraft.getInstance();
-    if (mc == null || mc.player == null)
-      return false;
-    int playerChunkX = mc.player.chunkPosition().x();
-    int playerChunkZ = mc.player.chunkPosition().z();
-    int dx = chunkX - playerChunkX;
-    int dz = chunkZ - playerChunkZ;
-    int chunkDistance = Math.max(Math.abs(dx), Math.abs(dz));
-    if (chunkDistance <= HOT_LOAD_REBUILD_RANGE) {
-      return true;
-    }
-    if (turnPriorityFrames <= 0 ||
-        chunkDistance > TURN_PRIORITY_LOADED_CHUNK_RANGE) {
-      return false;
-    }
-    return isInForwardPriorityCone(dx, dz);
-  }
+        boolean wasMissing = missingBit != 0
+                && chunkMesher.wasHorizontalNeighborMissingAtBuild(nx, worldY, nz, missingBit);
 
-  private boolean isInForwardPriorityCone(int dx, int dz) {
-    float forwardDot = dx * cachedForwardX + dz * cachedForwardZ;
-    if (forwardDot <= 0.0f) {
-      return false;
-    }
-    float distSq = (dx * dx) + (dz * dz);
-    float minForwardDotSq = TURN_PRIORITY_SCAN_COS_THRESHOLD * TURN_PRIORITY_SCAN_COS_THRESHOLD;
-    return forwardDot * forwardDot >= distSq * minForwardDotSq;
-  }
-
-  private boolean isImportantPendingBuild(int dx, int dz, int chunkDist) {
-    if (chunkDist <= IMPORTANT_REBUILD_CHUNK_RANGE) {
-      return true;
-    }
-    return turnPriorityFrames > 0 &&
-        chunkDist <= TURN_PRIORITY_LOADED_CHUNK_RANGE &&
-        isInForwardPriorityCone(dx, dz);
-  }
-
-  private boolean isSectionBuildReady(ClientLevel world, int chunkX, int chunkY,
-      int chunkZ) {
-    long pKey = readinessColumnKey(chunkX, chunkZ);
-    if (readinessCache.containsKey(pKey)) {
-      return readinessCache.get(pKey);
-    }
-    var source = world.getChunkSource();
-    if (source.getChunkNow(chunkX, chunkZ) == null) {
-      readinessCache.put(pKey, false);
-      return false;
-    }
-    readinessCache.put(pKey, true);
-    return true;
-  }
-
-  private boolean isSectionLightReady(ClientLevel world, int chunkX, int chunkY,
-      int chunkZ) {
-    long key = packChunkKey(chunkX, chunkY, chunkZ);
-    if (lightReadinessCache.containsKey(key)) {
-      return lightReadinessCache.get(key);
-    }
-    boolean ready = isSectionLightReadyUncached(world, chunkX, chunkY, chunkZ);
-    lightReadinessCache.put(key, ready);
-    return ready;
-  }
-
-  private boolean isSectionLightReadyUncached(ClientLevel world, int chunkX,
-      int chunkY, int chunkZ) {
-    try {
-      if (!world.dimensionType().hasSkyLight()) {
-        return true;
-      }
-      var skyListener = world.getChunkSource().getLightEngine()
-          .getLayerListener(LightLayer.SKY);
-      if (skyListener == null) {
-        return true;
-      }
-      if (skyListener.getDataLayerData(SectionPos.of(chunkX, chunkY, chunkZ)) != null) {
-        return true;
-      }
-    } catch (Exception ignored) {
-      return true;
-    }
-    long firstSeen = chunkMesher.getSectionAvailableNanos(chunkX, chunkY, chunkZ);
-    return firstSeen == 0L || System.nanoTime() - firstSeen >= LIGHT_GRACE_NANOS;
-  }
-
-  public void onLightDataApplied(int chunkX, int chunkY, int chunkZ) {
-    onLightDataApplied(chunkX, chunkY, chunkZ, false, false, 0L);
-  }
-  public void onLightDataApplied(int chunkX, int chunkY, int chunkZ,
-      boolean skyLayer, boolean hasData, long incomingHash) {
-    if (!worldLoaded || !renderingActive) {
-      return;
-    }
-    try {
-      if (!RenderSystem.isOnRenderThread()) {
-        return;
-      }
-    } catch (Exception ignored) {
-      return;
-    }
-    try {
-      if (!chunkMesher.hasMeshIgnoreDirty(chunkX, chunkY, chunkZ)
-          && !chunkMesher.isBuildPending(chunkX, chunkY, chunkZ)) {
-        return;
-      }
-      if (chunkMesher.shouldRebuildForLight(chunkX, chunkY, chunkZ, skyLayer,
-          incomingHash, hasData)) {
-        chunkMesher.contentChanged(chunkX, chunkY, chunkZ);
-        enqueueSectionBuild(chunkX, chunkY, chunkZ);
-      }
-    } catch (Exception ignored) {
-    }
-  }
-
-  private static long readinessColumnKey(int chunkX, int chunkZ) {
-    return ((long) chunkX << 32) | (chunkZ & 0xFFFFFFFFL);
-  }
-
-  private void updateTextureBackoffState() {
-    BuildBudgetEstimator estimator = PerformanceController.getBudgetEstimator();
-    double meshMs = estimator != null ? estimator.getEwmaMeshMs() : 0.0;
-    if (meshMs > TEXTURE_BACKOFF_HARD_TRIP_MESH_MS) {
-      textureBackoffActive = true;
-      consecutiveHighMeshMsFrames = TEXTURE_BACKOFF_TRIP_CONSEC;
-      consecutiveCoolMeshMsFrames = 0;
-      return;
-    }
-    if (meshMs > TEXTURE_BACKOFF_TRIP_MESH_MS) {
-      consecutiveHighMeshMsFrames++;
-      consecutiveCoolMeshMsFrames = 0;
-      if (consecutiveHighMeshMsFrames >= TEXTURE_BACKOFF_TRIP_CONSEC) {
-        textureBackoffActive = true;
-      }
-    } else if (meshMs < TEXTURE_BACKOFF_RECOVERY_MESH_MS) {
-      consecutiveCoolMeshMsFrames++;
-      consecutiveHighMeshMsFrames = 0;
-      if (consecutiveCoolMeshMsFrames >= TEXTURE_BACKOFF_RECOVER_CONSEC) {
-        textureBackoffActive = false;
-      }
-    } else {
-      consecutiveHighMeshMsFrames = 0;
-      consecutiveCoolMeshMsFrames = 0;
-    }
-  }
-
-  private void enqueueSectionBuild(int chunkX, int worldY, int chunkZ) {
-    if (!chunkMesher.hasMesh(chunkX, worldY, chunkZ)) {
-      if (pendingBuildSet.add(packChunkKey(chunkX, worldY, chunkZ))) {
-        sortedListDirty = true;
-        scanDirty = true;
-      }
-    }
-  }
-
-  private void refreshLoadedNeighborSection(int chunkX, int worldY,
-      int chunkZ) {
-    if (!chunkMesher.hasMeshIgnoreDirty(chunkX, worldY, chunkZ)) {
-      return;
+        if (!wasMissing) {
+            return;
+        }
+        chunkMesher.contentChanged(nx, worldY, nz);
+        enqueueSectionBuild(nx, worldY, nz);
     }
 
-    chunkMesher.contentChanged(chunkX, worldY, chunkZ);
-    enqueueSectionBuild(chunkX, worldY, chunkZ);
-  }
+    public void scheduleSectionRebuild(int blockX, int blockY, int blockZ) {
+        if (!worldLoaded || !renderingActive) {
+            if (!loggedBlockUpdateDropNotReady) {
+                loggedBlockUpdateDropNotReady = true;
+                MetalLogger.warn(
+                        "block rebuild drop [%d,%d,%d]",
+                        blockX, blockY, blockZ);
+            }
+            return;
+        }
+        loggedBlockUpdateDropNotReady = false;
+        int cx = blockX >> 4;
+        int cy = blockY >> 4;
+        int cz = blockZ >> 4;
+        chunkMesher.noteBlockUpdate(cx, cy, cz);
+        chunkMesher.contentChanged(cx, cy, cz);
+        delayBlockSectionRebuild(cx, cy, cz);
+        int lx = blockX & 15;
+        int ly = blockY & 15;
+        int lz = blockZ & 15;
+        if (lx == 0) {
+            markDirtyAndQueue(cx - 1, cy, cz);
+        } else if (lx == 15) {
+            markDirtyAndQueue(cx + 1, cy, cz);
+        }
+        if (ly == 0) {
+            markDirtyAndQueue(cx, cy - 1, cz);
+        } else if (ly == 15) {
+            markDirtyAndQueue(cx, cy + 1, cz);
+        }
+        if (lz == 0) {
+            markDirtyAndQueue(cx, cy, cz - 1);
+        } else if (lz == 15) {
+            markDirtyAndQueue(cx, cy, cz + 1);
+        }
+        if (MetalRenderConfig.isDeepDebugActive()) {
+            MetalLogger.info(
+                    "block_rebuild: b=[%d,%d,%d] s=[%d,%d,%d] p=%d cp=%d m=%d",
+                    blockX, blockY, blockZ, cx, cy, cz, pendingBuildSet.size(),
+                    chunkMesher.getPendingCount(), chunkMesher.getMeshCount());
+        }
+    }
 
-  private void refreshLoadedHorizontalNeighbor(int fromChunkX, int worldY, int fromChunkZ,
-      int nx, int nz) {
-    if (!chunkMesher.hasMeshIgnoreDirty(nx, worldY, nz)) {
-      return;
-    }
-    int missingBit = 0;
-    if (nx == fromChunkX - 1) {
-      missingBit = CustomChunkMesher.NEIGHBOR_MISSING_PLUS_X;
-    } else if (nx == fromChunkX + 1) {
-      missingBit = CustomChunkMesher.NEIGHBOR_MISSING_MINUS_X;
-    } else if (nz == fromChunkZ - 1) {
-      missingBit = CustomChunkMesher.NEIGHBOR_MISSING_PLUS_Z;
-    } else if (nz == fromChunkZ + 1) {
-      missingBit = CustomChunkMesher.NEIGHBOR_MISSING_MINUS_Z;
+    private void markDirtyAndQueue(int chunkX, int sectionY, int chunkZ) {
+        chunkMesher.contentChanged(chunkX, sectionY, chunkZ);
+        queueUrgentEdit(chunkX, sectionY, chunkZ);
     }
 
-    boolean wasMissing = missingBit != 0
-        && chunkMesher.wasHorizontalNeighborMissingAtBuild(nx, worldY, nz, missingBit);
+    private void queueUrgentEdit(int chunkX, int sectionY, int chunkZ) {
+        long key = packChunkKey(chunkX, sectionY, chunkZ);
+        urgentEditSet.add(key);
+        delayedBlockRebuildFrames.remove(key);
+    }
 
-    if (!wasMissing) {
-      return;
+    private void delayBlockSectionRebuild(int chunkX, int sectionY, int chunkZ) {
+        queueUrgentEdit(chunkX, sectionY, chunkZ);
     }
-    chunkMesher.contentChanged(nx, worldY, nz);
-    enqueueSectionBuild(nx, worldY, nz);
-  }
 
-  public void scheduleSectionRebuild(int blockX, int blockY, int blockZ) {
-    if (!worldLoaded || !renderingActive) {
-      if (!loggedBlockUpdateDropNotReady) {
-        loggedBlockUpdateDropNotReady = true;
-        MetalLogger.warn(
-            "block rebuild drop [%d,%d,%d]",
-            blockX, blockY, blockZ);
-      }
-      return;
+    private int drainUrgentBlockEdits() {
+        if (urgentEditSet.isEmpty()) {
+            return 0;
+        }
+        if (chunkMesher.getMeshCount() >= maxMeshes) {
+            return 0;
+        }
+        long[] keys = urgentEditSet.toLongArray();
+        int submitted = 0;
+        for (long key : keys) {
+            if (submitted >= URGENT_EDIT_MAX_PER_FRAME) {
+                break;
+            }
+            int cx = unpackChunkX(key);
+            int cy = unpackChunkY(key);
+            int cz = unpackChunkZ(key);
+            boolean ok = chunkMesher.buildMeshFromWorldInteractive(cx, cy, cz);
+            if (!ok) {
+                if (pendingBuildSet.add(key)) {
+                    sortedListDirty = true;
+                }
+                urgentEditSet.remove(key);
+                continue;
+            }
+            urgentEditSet.remove(key);
+            pendingBuildSet.remove(key);
+            sortedBuildList.rem(key);
+            delayedBlockRebuildFrames.remove(key);
+            submitted++;
+        }
+        if (submitted > 0) {
+            sortedListDirty = true;
+        }
+        return submitted;
     }
-    loggedBlockUpdateDropNotReady = false;
-    int cx = blockX >> 4;
-    int cy = blockY >> 4;
-    int cz = blockZ >> 4;
-    chunkMesher.noteBlockUpdate(cx, cy, cz);
-    chunkMesher.contentChanged(cx, cy, cz);
-    delayBlockSectionRebuild(cx, cy, cz);
-    int lx = blockX & 15;
-    int ly = blockY & 15;
-    int lz = blockZ & 15;
-    if (lx == 0) {
-      markDirtyAndQueue(cx - 1, cy, cz);
-    } else if (lx == 15) {
-      markDirtyAndQueue(cx + 1, cy, cz);
-    }
-    if (ly == 0) {
-      markDirtyAndQueue(cx, cy - 1, cz);
-    } else if (ly == 15) {
-      markDirtyAndQueue(cx, cy + 1, cz);
-    }
-    if (lz == 0) {
-      markDirtyAndQueue(cx, cy, cz - 1);
-    } else if (lz == 15) {
-      markDirtyAndQueue(cx, cy, cz + 1);
-    }
-    if (MetalRenderConfig.isDeepDebugActive()) {
-      MetalLogger.info(
-          "block_rebuild: b=[%d,%d,%d] s=[%d,%d,%d] p=%d cp=%d m=%d",
-          blockX, blockY, blockZ, cx, cy, cz, pendingBuildSet.size(),
-          chunkMesher.getPendingCount(), chunkMesher.getMeshCount());
-    }
-  }
 
-  private void markDirtyAndQueue(int chunkX, int sectionY, int chunkZ) {
-    chunkMesher.contentChanged(chunkX, sectionY, chunkZ);
-    delayBlockSectionRebuild(chunkX, sectionY, chunkZ);
-  }
-
-  private void delayBlockSectionRebuild(int chunkX, int sectionY, int chunkZ) {
-    long key = packChunkKey(chunkX, sectionY, chunkZ);
-    int dueFrame = frameCount + 2;
-    int existingDue = delayedBlockRebuildFrames.get(key);
-    delayedBlockRebuildFrames.put(key, Math.max(existingDue, dueFrame));
-  }
-
-  private void releaseDelayedBlockRebuilds() {
-    if (delayedBlockRebuildFrames.isEmpty()) {
-      return;
+    private void releaseDelayedBlockRebuilds() {
+        if (delayedBlockRebuildFrames.isEmpty()) {
+            return;
+        }
+        long[] keys = delayedBlockRebuildFrames.keySet().toLongArray();
+        for (long key : keys) {
+            if (delayedBlockRebuildFrames.get(key) > frameCount) {
+                continue;
+            }
+            delayedBlockRebuildFrames.remove(key);
+            if (pendingBuildSet.add(key)) {
+                sortedListDirty = true;
+                scanDirty = true;
+            }
+        }
     }
-    long[] keys = delayedBlockRebuildFrames.keySet().toLongArray();
-    for (long key : keys) {
-      if (delayedBlockRebuildFrames.get(key) > frameCount) {
-        continue;
-      }
-      delayedBlockRebuildFrames.remove(key);
-      if (pendingBuildSet.add(key)) {
-        sortedListDirty = true;
-        scanDirty = true;
-      }
-    }
-  }
 
-  public int[] getCameraFacingCullStats() {
-    if (NativeBridge.isLibLoaded()) {
-      NativeBridge.nGetCameraFacingCullStats(cameraFacingCullStats);
+    public int[] getCameraFacingCullStats() {
+        if (NativeBridge.isLibLoaded()) {
+            NativeBridge.nGetCameraFacingCullStats(cameraFacingCullStats);
+        }
+        return cameraFacingCullStats;
     }
-    return cameraFacingCullStats;
-  }
 
 }

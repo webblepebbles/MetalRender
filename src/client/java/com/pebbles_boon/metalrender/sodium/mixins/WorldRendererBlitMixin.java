@@ -25,104 +25,106 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(LevelRenderer.class)
 public class WorldRendererBlitMixin {
-  @Unique
-  private final Matrix4f metalrender$projection = new Matrix4f();
-  @Unique
-  private final Matrix4f metalrender$modelView = new Matrix4f();
-  @Unique
-  private boolean metalrender$frameActive;
-  @Unique
-  private int metalrender$beginFrameCount;
-  @Unique
-  private int metalrender$endFrameCount;
+    @Unique
+    private final Matrix4f metalrender$projection = new Matrix4f();
+    @Unique
+    private final Matrix4f metalrender$modelView = new Matrix4f();
+    @Unique
+    private boolean metalrender$frameActive;
+    @Unique
+    private int metalrender$beginFrameCount;
+    @Unique
+    private int metalrender$endFrameCount;
 
-  @Inject(method = "renderLevel", at = @At("HEAD"), require = 0)
-  private void metalrender$beginWorldFrame(
-      GraphicsResourceAllocator allocator, DeltaTracker tickCounter,
-      boolean renderBlockOutline, CameraRenderState cameraRenderState,
-      Matrix4fc positionMatrix, GpuBufferSlice fogBuffer, Vector4f fogColor,
-      boolean renderEntityOutline, ChunkSectionsToRender sectionsToRender,
-      CallbackInfo ci) {
-    metalrender$frameActive = false;
-    if (!MetalRenderClient.isEnabled()) {
-      return;
-    }
-    MetalWorldRenderer worldRenderer = MetalRenderClient.getWorldRenderer();
-    if (worldRenderer == null || !worldRenderer.metalActive()) {
-      return;
-    }
-    try {
-      Minecraft mc = Minecraft.getInstance();
-      Camera camera = mc.gameRenderer.getMainCamera();
-      if (camera == null || camera.position() == null) {
-        return;
-      }
-      float tickDelta = tickCounter.getGameTimeDeltaPartialTick(true);
-      if (cameraRenderState != null &&
-          cameraRenderState.projectionMatrix != null) {
-        metalrender$projection.set(cameraRenderState.projectionMatrix);
-      } else {
-        metalrender$projection.set(positionMatrix);
-      }
-      Vec3 camPos = (cameraRenderState != null && cameraRenderState.pos != null)
-          ? cameraRenderState.pos
-          : camera.position();
-      if (cameraRenderState != null &&
-          cameraRenderState.viewRotationMatrix != null) {
-        metalrender$modelView.set(cameraRenderState.viewRotationMatrix);
-      } else {
-        metalrender$modelView.identity();
-        metalrender$modelView.rotateX((float) Math.toRadians(camera.xRot()));
-        metalrender$modelView.rotateY(
-            (float) Math.toRadians(camera.yRot() + 180.0f));
-      }
-      CapturedMatrices.capture(metalrender$projection, metalrender$modelView,
-          camPos.x, camPos.y, camPos.z);
-      try {
-        com.pebbles_boon.metalrender.render.fog.VanillaFog.FogState fog =
-            com.pebbles_boon.metalrender.render.fog.VanillaFog.fromRenderState(cameraRenderState);
-        if (fog != null) {
-          worldRenderer.setFogState(fog);
+    @Inject(method = "renderLevel", at = @At("HEAD"), require = 0)
+    private void metalrender$beginWorldFrame(
+            GraphicsResourceAllocator allocator, DeltaTracker tickCounter,
+            boolean renderBlockOutline, CameraRenderState cameraRenderState,
+            Matrix4fc positionMatrix, GpuBufferSlice fogBuffer, Vector4f fogColor,
+            boolean renderEntityOutline, ChunkSectionsToRender sectionsToRender,
+            CallbackInfo ci) {
+        metalrender$frameActive = false;
+        if (!MetalRenderClient.isEnabled()) {
+            return;
         }
-      } catch (Exception ignored) {
-      }
-      worldRenderer.beginFrame(camera, tickDelta, metalrender$projection,
-          metalrender$modelView, camPos.x, camPos.y, camPos.z);
-      com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance().startRender();
-      metalrender$frameActive = true;
-      metalrender$beginFrameCount++;
-      if (metalrender$beginFrameCount <= 3) {
-        MetalLogger.info("[blitmix] begin hook #%d",
-            metalrender$beginFrameCount);
-      }
-    } catch (Exception e) {
-      MetalLogger.error("[blitmix] begin fail: %s", e.getMessage());
+        MetalWorldRenderer worldRenderer = MetalRenderClient.getWorldRenderer();
+        if (worldRenderer == null || !worldRenderer.metalActive()) {
+            return;
+        }
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            Camera camera = mc.gameRenderer.getMainCamera();
+            if (camera == null || camera.position() == null) {
+                return;
+            }
+            float tickDelta = tickCounter.getGameTimeDeltaPartialTick(true);
+            if (cameraRenderState != null &&
+                    cameraRenderState.projectionMatrix != null) {
+                metalrender$projection.set(cameraRenderState.projectionMatrix);
+            } else {
+                metalrender$projection.set(positionMatrix);
+            }
+            Vec3 camPos = (cameraRenderState != null && cameraRenderState.pos != null)
+                    ? cameraRenderState.pos
+                    : camera.position();
+            if (cameraRenderState != null &&
+                    cameraRenderState.viewRotationMatrix != null) {
+                metalrender$modelView.set(cameraRenderState.viewRotationMatrix);
+            } else {
+                metalrender$modelView.identity();
+                metalrender$modelView.rotateX((float) Math.toRadians(camera.xRot()));
+                metalrender$modelView.rotateY(
+                        (float) Math.toRadians(camera.yRot() + 180.0f));
+            }
+            CapturedMatrices.capture(metalrender$projection, metalrender$modelView,
+                    camPos.x, camPos.y, camPos.z);
+            try {
+                com.pebbles_boon.metalrender.render.fog.VanillaFog.FogState fog = com.pebbles_boon.metalrender.render.fog.VanillaFog
+                        .fromRenderState(cameraRenderState);
+                if (fog != null) {
+                    worldRenderer.setFogState(fog);
+                }
+            } catch (Exception ignored) {
+            }
+            worldRenderer.beginFrame(camera, tickDelta, metalrender$projection,
+                    metalrender$modelView, camPos.x, camPos.y, camPos.z);
+            com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance().startRender();
+            metalrender$frameActive = true;
+            metalrender$beginFrameCount++;
+            if (metalrender$beginFrameCount <= 3) {
+                MetalLogger.info("[blitmix] begin hook #%d",
+                        metalrender$beginFrameCount);
+            }
+        } catch (Exception e) {
+            MetalLogger.error("[blitmix] begin fail: %s", e.getMessage());
+        }
     }
-  }
 
-  @Inject(method = "renderLevel", at = @At("TAIL"), require = 0)
-  private void metalrender$endWorldFrame(
-      GraphicsResourceAllocator allocator, DeltaTracker tickCounter,
-      boolean renderBlockOutline, CameraRenderState cameraRenderState,
-      Matrix4fc positionMatrix, GpuBufferSlice fogBuffer, Vector4f fogColor,
-      boolean renderEntityOutline, ChunkSectionsToRender sectionsToRender,
-      CallbackInfo ci) {
-    if (!metalrender$frameActive) {
-      return;
+    @Inject(method = "renderLevel", at = @At("TAIL"), require = 0)
+    private void metalrender$endWorldFrame(
+            GraphicsResourceAllocator allocator, DeltaTracker tickCounter,
+            boolean renderBlockOutline, CameraRenderState cameraRenderState,
+            Matrix4fc positionMatrix, GpuBufferSlice fogBuffer, Vector4f fogColor,
+            boolean renderEntityOutline, ChunkSectionsToRender sectionsToRender,
+            CallbackInfo ci) {
+        if (!metalrender$frameActive) {
+            return;
+        }
+        metalrender$frameActive = false;
+        MetalWorldRenderer worldRenderer = MetalRenderClient.getWorldRenderer();
+        if (worldRenderer == null) {
+            return;
+        }
+        try {
+            com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance().endRender();
+            worldRenderer.endFrame();
+            metalrender$endFrameCount++;
+            if (metalrender$endFrameCount <= 3) {
+                MetalLogger.info("[blitmix] end hook #%d",
+                        metalrender$endFrameCount);
+            }
+        } catch (Exception e) {
+            MetalLogger.error("[blitmix] end fail: %s", e.getMessage());
+        }
     }
-    metalrender$frameActive = false;
-    MetalWorldRenderer worldRenderer = MetalRenderClient.getWorldRenderer();
-    if (worldRenderer == null) {
-      return;
-    }    try {
-      com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance().endRender();
-      worldRenderer.endFrame();
-      metalrender$endFrameCount++;if (metalrender$endFrameCount <= 3) {
-        MetalLogger.info("[blitmix] end hook #%d",
-            metalrender$endFrameCount);
-      }
-    } catch (Exception e) {
-      MetalLogger.error("[blitmix] end fail: %s", e.getMessage());
-    }
-  }
 }

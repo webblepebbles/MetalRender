@@ -4,8 +4,8 @@ import com.pebbles_boon.metalrender.nativebridge.NativeLoader;
 import net.fabricmc.loader.api.entrypoint.PreLaunchEntrypoint;
 
 public final class MetalRenderPreLaunch implements PreLaunchEntrypoint {
-  @Override
-  public void onPreLaunch() {
-    NativeLoader.load();
-  }
+    @Override
+    public void onPreLaunch() {
+        NativeLoader.load();
+    }
 }

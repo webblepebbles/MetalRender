@@ -12,24 +12,23 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-
 @Mixin(LevelLightEngine.class)
 public class LightUpdateMixin {
-  @Inject(method = "queueSectionData", at = @At("HEAD"), require = 0)
-  private void metalrender$onLightData(LightLayer layer, SectionPos pos,
-      DataLayer data, CallbackInfo ci) {
-    try {
-      if (pos == null) {
-        return;
-      }
-      MetalWorldRenderer worldRenderer = MetalRenderClient.getWorldRenderer();
-      if (worldRenderer == null) {
-        return;
-      }
-      worldRenderer.onLightDataApplied(pos.getX(), pos.getY(), pos.getZ(),
-          layer == LightLayer.SKY, data != null,
-          CustomChunkMesher.hashDataLayer(data));
-    } catch (Exception ignored) {
+    @Inject(method = "queueSectionData", at = @At("HEAD"), require = 0)
+    private void metalrender$onLightData(LightLayer layer, SectionPos pos,
+            DataLayer data, CallbackInfo ci) {
+        try {
+            if (pos == null) {
+                return;
+            }
+            MetalWorldRenderer worldRenderer = MetalRenderClient.getWorldRenderer();
+            if (worldRenderer == null) {
+                return;
+            }
+            worldRenderer.onLightDataApplied(pos.getX(), pos.getY(), pos.getZ(),
+                    layer == LightLayer.SKY, data != null,
+                    CustomChunkMesher.hashDataLayer(data));
+        } catch (Exception ignored) {
+        }
     }
-  }
 }

@@ -51,7 +51,8 @@ public final class MetalRenderCommands {
                             .then(literal("adaptive")
                                     .then(literal("on").executes(ctx -> {
                                         MetalRenderConfig.setAdaptiveResolutionEnabled(true);
-                                        msg(ctx.getSource(), "§aAdaptive resolution enabled (auto-scales wendew res to keep GPU time in budget)");
+                                        msg(ctx.getSource(),
+                                                "§aAdaptive resolution enabled (auto-scales wendew res to keep GPU time in budget)");
                                         return 1;
                                     }))
                                     .then(literal("off").executes(ctx -> {
@@ -93,9 +94,12 @@ public final class MetalRenderCommands {
                                     })))
 
                             .then(literal("profile").executes(ctx -> {
-                                com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance().toggleVisible();
-                                boolean nowVisible = com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance().isVisible();
-                                msg(ctx.getSource(), nowVisible ? "§aMetalRender profiler starts" : "§eMetalRender profiler unstarts");
+                                com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance()
+                                        .toggleVisible();
+                                boolean nowVisible = com.pebbles_boon.metalrender.performance.MetalRenderProfiler
+                                        .getInstance().isVisible();
+                                msg(ctx.getSource(), nowVisible ? "§aMetalRender profiler starts"
+                                        : "§eMetalRender profiler unstarts");
                                 return 1;
                             }))
 

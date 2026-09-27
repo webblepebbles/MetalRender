@@ -25,100 +25,100 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(LevelRenderer.class)
 public class EntityRenderMixin {
-  @Unique
-  private static final double metalrender$hardCullDistSq = 128.0 * 128.0;
+    @Unique
+    private static final double metalrender$hardCullDistSq = 128.0 * 128.0;
 
-  @Unique
-  private int metalrender$entityCaptureCount = 0;
+    @Unique
+    private int metalrender$entityCaptureCount = 0;
 
-  @Unique
-  private int metalrender$entityCullCount = 0;
+    @Unique
+    private int metalrender$entityCullCount = 0;
 
-  @Unique
-  private long metalrender$entityCullFrame = 0;
+    @Unique
+    private long metalrender$entityCullFrame = 0;
 
-  @Unique
-  private final Matrix4f metalrender$reusableModelMatrix = new Matrix4f();
+    @Unique
+    private final Matrix4f metalrender$reusableModelMatrix = new Matrix4f();
 
-  @Inject(method = "extractVisibleEntities", at = @At("TAIL"), require = 0)
-  private void metalrender$captureEntities(Camera camera, Frustum frustum,
-      DeltaTracker deltaTracker,
-      LevelRenderState levelRenderState,
-      CallbackInfo ci) {
-    if (!MetalRenderClient.isEnabled()) {
-      return;
-    }
-    MetalWorldRenderer worldRenderer = MetalRenderClient.getWorldRenderer();
-    if (worldRenderer == null || !worldRenderer.metalActive()) {
-      return;
-    }
-    MetalEntityRenderer entityRenderer = worldRenderer.getEntityRenderer();
-    if (entityRenderer == null || !entityRenderer.isActive()) {
-      return;
-    }
-    Minecraft mc = Minecraft.getInstance();
-    if (mc == null || mc.level == null) {
-      return;
-    }
-    float tickDelta = deltaTracker.getGameTimeDeltaPartialTick(true);
-    try {
-      metalrender$entityCullFrame++;
-      int capturedThisFrame = 0;
-      int culledThisFrame = 0;
-      Entity focused = camera.entity();
-      Vec3 cameraPos = camera.position();
-      for (Entity entity : mc.level.entitiesForRendering()) {
-        if (entity == null || entity.isRemoved()) {
-          continue;
+    @Inject(method = "extractVisibleEntities", at = @At("TAIL"), require = 0)
+    private void metalrender$captureEntities(Camera camera, Frustum frustum,
+            DeltaTracker deltaTracker,
+            LevelRenderState levelRenderState,
+            CallbackInfo ci) {
+        if (!MetalRenderClient.isEnabled()) {
+            return;
         }
-        if (entity == focused && !camera.isDetached()) {
-          continue;
+        MetalWorldRenderer worldRenderer = MetalRenderClient.getWorldRenderer();
+        if (worldRenderer == null || !worldRenderer.metalActive()) {
+            return;
         }
-        if (!frustum.isVisible(entity.getBoundingBox())) {
-          continue;
+        MetalEntityRenderer entityRenderer = worldRenderer.getEntityRenderer();
+        if (entityRenderer == null || !entityRenderer.isActive()) {
+            return;
         }
-        if (!(entity instanceof Player)) {
-          double distSq = entity.distanceToSqr(cameraPos);
-          if (distSq > metalrender$hardCullDistSq) {
-            culledThisFrame++;
-            continue;
-          }
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.level == null) {
+            return;
         }
-        Matrix4f modelMatrix = metalrender$reusableModelMatrix;
-        modelMatrix.identity();
-        entityRenderer.captureEntity(entity, tickDelta, modelMatrix);
-        capturedThisFrame++;
-      }
-      metalrender$entityCaptureCount += capturedThisFrame;
-      metalrender$entityCullCount += culledThisFrame;
-      if (MetalRenderConfig.isDeepDebugActive() &&
-          (capturedThisFrame > 0 || culledThisFrame > 0) &&
-          (metalrender$entityCullFrame <= 5 ||
-              metalrender$entityCullFrame % 600 == 0)) {
-        MetalLogger.info("[entitymix] cap=%d cull=%d (tot cap=%d tot cull=%d)",
-            capturedThisFrame, culledThisFrame,
-            metalrender$entityCaptureCount,
-            metalrender$entityCullCount);
-      }
-    } catch (Throwable e) {
+        float tickDelta = deltaTracker.getGameTimeDeltaPartialTick(true);
+        try {
+            metalrender$entityCullFrame++;
+            int capturedThisFrame = 0;
+            int culledThisFrame = 0;
+            Entity focused = camera.entity();
+            Vec3 cameraPos = camera.position();
+            for (Entity entity : mc.level.entitiesForRendering()) {
+                if (entity == null || entity.isRemoved()) {
+                    continue;
+                }
+                if (entity == focused && !camera.isDetached()) {
+                    continue;
+                }
+                if (!frustum.isVisible(entity.getBoundingBox())) {
+                    continue;
+                }
+                if (!(entity instanceof Player)) {
+                    double distSq = entity.distanceToSqr(cameraPos);
+                    if (distSq > metalrender$hardCullDistSq) {
+                        culledThisFrame++;
+                        continue;
+                    }
+                }
+                Matrix4f modelMatrix = metalrender$reusableModelMatrix;
+                modelMatrix.identity();
+                entityRenderer.captureEntity(entity, tickDelta, modelMatrix);
+                capturedThisFrame++;
+            }
+            metalrender$entityCaptureCount += capturedThisFrame;
+            metalrender$entityCullCount += culledThisFrame;
+            if (MetalRenderConfig.isDeepDebugActive() &&
+                    (capturedThisFrame > 0 || culledThisFrame > 0) &&
+                    (metalrender$entityCullFrame <= 5 ||
+                            metalrender$entityCullFrame % 600 == 0)) {
+                MetalLogger.info("[entitymix] cap=%d cull=%d (tot cap=%d tot cull=%d)",
+                        capturedThisFrame, culledThisFrame,
+                        metalrender$entityCaptureCount,
+                        metalrender$entityCullCount);
+            }
+        } catch (Throwable e) {
 
-      if (metalrender$entityCaptureCount < 10) {
-        MetalLogger.error("[entitymix] cap fail: %s", e.getMessage());
-      }
+            if (metalrender$entityCaptureCount < 10) {
+                MetalLogger.error("[entitymix] cap fail: %s", e.getMessage());
+            }
+        }
     }
-  }
 
-  @Inject(method = "submitEntities", at = @At("HEAD"), cancellable = true, require = 0)
-  private void metalrender$suppressVanillaEntities(PoseStack matrices,
-      LevelRenderState renderStates,
-      SubmitNodeCollector queue,
-      CallbackInfo ci) {
-    if (!MetalRenderClient.isEnabled()) {
-      return;
+    @Inject(method = "submitEntities", at = @At("HEAD"), cancellable = true, require = 0)
+    private void metalrender$suppressVanillaEntities(PoseStack matrices,
+            LevelRenderState renderStates,
+            SubmitNodeCollector queue,
+            CallbackInfo ci) {
+        if (!MetalRenderClient.isEnabled()) {
+            return;
+        }
+        MetalWorldRenderer worldRenderer = MetalRenderClient.getWorldRenderer();
+        if (worldRenderer != null && worldRenderer.metalActive()) {
+            ci.cancel();
+        }
     }
-    MetalWorldRenderer worldRenderer = MetalRenderClient.getWorldRenderer();
-    if (worldRenderer != null && worldRenderer.metalActive()) {
-      ci.cancel();
-    }
-  }
 }

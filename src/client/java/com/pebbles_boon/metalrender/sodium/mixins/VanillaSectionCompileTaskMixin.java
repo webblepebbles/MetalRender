@@ -10,21 +10,21 @@ import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(targets = { "net.minecraft.client.renderer.chunk.SectionRenderDispatcher$" +
-    "RenderSection$RebuildTask",
-    "net.minecraft.client.renderer.chunk.SectionRenderDispatcher$" +
-        "RenderSection$ResortTransparencyTask" }, remap = false)
+        "RenderSection$RebuildTask",
+        "net.minecraft.client.renderer.chunk.SectionRenderDispatcher$" +
+                "RenderSection$ResortTransparencyTask" }, remap = false)
 public abstract class VanillaSectionCompileTaskMixin {
-  @Inject(method = "doTask", at = @At("HEAD"), cancellable = true, require = 0)
-  private void metalrender$cancelVanillaSectionCompile(
-      SectionBufferBuilderPack buffers,
-      CallbackInfoReturnable<SectionRenderDispatcher.RenderSection.CompileTask.SectionTaskResult> cir) {
-    if (!MetalRenderClient.isEnabled()) {
-      return;
+    @Inject(method = "doTask", at = @At("HEAD"), cancellable = true, require = 0)
+    private void metalrender$cancelVanillaSectionCompile(
+            SectionBufferBuilderPack buffers,
+            CallbackInfoReturnable<SectionRenderDispatcher.RenderSection.CompileTask.SectionTaskResult> cir) {
+        if (!MetalRenderClient.isEnabled()) {
+            return;
+        }
+        MetalWorldRenderer worldRenderer = MetalRenderClient.getWorldRenderer();
+        if (worldRenderer == null || !worldRenderer.metalActive()) {
+            return;
+        }
+        cir.setReturnValue(SectionRenderDispatcher.RenderSection.CompileTask.SectionTaskResult.CANCELLED);
     }
-    MetalWorldRenderer worldRenderer = MetalRenderClient.getWorldRenderer();
-    if (worldRenderer == null || !worldRenderer.metalActive()) {
-      return;
-    }
-    cir.setReturnValue(SectionRenderDispatcher.RenderSection.CompileTask.SectionTaskResult.CANCELLED);
-  }
 }

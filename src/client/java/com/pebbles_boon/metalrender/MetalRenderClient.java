@@ -17,287 +17,287 @@ import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.client.Minecraft;
 
 public class MetalRenderClient implements ClientModInitializer {
-  private static final int FPS_PRIORITY_SIMULATION_DISTANCE = 5;
-  private static MetalRenderer renderer;
-  private static MetalRenderConfig config;
-  private static MetalWorldRenderer worldRenderer;
-  private static boolean metalUp;
-  private static boolean cfgWasOn;
-  private static boolean cfgSyncPending;
-  private static boolean runtimeApplyPending;
-  private static boolean levelRendererRefreshPending;
-  private static boolean worldRendererRefreshPending;
-  private static boolean debugEntryStatusSet;
+    private static final int FPS_PRIORITY_SIMULATION_DISTANCE = 5;
+    private static MetalRenderer renderer;
+    private static MetalRenderConfig config;
+    private static MetalWorldRenderer worldRenderer;
+    private static boolean metalUp;
+    private static boolean cfgWasOn;
+    private static boolean cfgSyncPending;
+    private static boolean runtimeApplyPending;
+    private static boolean levelRendererRefreshPending;
+    private static boolean worldRendererRefreshPending;
+    private static boolean debugEntryStatusSet;
 
-  @Override
-  public void onInitializeClient() {
-    try {
-      NativeLoader.load();
-    } catch (RuntimeException e) {
-      MetalLogger.warn("native pre-sign fail: %s", e.getMessage());
-    }
-    if (StartupBlocker.shouldBlockStartup()) {
-      return;
-    }
-    MetalLogger.info("metalrender weady");
-    config = MetalRenderConfig.load();
-    cfgWasOn = config != null && config.enableMetalRendering;
-    MetalDebugEntry.register();
-    MetalRenderProfilerOverlay.register();
-    com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance()
-        .startDevelopmentRunCsv();
-    if (MetalRenderConfig.isDeepDebugActive()) {
-      MetalLogger.info("deep debug on");
-    }
-    MetalRenderCommands.register();
-    if (!config.enableMetalRendering) {
-      MetalLogger.info("metalrender off");
-    }
-
-    ClientTickEvents.START_CLIENT_TICK.register(client -> {
-      var mc = Minecraft.getInstance();
-      if (!debugEntryStatusSet && mc != null) {
-        MetalDebugEntry.show(mc);
-        debugEntryStatusSet = true;
-      }
-      if (cfgSyncPending) {
-        cfgSyncPending = false;
-        syncCfg(mc);
-      }
-      applyDeferredRuntimeChanges(mc);
-      applyFpsPriorityMode(mc);
-      syncCfg(mc);
-      if (config != null && config.enableMetalRendering && renderer == null &&
-          mc != null) {
-        initMetal(mc);
-      }
-    });
-  }
-
-  public static void requestDeferredApply(boolean requestCfgSync,
-      boolean refreshLevelRenderer,
-      boolean refreshWorldRenderer) {
-    runtimeApplyPending = true;
-    cfgSyncPending |= requestCfgSync;
-    levelRendererRefreshPending |= refreshLevelRenderer;
-    worldRendererRefreshPending |= refreshWorldRenderer;
-  }
-
-  private static void applyDeferredRuntimeChanges(Minecraft mc) {
-    if (!runtimeApplyPending || config == null) {
-      return;
-    }
-
-    runtimeApplyPending = false;
-    if (NativeBridge.isLibLoaded()) {
-      boolean useArgBufs = config.enableArgumentBuffers || config.enableIndirectCommandBuffers;
-      NativeBridge.nSetFeatureFlags(config.enableIndirectCommandBuffers,
-          config.enableMeshShaders, useArgBufs,
-          config.enableProgrammableBlending);
-
-    }
-
-    MetalWorldRenderer wr = worldRenderer;
-    if (wr != null) {
-      wr.applyFeatureConfig(config);
-    }
-
-    if (levelRendererRefreshPending && mc != null && mc.levelRenderer != null) {
-      mc.levelRenderer.allChanged();
-    }
-    levelRendererRefreshPending = false;
-
-    if (worldRendererRefreshPending) {
-      if (NativeBridge.isLibLoaded()) {
-        NativeBridge.nFlushFrames();
-      }
-      if (wr != null) {
-        wr.onConfigScreenClosed();
-      }
-    }
-    worldRendererRefreshPending = false;
-  }
-
-  public static void syncCfg(Minecraft mc) {
-    boolean cfgOn = config != null && config.enableMetalRendering;
-    if (cfgOn == cfgWasOn || mc == null) {
-      return;
-    }
-    cfgWasOn = cfgOn;
-
-    if (!cfgOn) {
-      if (worldRenderer != null) {
-        drainRenderer();
-        worldRenderer.onWorldUnload();
-        worldRenderer = null;
-      }
-      if (renderer != null) {
-        long handle = renderer.getHandle();
-        if (handle != 0 && NativeBridge.isLibLoaded()) {
-          try {
-            NativeBridge.nFlushDeferredDeletions();
-            NativeBridge.nDestroy(handle);
-          } catch (Throwable t) {
-            MetalLogger.warn("wendewer destroy fail: %s", t.getMessage());
-          }
+    @Override
+    public void onInitializeClient() {
+        try {
+            NativeLoader.load();
+        } catch (RuntimeException e) {
+            MetalLogger.warn("native pre-sign fail: %s", e.getMessage());
         }
-        renderer = null;
-      }
-      metalUp = false;
-      return;
+        if (StartupBlocker.shouldBlockStartup()) {
+            return;
+        }
+        MetalLogger.info("metalrender weady");
+        config = MetalRenderConfig.load();
+        cfgWasOn = config != null && config.enableMetalRendering;
+        MetalDebugEntry.register();
+        MetalRenderProfilerOverlay.register();
+        com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance()
+                .startDevelopmentRunCsv();
+        if (MetalRenderConfig.isDeepDebugActive()) {
+            MetalLogger.info("deep debug on");
+        }
+        MetalRenderCommands.register();
+        if (!config.enableMetalRendering) {
+            MetalLogger.info("metalrender off");
+        }
+
+        ClientTickEvents.START_CLIENT_TICK.register(client -> {
+            var mc = Minecraft.getInstance();
+            if (!debugEntryStatusSet && mc != null) {
+                MetalDebugEntry.show(mc);
+                debugEntryStatusSet = true;
+            }
+            if (cfgSyncPending) {
+                cfgSyncPending = false;
+                syncCfg(mc);
+            }
+            applyDeferredRuntimeChanges(mc);
+            applyFpsPriorityMode(mc);
+            syncCfg(mc);
+            if (config != null && config.enableMetalRendering && renderer == null &&
+                    mc != null) {
+                initMetal(mc);
+            }
+        });
     }
 
-    if (renderer == null || !metalUp) {
-      initMetal(mc);
-    } else if (worldRenderer == null) {
-      worldRenderer = new MetalWorldRenderer();
+    public static void requestDeferredApply(boolean requestCfgSync,
+            boolean refreshLevelRenderer,
+            boolean refreshWorldRenderer) {
+        runtimeApplyPending = true;
+        cfgSyncPending |= requestCfgSync;
+        levelRendererRefreshPending |= refreshLevelRenderer;
+        worldRendererRefreshPending |= refreshWorldRenderer;
     }
 
-    if (worldRenderer != null && mc.level != null) {
-      worldRenderer.onWorldLoad();
-      worldRenderer.onConfigScreenClosed();
-    }
-  }
+    private static void applyDeferredRuntimeChanges(Minecraft mc) {
+        if (!runtimeApplyPending || config == null) {
+            return;
+        }
 
-  private static void applyFpsPriorityMode(Minecraft mc) {
-    if (mc == null || mc.options == null || config == null ||
-        !config.prioritizeFpsOverTps) {
-      return;
-    }
-    try {
-      if (mc.options.simulationDistance().get() > FPS_PRIORITY_SIMULATION_DISTANCE) {
-        mc.options.simulationDistance().set(FPS_PRIORITY_SIMULATION_DISTANCE);
-        mc.options.save();
-      }
-    } catch (Exception ignored) {
-    }
-  }
+        runtimeApplyPending = false;
+        if (NativeBridge.isLibLoaded()) {
+            boolean useArgBufs = config.enableArgumentBuffers || config.enableIndirectCommandBuffers;
+            NativeBridge.nSetFeatureFlags(config.enableIndirectCommandBuffers,
+                    config.enableMeshShaders, useArgBufs,
+                    config.enableProgrammableBlending);
 
-  private static void drainRenderer() {
-    if (renderer == null || !renderer.isAvailable() ||
-        !NativeBridge.isLibLoaded()) {
-      return;
-    }
-    try {
-      NativeBridge.nFlushFrames();
-      NativeBridge.nWaitForRender(renderer.getHandle());
-    } catch (Throwable t) {
-      MetalLogger.warn("drain fail: %s", t.getMessage());
-    }
-  }
+        }
 
-  public static void openSettingsScreen(Minecraft mc) {
-    if (mc == null) {
-      return;
-    }
-    try {
-      mc.execute(() -> mc.setScreen(new MetalRenderSettingsScreen(mc.screen)));
-      MetalLogger.info("open scween ok");
-    } catch (Exception e) {
-      MetalLogger.warn("open scween fail: %s", e.getMessage());
-    }
-  }
+        MetalWorldRenderer wr = worldRenderer;
+        if (wr != null) {
+            wr.applyFeatureConfig(config);
+        }
 
-  private static void initMetal(Minecraft mc) {
-    try {
-      NativeBridge.loadLibrary();
-    } catch (UnsatisfiedLinkError e) {
-      MetalLogger.error("lib load fail.", e);
-      return;
+        if (levelRendererRefreshPending && mc != null && mc.levelRenderer != null) {
+            mc.levelRenderer.allChanged();
+        }
+        levelRendererRefreshPending = false;
+
+        if (worldRendererRefreshPending) {
+            if (NativeBridge.isLibLoaded()) {
+                NativeBridge.nFlushFrames();
+            }
+            if (wr != null) {
+                wr.onConfigScreenClosed();
+            }
+        }
+        worldRendererRefreshPending = false;
     }
 
-    try {
-      if (!MetalHardwareChecker.isMetalSupported()) {
-        MetalLogger.warn("no metal");
-        return;
-      }
+    public static void syncCfg(Minecraft mc) {
+        boolean cfgOn = config != null && config.enableMetalRendering;
+        if (cfgOn == cfgWasOn || mc == null) {
+            return;
+        }
+        cfgWasOn = cfgOn;
 
-      renderer = new MetalRenderer();
-      var win = mc.getWindow();
-      int w = win != null ? win.getWidth() : 0;
-      int h = win != null ? win.getHeight() : 0;
-      renderer.init(w, h);
-      metalUp = renderer.isAvailable();
-      if (!metalUp) {
-        return;
-      }
+        if (!cfgOn) {
+            if (worldRenderer != null) {
+                drainRenderer();
+                worldRenderer.onWorldUnload();
+                worldRenderer = null;
+            }
+            if (renderer != null) {
+                long handle = renderer.getHandle();
+                if (handle != 0 && NativeBridge.isLibLoaded()) {
+                    try {
+                        NativeBridge.nFlushDeferredDeletions();
+                        NativeBridge.nDestroy(handle);
+                    } catch (Throwable t) {
+                        MetalLogger.warn("wendewer destroy fail: %s", t.getMessage());
+                    }
+                }
+                renderer = null;
+            }
+            metalUp = false;
+            return;
+        }
 
-      worldRenderer = new MetalWorldRenderer();
-      logStartDiag(mc);
-      MetalLogger.info("metal weady: " + MetalHardwareChecker.getDeviceName());
-    } catch (Exception e) {
-      MetalLogger.error("init fail", e);
-      metalUp = false;
+        if (renderer == null || !metalUp) {
+            initMetal(mc);
+        } else if (worldRenderer == null) {
+            worldRenderer = new MetalWorldRenderer();
+        }
+
+        if (worldRenderer != null && mc.level != null) {
+            worldRenderer.onWorldLoad();
+            worldRenderer.onConfigScreenClosed();
+        }
     }
-  }
 
-  public static MetalRenderer getRenderer() {
-    return renderer;
-  }
-
-  public static MetalRenderConfig getConfig() {
-    return config;
-  }
-
-  public static boolean isMetalAvailable() {
-    return metalUp;
-  }
-
-  public static boolean isEnabled() {
-    return config != null && config.enableMetalRendering && metalUp &&
-        renderer != null && renderer.isAvailable();
-  }
-
-  public static MetalWorldRenderer getWorldRenderer() {
-    return worldRenderer;
-  }
-
-  public static boolean isSodiumLoaded() {
-    return FabricLoader.getInstance().isModLoaded("sodium");
-  }
-
-  private static void logStartDiag(Minecraft mc) {
-    try {
-      var o = mc.options;
-      var cfg = config;
-      int fpsCap = o != null && o.framerateLimit() != null
-          ? o.framerateLimit().get()
-          : -1;
-      boolean vsync = o != null && o.enableVsync() != null &&
-          Boolean.TRUE.equals(o.enableVsync().get());
-      int rd = o != null && o.renderDistance() != null
-          ? o.renderDistance().get()
-          : -1;
-      int sd = o != null && o.simulationDistance() != null
-          ? o.simulationDistance().get()
-          : -1;
-
-      boolean meshOk = NativeBridge.nSupportsMeshShaders();
-      boolean indOk = NativeBridge.nSupportsIndirect();
-      boolean meshOn = NativeBridge.nAreMeshShadersActive();
-      boolean gpuOn = NativeBridge.nIsGPUDrivenActive();
-
-      MetalLogger.info(
-          "starting: supportsMesh=%s supportsIndirect=%s meshActive=%s " +
-              "gpuDriven=%s cfg(mesh=%s icb=%s argBuf=%s) fpsLimit=%d vsync=%s " +
-              "rd=%d sd=%d",
-          meshOk, indOk, meshOn, gpuOn, cfg != null && cfg.enableMeshShaders,
-          cfg != null && cfg.enableIndirectCommandBuffers,
-          cfg != null && cfg.enableArgumentBuffers, fpsCap, vsync, rd, sd);
-
-      if (cfg != null && cfg.enableMeshShaders && !meshOn) {
-        MetalLogger.warn("starting: asked for mesh shader but refused " +
-            "check capability fallback path selection.");
-      }
-      if (cfg != null && cfg.enableIndirectCommandBuffers && !indOk) {
-        MetalLogger.warn("starting: icb unsupported");
-      }
-      if (vsync || (fpsCap > 0 && fpsCap <= 60)) {
-        MetalLogger.warn("starting: fps capped (vsync=%s cap=%d)",
-            vsync, fpsCap);
-      }
-    } catch (Throwable t) {
-      MetalLogger.warn("starting diag fail: %s", t.getMessage());
+    private static void applyFpsPriorityMode(Minecraft mc) {
+        if (mc == null || mc.options == null || config == null ||
+                !config.prioritizeFpsOverTps) {
+            return;
+        }
+        try {
+            if (mc.options.simulationDistance().get() > FPS_PRIORITY_SIMULATION_DISTANCE) {
+                mc.options.simulationDistance().set(FPS_PRIORITY_SIMULATION_DISTANCE);
+                mc.options.save();
+            }
+        } catch (Exception ignored) {
+        }
     }
-  }
+
+    private static void drainRenderer() {
+        if (renderer == null || !renderer.isAvailable() ||
+                !NativeBridge.isLibLoaded()) {
+            return;
+        }
+        try {
+            NativeBridge.nFlushFrames();
+            NativeBridge.nWaitForRender(renderer.getHandle());
+        } catch (Throwable t) {
+            MetalLogger.warn("drain fail: %s", t.getMessage());
+        }
+    }
+
+    public static void openSettingsScreen(Minecraft mc) {
+        if (mc == null) {
+            return;
+        }
+        try {
+            mc.execute(() -> mc.setScreen(new MetalRenderSettingsScreen(mc.screen)));
+            MetalLogger.info("open scween ok");
+        } catch (Exception e) {
+            MetalLogger.warn("open scween fail: %s", e.getMessage());
+        }
+    }
+
+    private static void initMetal(Minecraft mc) {
+        try {
+            NativeBridge.loadLibrary();
+        } catch (UnsatisfiedLinkError e) {
+            MetalLogger.error("lib load fail.", e);
+            return;
+        }
+
+        try {
+            if (!MetalHardwareChecker.isMetalSupported()) {
+                MetalLogger.warn("no metal");
+                return;
+            }
+
+            renderer = new MetalRenderer();
+            var win = mc.getWindow();
+            int w = win != null ? win.getWidth() : 0;
+            int h = win != null ? win.getHeight() : 0;
+            renderer.init(w, h);
+            metalUp = renderer.isAvailable();
+            if (!metalUp) {
+                return;
+            }
+
+            worldRenderer = new MetalWorldRenderer();
+            logStartDiag(mc);
+            MetalLogger.info("metal weady: " + MetalHardwareChecker.getDeviceName());
+        } catch (Exception e) {
+            MetalLogger.error("init fail", e);
+            metalUp = false;
+        }
+    }
+
+    public static MetalRenderer getRenderer() {
+        return renderer;
+    }
+
+    public static MetalRenderConfig getConfig() {
+        return config;
+    }
+
+    public static boolean isMetalAvailable() {
+        return metalUp;
+    }
+
+    public static boolean isEnabled() {
+        return config != null && config.enableMetalRendering && metalUp &&
+                renderer != null && renderer.isAvailable();
+    }
+
+    public static MetalWorldRenderer getWorldRenderer() {
+        return worldRenderer;
+    }
+
+    public static boolean isSodiumLoaded() {
+        return FabricLoader.getInstance().isModLoaded("sodium");
+    }
+
+    private static void logStartDiag(Minecraft mc) {
+        try {
+            var o = mc.options;
+            var cfg = config;
+            int fpsCap = o != null && o.framerateLimit() != null
+                    ? o.framerateLimit().get()
+                    : -1;
+            boolean vsync = o != null && o.enableVsync() != null &&
+                    Boolean.TRUE.equals(o.enableVsync().get());
+            int rd = o != null && o.renderDistance() != null
+                    ? o.renderDistance().get()
+                    : -1;
+            int sd = o != null && o.simulationDistance() != null
+                    ? o.simulationDistance().get()
+                    : -1;
+
+            boolean meshOk = NativeBridge.nSupportsMeshShaders();
+            boolean indOk = NativeBridge.nSupportsIndirect();
+            boolean meshOn = NativeBridge.nAreMeshShadersActive();
+            boolean gpuOn = NativeBridge.nIsGPUDrivenActive();
+
+            MetalLogger.info(
+                    "starting: supportsMesh=%s supportsIndirect=%s meshActive=%s " +
+                            "gpuDriven=%s cfg(mesh=%s icb=%s argBuf=%s) fpsLimit=%d vsync=%s " +
+                            "rd=%d sd=%d",
+                    meshOk, indOk, meshOn, gpuOn, cfg != null && cfg.enableMeshShaders,
+                    cfg != null && cfg.enableIndirectCommandBuffers,
+                    cfg != null && cfg.enableArgumentBuffers, fpsCap, vsync, rd, sd);
+
+            if (cfg != null && cfg.enableMeshShaders && !meshOn) {
+                MetalLogger.warn("starting: asked for mesh shader but refused " +
+                        "check capability fallback path selection.");
+            }
+            if (cfg != null && cfg.enableIndirectCommandBuffers && !indOk) {
+                MetalLogger.warn("starting: icb unsupported");
+            }
+            if (vsync || (fpsCap > 0 && fpsCap <= 60)) {
+                MetalLogger.warn("starting: fps capped (vsync=%s cap=%d)",
+                        vsync, fpsCap);
+            }
+        } catch (Throwable t) {
+            MetalLogger.warn("starting diag fail: %s", t.getMessage());
+        }
+    }
 }

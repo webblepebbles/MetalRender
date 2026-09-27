@@ -1,243 +1,248 @@
 package com.pebbles_boon.metalrender.nativebridge;
 
 public final class NativeBridge {
-  private static volatile boolean libLoaded;
-  static {
-    try {
-      NativeLoader.load();
-      java.nio.file.Path extracted = NativeLoader.getLoadedPath();
-      if (extracted != null) {
-        libLoaded = true;
-      } else {
-        System.loadLibrary("metalrender");
-        libLoaded = true;
-      }
-    } catch (UnsatisfiedLinkError e) {
-      System.err.println("[MetalRender] native metalrender library unavailable: "
-          + e.getMessage());
-      libLoaded = false;
-    } catch (Throwable t) {
-      System.err.println("[MetalRender] native metalrender library failed to load: "
-          + t.getClass().getSimpleName() + ": " + t.getMessage());
-      libLoaded = false;
+    private static volatile boolean libLoaded;
+    static {
+        try {
+            NativeLoader.load();
+            java.nio.file.Path extracted = NativeLoader.getLoadedPath();
+            if (extracted != null) {
+                libLoaded = true;
+            } else {
+                System.loadLibrary("metalrender");
+                libLoaded = true;
+            }
+        } catch (UnsatisfiedLinkError e) {
+            System.err.println("[MetalRender] native metalrender library unavailable: "
+                    + e.getMessage());
+            libLoaded = false;
+        } catch (Throwable t) {
+            System.err.println("[MetalRender] native metalrender library failed to load: "
+                    + t.getClass().getSimpleName() + ": " + t.getMessage());
+            libLoaded = false;
+        }
     }
-  }
 
-  private NativeBridge() {
-  }
-
-  public static void loadLibrary() {
-    if (!libLoaded) {
-      try {
-        NativeLoader.load();
-      } catch (RuntimeException e) {
-        System.err.println("[MetalRender] NativeLoader failed, trying loadLibrary: "
-            + e.getMessage());
-      }
-      if (NativeLoader.getLoadedPath() != null) {
-        libLoaded = true;
-        return;
-      }
-      System.loadLibrary("metalrender");
-      libLoaded = true;
+    private NativeBridge() {
     }
-  }
 
-  public static boolean isLibLoaded() {
-    return libLoaded;
-  }
+    public static void loadLibrary() {
+        if (!libLoaded) {
+            try {
+                NativeLoader.load();
+            } catch (RuntimeException e) {
+                System.err.println("[MetalRender] NativeLoader failed, trying loadLibrary: "
+                        + e.getMessage());
+            }
+            if (NativeLoader.getLoadedPath() != null) {
+                libLoaded = true;
+                return;
+            }
+            System.loadLibrary("metalrender");
+            libLoaded = true;
+        }
+    }
 
-  public static native boolean nIsAvailable();
+    public static boolean isLibLoaded() {
+        return libLoaded;
+    }
 
-  public static native long nInit(int width, int height, float scale,
-      boolean temporalMetalFX);
+    public static native boolean nIsAvailable();
 
-  public static native void nResize(long handle, int width, int height,
-      float scale, boolean temporalMetalFX);
+    public static native long nInit(int width, int height, float scale,
+            boolean temporalMetalFX);
 
-  public static native void nDestroy(long handle);
+    public static native void nResize(long handle, int width, int height,
+            float scale, boolean temporalMetalFX);
 
-  public static native String nGetDeviceName();
+    public static native void nDestroy(long handle);
 
-  public static native boolean nSupportsIndirect();
+    public static native String nGetDeviceName();
 
-  public static native boolean nSupportsMeshShaders();
+    public static native boolean nSupportsIndirect();
 
-  public static native long nCreateBufferWithHint(long deviceHandle, int sizeBytes,
-      int storageMode, long oldHandle);
+    public static native boolean nSupportsMeshShaders();
 
-  public static native long nCreateBuffer(long deviceHandle, int sizeBytes,
-      int storageMode);
+    public static native long nCreateBufferWithHint(long deviceHandle, int sizeBytes,
+            int storageMode, long oldHandle);
 
-  public static native void nUploadBufferData(long bufferHandle, byte[] data,
-      int offset, int length);
+    public static native long nCreateBuffer(long deviceHandle, int sizeBytes,
+            int storageMode);
 
-  public static native void nUploadBufferDataDirect(long bufferHandle,
-      java.nio.ByteBuffer data,
-      int offset, int length);
+    public static native void nUploadBufferData(long bufferHandle, byte[] data,
+            int offset, int length);
 
-  public static native void nDestroyBuffer(long bufferHandle);
+    public static native void nUploadBufferDataDirect(long bufferHandle,
+            java.nio.ByteBuffer data,
+            int offset, int length);
 
-  public static native void nSetPipelineState(long frameContext,
-      long pipelineHandle);
+    public static native void nDestroyBuffer(long bufferHandle);
 
-  public static native void nSetChunkOffset(long frameContext, float x, float y,
-      float z);
+    public static native void nSetPipelineState(long frameContext,
+            long pipelineHandle);
 
-  public static native long nGetCurrentFrameContext(long handle);
+    public static native void nSetChunkOffset(long frameContext, float x, float y,
+            float z);
 
-  public static native void nEndFrame(long handle);
+    public static native long nGetCurrentFrameContext(long handle);
 
-  public static native void nSetProjectionMatrix(long handle, float[] matrix);
+    public static native void nEndFrame(long handle);
 
-  public static native void nSetModelViewMatrix(long handle, float[] matrix);
+    public static native void nSetProjectionMatrix(long handle, float[] matrix);
 
-  public static native void nSetCameraPosition(long handle, double x, double y,
-      double z);
+    public static native void nSetModelViewMatrix(long handle, float[] matrix);
 
-  public static native void nSetCameraDirection(long handle, float x, float y,
-      float z);
+    public static native void nSetCameraPosition(long handle, double x, double y,
+            double z);
 
-  public static native void nSetCameraFacingCulling(boolean enabled);
+    public static native void nSetCameraDirection(long handle, float x, float y,
+            float z);
 
-  public static native void nGetCameraFacingCullStats(int[] outStats);
+    public static native void nSetCameraFacingCulling(boolean enabled);
 
-  public static native void nBindTexture(long handle, long textureHandle,
-      int slot);
+    public static native void nGetCameraFacingCullStats(int[] outStats);
 
-  public static native long nCreateTexture2D(long deviceHandle, int width,
-      int height, int mipLevels, byte[] pixelData);
+    public static native void nBindTexture(long handle, long textureHandle,
+            int slot);
 
-  public static native void nDestroyTexture2D(long textureHandle);
+    public static native long nCreateTexture2D(long deviceHandle, int width,
+            int height, int mipLevels, byte[] pixelData);
 
-  public static native void nUpdateTexture2D(long textureHandle, int width,
-      int height, byte[] pixelData);
+    public static native void nDestroyTexture2D(long textureHandle);
 
-  public static native void nUpdateTexture2DRegion(long textureHandle,
-      int srcWidth, int x, int y, int w, int h, byte[] pixelData);
+    public static native void nUpdateTexture2D(long textureHandle, int width,
+            int height, byte[] pixelData);
 
-  public static native long nGetDeviceHandle(long handle);
+    public static native void nUpdateTexture2DRegion(long textureHandle,
+            int srcWidth, int x, int y, int w, int h, byte[] pixelData);
 
-  public static native long nGetShaderLibraryHandle(long handle);
+    public static native long nGetDeviceHandle(long handle);
 
-  public static native long nGetInhousePipelineHandle(long handle);
+    public static native long nGetShaderLibraryHandle(long handle);
 
-  public static native int nGetIOSurfaceWidth(long handle);
+    public static native long nGetInhousePipelineHandle(long handle);
 
-  public static native int nGetIOSurfaceHeight(long handle);
+    public static native int nGetIOSurfaceWidth(long handle);
 
-  public static native void nWaitForRender(long handle);
+    public static native int nGetIOSurfaceHeight(long handle);
 
-  public static native boolean nIsFrameReady(long handle);
+    public static native void nWaitForRender(long handle);
 
-  public static native void nSetReuseTerrainFrame(boolean reuse);
+    public static native boolean nIsFrameReady(long handle);
 
-  public static native boolean nBindIOSurfaceToTexture(long handle,
-      int glTexture);
+    public static native void nSetReuseTerrainFrame(boolean reuse);
 
-  public static native boolean nReadbackPixels(long handle,
-      java.nio.ByteBuffer dest);
+    public static native boolean nBindIOSurfaceToTexture(long handle,
+            int glTexture);
 
-  public static native boolean nReadbackDepth(long handle,
-      java.nio.ByteBuffer dest);
+    public static native boolean nReadbackPixels(long handle,
+            java.nio.ByteBuffer dest);
 
-  public static native long nGetParticlePipelineHandle(long handle);
+    public static native boolean nReadbackDepth(long handle,
+            java.nio.ByteBuffer dest);
 
-  public static native long nGetWeatherPipelineHandle(long handle);
+    public static native long nGetParticlePipelineHandle(long handle);
 
-  public static native long nGetEntityPipelineHandle(long handle);
+    public static native long nGetWeatherPipelineHandle(long handle);
 
-  public static native long nGetEntityTranslucentPipelineHandle(long handle);
+    public static native long nGetEntityPipelineHandle(long handle);
 
-  public static native void nSetEntityOverlay(long frameContext, float hurtTime,
-      float whiteFlash, float alpha);
+    public static native long nGetEntityTranslucentPipelineHandle(long handle);
 
-  public static native void nSetWaterFog(long frameContext, float waterFog);
+    public static native void nSetEntityOverlay(long frameContext, float hurtTime,
+            float whiteFlash, float alpha);
 
-  public static native void nSetFog(float r, float g, float b,
-      float envStart, float envEnd, float renderStart, float renderEnd);
+    public static native void nSetWaterFog(long frameContext, float waterFog);
 
-  public static native void nSetSkyBrightness(long frameContext,
-      float brightness);
+    public static native void nSetFog(float r, float g, float b,
+            float envStart, float envEnd, float renderStart, float renderEnd);
 
-  public static native void nBindEntityTexture(long frameContext,
-      long textureHandle);
+    public static native void nSetSkyBrightness(long frameContext,
+            float brightness);
 
-  public static native void nDrawEntityBuffer(long frameContext,
-      long vertexBuffer,
-      int vertexCount, int baseVertex,
-      int renderFlags);
+    public static native void nBindEntityTexture(long frameContext,
+            long textureHandle);
 
-  public static native void nSetDebugColor(long frameContext, float r, float g,
-      float b, float a);
+    public static native void nDrawEntityBuffer(long frameContext,
+            long vertexBuffer,
+            int vertexCount, int baseVertex,
+            int renderFlags);
 
-  public static native void nDrawTriangleBuffer(long frameContext, long vertexBuffer, int vertexCount);
+    public static native void nSetDebugColor(long frameContext, float r, float g,
+            float b, float a);
 
-  public static native void nUploadSubChunkData(long handle, java.nio.ByteBuffer directBuffer, int count);
+    public static native void nDrawTriangleBuffer(long frameContext, long vertexBuffer, int vertexCount);
 
-  public static native void nUploadChunkUniforms(long handle, java.nio.ByteBuffer directBuffer,
-      int count);
+    public static native void nUploadSubChunkData(long handle, java.nio.ByteBuffer directBuffer, int count);
 
-  public static native int nRunGPUCulling(long handle, int chunkCount);
+    public static native void nUploadChunkUniforms(long handle, java.nio.ByteBuffer directBuffer,
+            int count);
 
-  public static native int nExecuteGpuCulledDraws(long frameContext, long indexBuffer);
+    public static native int nRunGPUCulling(long handle, int chunkCount);
 
-  public static native int nGetGPUVisibleCount(long handle);
+    public static native int nExecuteGpuCulledDraws(long frameContext, long indexBuffer);
 
-  public static native void nSetHiZCullEnabled(boolean enabled);
+    public static native int nGetGPUVisibleCount(long handle);
 
-  public static native boolean nIsHiZReady();
+    public static native void nSetHiZCullEnabled(boolean enabled);
 
-  public static native void nSetClusterCullingEnabled(boolean enabled);
+    public static native boolean nIsHiZReady();
 
-  public static native void nUploadClusterVisibilityKeys(long[] keys, int count);
+    public static native void nSetClusterCullingEnabled(boolean enabled);
 
-  public static native void nSetTranslucencySortEnabled(boolean enabled);
+    public static native void nUploadClusterVisibilityKeys(long[] keys, int count);
 
-  public static native int nGetThermalState();
-  public static native float nGetGpuFrameTimeMs();
-  public static native boolean nAreResidencySetsSupported();
-  public static native long nCreateResidencySet(long device);
-  public static native void nUpdateResidencySet(long set, long[] textures);
-  public static native void nDestroyResidencySet(long set);
+    public static native void nSetTranslucencySortEnabled(boolean enabled);
 
-  public static native void nSetRenderDistance(int distanceBlocks);
+    public static native int nGetThermalState();
 
-  public static native void nSetLodRecencyEnabled(boolean enabled);
+    public static native float nGetGpuFrameTimeMs();
 
-  public static native int nGetLodDrawnFrames(long[] outKeys, int[] outFrames);
+    public static native boolean nAreResidencySetsSupported();
 
-  public static native boolean nIsGPUDrivenActive();
+    public static native long nCreateResidencySet(long device);
 
-  public static native boolean nAreMeshShadersActive();
+    public static native void nUpdateResidencySet(long set, long[] textures);
 
-  public static native void nRegisterChunkMeshBatch(int count, long[] batchData);
+    public static native void nDestroyResidencySet(long set);
 
-  public static native void nRegisterChunkMesh(int cx, int cy, int cz,
-      long bufferHandle, int quadCount,
-      int opaqueQuadCount,
-      long visibilityMask, int[] facingQuadCounts,
-      int lodTier);
+    public static native void nSetRenderDistance(int distanceBlocks);
 
-  public static native void nUnregisterChunkMesh(int cx, int cy, int cz);
+    public static native void nSetLodRecencyEnabled(boolean enabled);
 
-  public static native int nDrawAllVisibleChunks(long frameContext,
-      long indexBuffer);
+    public static native int nGetLodDrawnFrames(long[] outKeys, int[] outFrames);
 
-  public static native void nFlushFrames();
+    public static native boolean nIsGPUDrivenActive();
 
-  public static native void nClearAllChunkRegistrations();
+    public static native boolean nAreMeshShadersActive();
 
-  public static native void nFlushDeferredDeletions();
+    public static native void nRegisterChunkMeshBatch(int count, long[] batchData);
 
-  public static native void nDrawDeferredWaterPass(long frameContext);
+    public static native void nRegisterChunkMesh(int cx, int cy, int cz,
+            long bufferHandle, int quadCount,
+            int opaqueQuadCount,
+            long visibilityMask, int[] facingQuadCounts,
+            int lodTier);
 
-  public static native boolean nAreArgumentBuffersActive();
+    public static native void nUnregisterChunkMesh(int cx, int cy, int cz);
 
-  public static native void nSetFeatureFlags(boolean enableIndirectCommandBuffers,
-      boolean enableMeshShaders, boolean enableArgumentBuffers,
-      boolean enableProgrammableBlending);
+    public static native int nDrawAllVisibleChunks(long frameContext,
+            long indexBuffer);
 
-  public static native void nDrawOITPass(long frameContext);
+    public static native void nFlushFrames();
+
+    public static native void nClearAllChunkRegistrations();
+
+    public static native void nFlushDeferredDeletions();
+
+    public static native void nDrawDeferredWaterPass(long frameContext);
+
+    public static native boolean nAreArgumentBuffersActive();
+
+    public static native void nSetFeatureFlags(boolean enableIndirectCommandBuffers,
+            boolean enableMeshShaders, boolean enableArgumentBuffers,
+            boolean enableProgrammableBlending);
+
+    public static native void nDrawOITPass(long frameContext);
 
 }

@@ -10,13 +10,13 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(targets = "net.minecraft.client.renderer.texture.SpriteContents$AnimationState")
 public class SpriteContentsTickerMixin {
 
-  @Shadow
-  private boolean isDirty;
+    @Shadow
+    private boolean isDirty;
 
-  @Inject(method = "tick", at = @At("TAIL"))
-  private void metalrender$onAnimationTick(CallbackInfo ci) {
-    if (isDirty) {
-      MetalTextureManager.markAtlasDirty();
+    @Inject(method = "tick", at = @At("TAIL"))
+    private void metalrender$onAnimationTick(CallbackInfo ci) {
+        if (isDirty) {
+            MetalTextureManager.markAtlasDirty();
+        }
     }
-  }
 }

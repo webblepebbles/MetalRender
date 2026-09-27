@@ -15,69 +15,68 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
 @Mixin(targets = "net.minecraft.client.renderer.LevelRenderer", remap = false)
 public class WorldRendererTerrainMixin {
-  @Unique
-  private int metalrender$skippedTerrainGroups = 0;
-  @Unique
-  private boolean metalrender$loggedWaitingForMetalDraw = false;
+    @Unique
+    private int metalrender$skippedTerrainGroups = 0;
+    @Unique
+    private boolean metalrender$loggedWaitingForMetalDraw = false;
 
-  @Unique
-  private boolean metalrender$shouldSkipVanillaTerrain() {
-    if (!MetalRenderClient.isEnabled()) {
-      metalrender$loggedWaitingForMetalDraw = false;
-      return false;
-    }
-    MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
-    if (wr == null || !wr.metalActive()) {
-      metalrender$loggedWaitingForMetalDraw = false;
-      return false;
+    @Unique
+    private boolean metalrender$shouldSkipVanillaTerrain() {
+        if (!MetalRenderClient.isEnabled()) {
+            metalrender$loggedWaitingForMetalDraw = false;
+            return false;
+        }
+        MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
+        if (wr == null || !wr.metalActive()) {
+            metalrender$loggedWaitingForMetalDraw = false;
+            return false;
+        }
+
+        if (!metalrender$loggedWaitingForMetalDraw) {
+            MetalLogger.info("[terrainmix] metal on; vanilla locked");
+            metalrender$loggedWaitingForMetalDraw = true;
+        }
+        return true;
     }
 
-    if (!metalrender$loggedWaitingForMetalDraw) {
-      MetalLogger.info("[terrainmix] metal on; vanilla locked");
-      metalrender$loggedWaitingForMetalDraw = true;
+    @Redirect(method = "lambda$addMainPass$0", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/chunk/"
+            + "ChunkSectionsToRender;renderGroup(Lnet/minecraft/"
+            + "client/renderer/chunk/ChunkSectionLayerGroup;Lcom/"
+            + "mojang/blaze3d/textures/GpuSampler;)V", ordinal = 0), require = 0)
+    private void metalrender$skipOpaqueTerrainGroup(ChunkSectionsToRender sections,
+            ChunkSectionLayerGroup group,
+            GpuSampler sampler) {
+        if (metalrender$shouldSkipVanillaTerrain()) {
+            return;
+        }
+        sections.renderGroup(group, sampler);
     }
-    return true;
-  }
 
-  @Redirect(method = "lambda$addMainPass$0", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/chunk/"
-      + "ChunkSectionsToRender;renderGroup(Lnet/minecraft/"
-      + "client/renderer/chunk/ChunkSectionLayerGroup;Lcom/"
-      + "mojang/blaze3d/textures/GpuSampler;)V", ordinal = 0), require = 0)
-  private void metalrender$skipOpaqueTerrainGroup(ChunkSectionsToRender sections,
-      ChunkSectionLayerGroup group,
-      GpuSampler sampler) {
-    if (metalrender$shouldSkipVanillaTerrain()) {
-      return;
+    @Redirect(method = "lambda$addMainPass$0", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/chunk/"
+            + "ChunkSectionsToRender;renderGroup(Lnet/minecraft/"
+            + "client/renderer/chunk/ChunkSectionLayerGroup;Lcom/"
+            + "mojang/blaze3d/textures/GpuSampler;)V", ordinal = 1), require = 0)
+    private void metalrender$skipTranslucentTerrainGroup(ChunkSectionsToRender sections,
+            ChunkSectionLayerGroup group,
+            GpuSampler sampler) {
+        if (metalrender$shouldSkipVanillaTerrain()) {
+            return;
+        }
+        sections.renderGroup(group, sampler);
     }
-    sections.renderGroup(group, sampler);
-  }
 
-  @Redirect(method = "lambda$addMainPass$0", at = @At(value = "INVOKE", target = "Lnet/minecraft/client/renderer/chunk/"
-      + "ChunkSectionsToRender;renderGroup(Lnet/minecraft/"
-      + "client/renderer/chunk/ChunkSectionLayerGroup;Lcom/"
-      + "mojang/blaze3d/textures/GpuSampler;)V", ordinal = 1), require = 0)
-  private void metalrender$skipTranslucentTerrainGroup(ChunkSectionsToRender sections,
-      ChunkSectionLayerGroup group,
-      GpuSampler sampler) {
-    if (metalrender$shouldSkipVanillaTerrain()) {
-      return;
+    @Inject(method = "lambda$addMainPass$0", at = @At("HEAD"), cancellable = true, require = 0)
+    private void metalrender$terrainHookHeartbeat(CallbackInfo ci) {
+        if (!metalrender$shouldSkipVanillaTerrain()) {
+            return;
+        }
+        metalrender$skippedTerrainGroups++;
+        if (metalrender$skippedTerrainGroups <= 3 ||
+                metalrender$skippedTerrainGroups % 1000 == 0) {
+            MetalLogger.info(
+                    "[terrainmix] cancelled pass #%d (section iteration skipped)",
+                    metalrender$skippedTerrainGroups);
+        }
+        ci.cancel();
     }
-    sections.renderGroup(group, sampler);
-  }
-
-  @Inject(method = "lambda$addMainPass$0", at = @At("HEAD"),
-      cancellable = true, require = 0)
-  private void metalrender$terrainHookHeartbeat(CallbackInfo ci) {
-    if (!metalrender$shouldSkipVanillaTerrain()) {
-      return;
-    }
-    metalrender$skippedTerrainGroups++;
-    if (metalrender$skippedTerrainGroups <= 3 ||
-        metalrender$skippedTerrainGroups % 1000 == 0) {
-      MetalLogger.info(
-          "[terrainmix] cancelled pass #%d (section iteration skipped)",
-          metalrender$skippedTerrainGroups);
-    }
-    ci.cancel();
-  }
 }

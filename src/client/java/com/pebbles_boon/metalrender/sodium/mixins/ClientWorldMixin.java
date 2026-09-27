@@ -14,26 +14,26 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 @Mixin(ClientLevel.class)
 public class ClientWorldMixin {
 
-  @Inject(method = "sendBlockUpdated", at = @At("RETURN"), require = 0)
-  private void metalrender$onHandleBlockUpdate(BlockPos pos, BlockState state,
-      BlockState oldState, int flags,
-      CallbackInfo ci) {
-    if (state == oldState || (state != null && state.equals(oldState))) {
-      return;
+    @Inject(method = "sendBlockUpdated", at = @At("RETURN"), require = 0)
+    private void metalrender$onHandleBlockUpdate(BlockPos pos, BlockState state,
+            BlockState oldState, int flags,
+            CallbackInfo ci) {
+        if (state == oldState || (state != null && state.equals(oldState))) {
+            return;
+        }
+        metalrender$triggerRebuild(pos);
     }
-    metalrender$triggerRebuild(pos);
-  }
 
-  private void metalrender$triggerRebuild(BlockPos pos) {
-    if (!MetalRenderClient.getConfig().enableMetalRendering)
-      return;
-    MetalWorldRenderer worldRenderer = MetalWorldRenderer.getInstance();
-    if (worldRenderer == null || !worldRenderer.isReady()) {
-      MetalLogger.debug(
-          "block [%d,%d,%d] skip; wendewer not weady",
-          pos.getX(), pos.getY(), pos.getZ());
-      return;
+    private void metalrender$triggerRebuild(BlockPos pos) {
+        if (!MetalRenderClient.getConfig().enableMetalRendering)
+            return;
+        MetalWorldRenderer worldRenderer = MetalWorldRenderer.getInstance();
+        if (worldRenderer == null || !worldRenderer.isReady()) {
+            MetalLogger.debug(
+                    "block [%d,%d,%d] skip; wendewer not weady",
+                    pos.getX(), pos.getY(), pos.getZ());
+            return;
+        }
+        worldRenderer.scheduleSectionRebuild(pos.getX(), pos.getY(), pos.getZ());
     }
-    worldRenderer.scheduleSectionRebuild(pos.getX(), pos.getY(), pos.getZ());
-  }
 }

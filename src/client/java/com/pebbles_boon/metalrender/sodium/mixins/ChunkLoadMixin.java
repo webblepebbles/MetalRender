@@ -16,25 +16,25 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfoReturnable;
 
 @Mixin(ClientChunkCache.class)
 public class ChunkLoadMixin {
-  @Inject(method = "replaceWithPacketData", at = @At("RETURN"), require = 0)
-  private void metalrender$onChunkLoaded(
-      int x, int z, FriendlyByteBuf buf, Map<?, ?> heightmaps,
-      Consumer<ClientboundLevelChunkPacketData.BlockEntityTagOutput> blockEntityOutput,
-      CallbackInfoReturnable<LevelChunk> cir) {
-    if (!MetalRenderClient.isEnabled())
-      return;
-    MetalWorldRenderer wr = MetalWorldRenderer.getInstance();
-    if (wr == null || !wr.isReady()) {
-      MetalLogger.debug(
-          "chunk [%d,%d] skip; wendewer not weady",
-          x, z);
-      return;
+    @Inject(method = "replaceWithPacketData", at = @At("RETURN"), require = 0)
+    private void metalrender$onChunkLoaded(
+            int x, int z, FriendlyByteBuf buf, Map<?, ?> heightmaps,
+            Consumer<ClientboundLevelChunkPacketData.BlockEntityTagOutput> blockEntityOutput,
+            CallbackInfoReturnable<LevelChunk> cir) {
+        if (!MetalRenderClient.isEnabled())
+            return;
+        MetalWorldRenderer wr = MetalWorldRenderer.getInstance();
+        if (wr == null || !wr.isReady()) {
+            MetalLogger.debug(
+                    "chunk [%d,%d] skip; wendewer not weady",
+                    x, z);
+            return;
+        }
+        LevelChunk chunk = cir.getReturnValue();
+        if (chunk != null) {
+            wr.onChunkLoaded(x, z, chunk);
+        } else {
+            MetalLogger.warn("chunk [%d,%d] null", x, z);
+        }
     }
-    LevelChunk chunk = cir.getReturnValue();
-    if (chunk != null) {
-      wr.onChunkLoaded(x, z, chunk);
-    } else {
-      MetalLogger.warn("chunk [%d,%d] null", x, z);
-    }
-  }
 }
