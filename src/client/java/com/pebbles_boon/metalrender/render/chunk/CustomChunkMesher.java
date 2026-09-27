@@ -2026,6 +2026,9 @@ public class CustomChunkMesher {
     int opaqueQuadCount = 0;
     int waterQuadCount = 0;
     private final float[] cornerHeights = new float[4];
+    private boolean[] greedyCovered = null;
+    private int greedyMergedQuads = 0;
+    private int greedyCoveredFaces = 0;
 
     MeshBuilder(ByteBuffer solidBuffer, ByteBuffer waterBuffer, BlockStateModelSet blockModels,
         SectionSnapshot snapshot, MeshBuildContext context, int chunkX, int chunkY, int chunkZ,
@@ -2061,6 +2064,17 @@ public class CustomChunkMesher {
     void build() {
       if (snapshot == null || snapshot.paddedBlockStates == null)
         return;
+      if (lodTier >= 1 && blockModels != null) {
+        try {
+          MetalRenderConfig cfg = MetalRenderClient.getConfig();
+          boolean wantGreedy = (lodTier == 1 && (cfg == null || cfg.enableGreedyMid))
+              || (lodTier >= 2 && (cfg == null || cfg.enableGreedyFar));
+          if (wantGreedy) {
+            buildGreedyPass();
+          }
+        } catch (Exception ignored) {
+        }
+      }
       RandomSource random = REUSABLE_RANDOM.get();
       BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
       for (int y = 0; y < SECTION_SIZE; y++) {
@@ -2090,6 +2104,475 @@ public class CustomChunkMesher {
             }
           }
         }
+      }
+      if (greedyMergedQuads > 0 && MetalRenderConfig.isDeepDebugActive()) {
+        MetalLogger.info("greedy lod%d: merged=%d faces=%d",
+            lodTier, greedyMergedQuads, greedyCoveredFaces);
+      }
+    }
+
+    private boolean isGreedyCovered(int x, int y, int z, Direction dir) {
+      if (greedyCovered == null)
+        return false;
+      int cell = (y * SECTION_SIZE + z) * SECTION_SIZE + x;
+      return greedyCovered[cell * 6 + dir.get3DDataValue()];
+    }
+
+    private void setGreedyCovered(int x, int y, int z, Direction dir) {
+      if (greedyCovered == null)
+        return;
+      int cell = (y * SECTION_SIZE + z) * SECTION_SIZE + x;
+      int idx = cell * 6 + dir.get3DDataValue();
+      if (!greedyCovered[idx]) {
+        greedyCovered[idx] = true;
+        greedyCoveredFaces++;
+      }
+    }
+
+    private static final class GreedyTemplate {
+      final float[] px = new float[4];
+      final float[] py = new float[4];
+      final float[] pz = new float[4];
+      final float[] u = new float[4];
+      final float[] v = new float[4];
+      final int tintIndex;
+      final boolean tinted;
+      final int spriteHash;
+      final int uvHash;
+      final int posHash;
+      GreedyTemplate(float[] px, float[] py, float[] pz, float[] u, float[] v,
+          int tintIndex, boolean tinted, int spriteHash, int uvHash, int posHash) {
+        System.arraycopy(px, 0, this.px, 0, 4);
+        System.arraycopy(py, 0, this.py, 0, 4);
+        System.arraycopy(pz, 0, this.pz, 0, 4);
+        System.arraycopy(u, 0, this.u, 0, 4);
+        System.arraycopy(v, 0, this.v, 0, 4);
+        this.tintIndex = tintIndex;
+        this.tinted = tinted;
+        this.spriteHash = spriteHash;
+        this.uvHash = uvHash;
+        this.posHash = posHash;
+      }
+    }
+
+    private static final class GreedyStateInfo {
+      final GreedyTemplate[] byDir = new GreedyTemplate[6];
+    }
+
+    private void buildGreedyPass() {
+      greedyCovered = new boolean[SECTION_SIZE * SECTION_SIZE * SECTION_SIZE * 6];
+      greedyMergedQuads = 0;
+      greedyCoveredFaces = 0;
+      java.util.HashMap<Integer, GreedyStateInfo> stateCache = new java.util.HashMap<>(128);
+      for (Direction dir : ALL_DIRECTIONS) {
+        try {
+          greedyForDirection(dir, stateCache);
+        } catch (Exception ignored) {
+        }
+      }
+    }
+ //please read agents.md 
+    private GreedyStateInfo getGreedyStateInfo(int stateId, java.util.HashMap<Integer, GreedyStateInfo> cache) {
+      GreedyStateInfo cached = cache.get(stateId);
+      if (cached != null)
+        return cached;
+      GreedyStateInfo info = new GreedyStateInfo();
+      cache.put(stateId, info);
+      BlockState state;
+      try {
+        state = getStateById(stateId);
+      } catch (Exception ignored) {
+        return info;
+      }
+      try {
+        if (state.isAir() || !state.isSolidRender())
+          return info;
+        if (state.getRenderShape() != net.minecraft.world.level.block.RenderShape.MODEL)
+          return info;
+        if (state.getBlock() instanceof LeavesBlock) {
+        }
+        BlockStateModel model = getCachedModel(state);
+        if (model == null)
+          return info;
+        BlockPos dummyA = new BlockPos(0, 0, 0);
+        BlockPos dummyB = new BlockPos(7, 3, 11);
+        for (Direction dir : ALL_DIRECTIONS) {
+          GreedyTemplate tA = extractGreedyTemplate(state, model, dir, dummyA);
+          if (tA == null)
+            continue;
+          GreedyTemplate tB = extractGreedyTemplate(state, model, dir, dummyB);
+          if (tB == null)
+            continue;
+          if (tA.uvHash != tB.uvHash || tA.posHash != tB.posHash
+              || tA.spriteHash != tB.spriteHash || tA.tintIndex != tB.tintIndex
+              || tA.tinted != tB.tinted) {
+            continue;
+          }
+          info.byDir[dir.get3DDataValue()] = tA;
+        }
+      } catch (Exception ignored) {
+      }
+      return info;
+    }
+
+    private GreedyTemplate extractGreedyTemplate(BlockState state, BlockStateModel model,
+        Direction dir, BlockPos pos) {
+      try {
+        RandomSource random = REUSABLE_RANDOM.get();
+        try {
+          random.setSeed(state.getSeed(pos));
+        } catch (Exception ignored) {
+          random.setSeed(0);
+        }
+        java.util.ArrayList<BlockStateModelPart> parts = PARTS_POOL.get();
+        int saved = parts.size();
+        try {
+          model.collectParts(random, parts);
+          int quadCount = 0;
+          BakedQuad found = null;
+          for (int i = saved; i < parts.size(); i++) {
+            BlockStateModelPart part = parts.get(i);
+            if (part == null)
+              continue;
+            List<BakedQuad> quads;
+            try {
+              quads = part.getQuads(dir);
+            } catch (Exception ignored) {
+              continue;
+            }
+            if (quads == null || quads.isEmpty())
+              continue;
+            for (BakedQuad q : quads) {
+              if (q == null)
+                continue;
+              quadCount++;
+              if (found == null)
+                found = q;
+              if (quadCount > 1)
+                return null;
+            }
+          }
+          if (quadCount != 1 || found == null)
+            return null;
+          float[] qpx = new float[4];
+          float[] qpy = new float[4];
+          float[] qpz = new float[4];
+          float[] qu = new float[4];
+          float[] qv = new float[4];
+          for (int i = 0; i < 4; i++) {
+            org.joml.Vector3fc p = found.position(i);
+            qpx[i] = p.x();
+            qpy[i] = p.y();
+            qpz[i] = p.z();
+            long packedUV = found.packedUV(i);
+            qu[i] = Float.intBitsToFloat((int) (packedUV >> 32));
+            qv[i] = Float.intBitsToFloat((int) packedUV);
+          }
+          float plane;
+          switch (dir) {
+            case UP -> plane = 1.0f;
+            case DOWN -> plane = 0.0f;
+            case EAST -> plane = 1.0f;
+            case WEST -> plane = 0.0f;
+            case SOUTH -> plane = 1.0f;
+            default -> plane = 0.0f;
+          }
+          final float eps = 1.5e-3f;
+          for (int i = 0; i < 4; i++) {
+            float n = switch (dir.getAxis()) {
+              case X -> qpx[i];
+              case Y -> qpy[i];
+              default -> qpz[i];
+            };
+            if (Math.abs(n - plane) > eps)
+              return null;
+          }
+          float minX = 32, maxX = -32, minY = 32, maxY = -32, minZ = 32, maxZ = -32;
+          for (int i = 0; i < 4; i++) {
+            minX = Math.min(minX, qpx[i]);
+            maxX = Math.max(maxX, qpx[i]);
+            minY = Math.min(minY, qpy[i]);
+            maxY = Math.max(maxY, qpy[i]);
+            minZ = Math.min(minZ, qpz[i]);
+            maxZ = Math.max(maxZ, qpz[i]);
+          }
+          boolean full;
+          switch (dir.getAxis()) {
+            case X -> full = minY <= eps && maxY >= 1.0f - eps && minZ <= eps && maxZ >= 1.0f - eps;
+            case Y -> full = minX <= eps && maxX >= 1.0f - eps && minZ <= eps && maxZ >= 1.0f - eps;
+            default -> full = minX <= eps && maxX >= 1.0f - eps && minY <= eps && maxY >= 1.0f - eps;
+          }
+          if (!full)
+            return null;
+          TextureAtlasSprite sprite;
+          int tintIndex;
+          boolean tinted;
+          try {
+            sprite = found.materialInfo().sprite();
+            tintIndex = found.materialInfo().tintIndex();
+            tinted = found.materialInfo().isTinted() || tintIndex >= 0;
+            if (state.getBlock() == Blocks.GRASS_BLOCK && dir.getAxis() != Direction.Axis.Y) {
+              if (tinted || isGrassSideOverlay(sprite))
+                return null;
+              if (lodTier == 1)
+                return null;
+            }
+          } catch (Exception ignored) {
+            return null;
+          }
+          int spriteHash = System.identityHashCode(sprite);
+          int uvHash = 1;
+          for (int i = 0; i < 4; i++) {
+            uvHash = 31 * uvHash + Float.floatToIntBits(qu[i]);
+            uvHash = 31 * uvHash + Float.floatToIntBits(qv[i]);
+          }
+          int posHash = 1;
+          for (int i = 0; i < 4; i++) {
+            posHash = 31 * posHash + Float.floatToIntBits(qpx[i]);
+            posHash = 31 * posHash + Float.floatToIntBits(qpy[i]);
+            posHash = 31 * posHash + Float.floatToIntBits(qpz[i]);
+          }
+          return new GreedyTemplate(qpx, qpy, qpz, qu, qv, tintIndex, tinted, spriteHash, uvHash, posHash);
+        } finally {
+          while (parts.size() > saved)
+            parts.remove(parts.size() - 1);
+        }
+      } catch (Exception ignored) {
+        return null;
+      }
+    }
+
+    private static final class GreedyMaterial {
+      final int spriteHash;
+      final int uvHash;
+      final int posHash;
+      final int tintIndex;
+      final int tintColor;
+      final int light;
+      final int alpha;
+      final GreedyTemplate template;
+      final float shade;
+      GreedyMaterial(int spriteHash, int uvHash, int posHash, int tintIndex, int tintColor,
+          int light, int alpha, GreedyTemplate template, float shade) {
+        this.spriteHash = spriteHash;
+        this.uvHash = uvHash;
+        this.posHash = posHash;
+        this.tintIndex = tintIndex;
+        this.tintColor = tintColor;
+        this.light = light;
+        this.alpha = alpha;
+        this.template = template;
+        this.shade = shade;
+      }
+      @Override
+      public boolean equals(Object o) {
+        if (!(o instanceof GreedyMaterial m))
+          return false;
+        return spriteHash == m.spriteHash && uvHash == m.uvHash && posHash == m.posHash
+            && tintIndex == m.tintIndex && tintColor == m.tintColor && light == m.light
+            && alpha == m.alpha;
+      }
+      @Override
+      public int hashCode() {
+        int h = spriteHash;
+        h = 31 * h + uvHash;
+        h = 31 * h + posHash;
+        h = 31 * h + tintIndex;
+        h = 31 * h + tintColor;
+        h = 31 * h + light;
+        h = 31 * h + alpha;
+        return h; //i felt like adding a comment here
+      }
+    }
+
+    private void greedyForDirection(Direction dir,
+        java.util.HashMap<Integer, GreedyStateInfo> stateCache) {
+      int dirIdx = dir.get3DDataValue();
+      float shade = 1.0f;
+      try {
+        if (context != null && context.faceShade != null && dirIdx < context.faceShade.length)
+          shade = context.faceShade[dirIdx];
+      } catch (Exception ignored) {
+      }
+      int[] mask = new int[256];
+      GreedyMaterial[] matByIdx = new GreedyMaterial[256];
+      java.util.HashMap<GreedyMaterial, Integer> matToIdx = new java.util.HashMap<>(64);
+      int nextMatIdx = 1;
+      boolean[] consumed = new boolean[256];
+
+      for (int slice = 0; slice < SECTION_SIZE; slice++) {
+        java.util.Arrays.fill(mask, 0);
+        java.util.Arrays.fill(matByIdx, null);
+        java.util.Arrays.fill(consumed, false);
+        matToIdx.clear();
+        nextMatIdx = 1;
+
+        for (int v = 0; v < SECTION_SIZE; v++) {
+          for (int u = 0; u < SECTION_SIZE; u++) {
+            int x, y, z;
+            switch (dir.getAxis()) {
+              case Y -> { x = u; y = slice; z = v; }
+              case Z -> { x = u; y = v; z = slice; }
+              default -> { x = slice; y = v; z = u; }
+            }
+            int stateId = getPaddedBlockStateId(x, y, z);
+            if (stateId == 0)
+              continue;
+            BlockState state;
+            try {
+              state = getStateById(stateId);
+            } catch (Exception ignored) {
+              continue;
+            }
+            try {
+              if (state.isAir())
+                continue;
+            } catch (Exception ignored) {
+              continue;
+            }
+            GreedyStateInfo sinfo = getGreedyStateInfo(stateId, stateCache);
+            GreedyTemplate template = sinfo.byDir[dirIdx];
+            if (template == null)
+              continue;
+            boolean culled;
+            try {
+              culled = shouldCullFace(x, y, z, dir, state);
+            } catch (Exception ignored) {
+              continue;
+            }
+            if (culled)
+              continue;
+            int emission = 0;
+            try {
+              emission = state.getLightEmission();
+            } catch (Exception ignored) {
+            }
+            byte lightByte = computeFaceLightFast(x, y, z, dir, emission);
+            int light = lightByte & 0xFF;
+            int tintColor = 0xFFFFFF;
+            if (template.tinted) {
+              try {
+                tintColor = getBiomeTint(x, y, z, template.tintIndex);
+              } catch (Exception ignored) {
+                tintColor = 0xFFFFFF;
+              }
+            } else if (state.getBlock() == Blocks.GRASS_BLOCK && dir.getAxis() != Direction.Axis.Y) {
+              continue;
+            }
+            int alpha = 0xFF;
+            try {
+              if (state.getBlock() instanceof LeavesBlock)
+                alpha = 0xFE;
+            } catch (Exception ignored) {
+            }
+            GreedyMaterial key = new GreedyMaterial(template.spriteHash, template.uvHash,
+                template.posHash, template.tintIndex, tintColor, light, alpha, template, shade);
+            Integer idx = matToIdx.get(key);
+            if (idx == null) {
+              if (nextMatIdx >= matByIdx.length)
+                continue;
+              idx = nextMatIdx++;
+              matToIdx.put(key, idx);
+              matByIdx[idx] = key;
+            }
+            mask[v * SECTION_SIZE + u] = idx;
+          }
+        }
+
+        for (int v = 0; v < SECTION_SIZE; v++) {
+          for (int u = 0; u < SECTION_SIZE; u++) {
+            int mi = mask[v * SECTION_SIZE + u];
+            if (mi == 0 || consumed[v * SECTION_SIZE + u])
+              continue;
+            int w = 1;
+            while (u + w < SECTION_SIZE && !consumed[v * SECTION_SIZE + u + w]
+                && mask[v * SECTION_SIZE + u + w] == mi)
+              w++;
+            int h = 1;
+            outer: while (v + h < SECTION_SIZE) {
+              for (int k = 0; k < w; k++) {
+                if (consumed[(v + h) * SECTION_SIZE + u + k]
+                    || mask[(v + h) * SECTION_SIZE + u + k] != mi)
+                  break outer;
+              }
+              h++;
+            }
+            for (int dv = 0; dv < h; dv++)
+              for (int du = 0; du < w; du++)
+                consumed[(v + dv) * SECTION_SIZE + u + du] = true;
+            GreedyMaterial mat = matByIdx[mi];
+            if (mat != null) {
+              emitGreedyRect(dir, slice, u, v, w, h, mat);
+              for (int dv = 0; dv < h; dv++) {
+                for (int du = 0; du < w; du++) {
+                  int cu = u + du;
+                  int cv = v + dv;
+                  int cx, cy, cz;
+                  switch (dir.getAxis()) {
+                    case Y -> { cx = cu; cy = slice; cz = cv; }
+                    case Z -> { cx = cu; cy = cv; cz = slice; }
+                    default -> { cx = slice; cy = cv; cz = cu; }
+                  }
+                  setGreedyCovered(cx, cy, cz, dir);
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+
+    private void emitGreedyRect(Direction dir, int slice, int u0, int v0, int w, int h,
+        GreedyMaterial mat) {
+      try {
+        int u1 = u0 + w;
+        int v1 = v0 + h;
+        GreedyTemplate t = mat.template;
+        byte normalIndex = (byte) dir.get3DDataValue();
+        float shade = mat.shade;
+        int tint = mat.tintColor;
+        float tr = ((tint >> 16) & 0xFF) * shade;
+        float tg = ((tint >> 8) & 0xFF) * shade;
+        float tb = (tint & 0xFF) * shade;
+        byte r = (byte) Math.min(255, (int) tr);
+        byte g = (byte) Math.min(255, (int) tg);
+        byte b = (byte) Math.min(255, (int) tb);
+        byte a = (byte) (mat.alpha & 0xFF);
+        byte light = (byte) (mat.light & 0xFF);
+        for (int i = 0; i < 4; i++) {
+          float rx = t.px[i];
+          float ry = t.py[i];
+          float rz = t.pz[i];
+          float wx, wy, wz;
+          switch (dir.getAxis()) {
+            case Y -> {
+              wx = (rx < 0.5f ? u0 : u1);
+              wy = slice + (ry < 0.5f ? 0.0f : 1.0f);
+              if (dir == Direction.DOWN)
+                wy = slice + (ry < 0.5f ? 0.0f : 1.0f);
+              wz = (rz < 0.5f ? v0 : v1);
+            }
+            case Z -> {
+              wx = (rx < 0.5f ? u0 : u1);
+              wy = (ry < 0.5f ? v0 : v1);
+              wz = slice + (rz < 0.5f ? 0.0f : 1.0f);
+            }
+            default -> {
+              wx = slice + (rx < 0.5f ? 0.0f : 1.0f);
+              wy = (ry < 0.5f ? v0 : v1);
+              wz = (rz < 0.5f ? u0 : u1);
+            }
+          }
+          short px = (short) (wx * 256.0f);
+          short py = (short) (wy * 256.0f);
+          short pz = (short) (wz * 256.0f);
+          short su = (short) (t.u[i] * 65535f);
+          short sv = (short) (t.v[i] * 65535f);
+          emitVertex(solidBuffer, px, py, pz, su, sv, r, g, b, a, light, normalIndex);
+        }
+        opaqueQuadCount++;
+        greedyMergedQuads++;
+      } catch (Exception ignored) {
       }
     }
 
@@ -2282,6 +2765,8 @@ public class CustomChunkMesher {
           }
           boolean forceFlat = crossLike || !partAO || blockEmitsLight;
           for (Direction direction : ALL_DIRECTIONS) {
+            if (lodTier >= 1 && isGreedyCovered(lx, ly, lz, direction))
+              continue;
             List<BakedQuad> quads;
             try {
               quads = part.getQuads(direction);

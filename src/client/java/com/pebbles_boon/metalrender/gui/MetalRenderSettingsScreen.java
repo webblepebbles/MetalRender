@@ -218,6 +218,8 @@ public class MetalRenderSettingsScreen extends Screen {
   private boolean initialLodStickyTiers;
   private boolean initialLodViewImpact;
   private boolean initialLodSkeletonFirst;
+  private boolean initialGreedyMid;
+  private boolean initialGreedyFar;
   private boolean initialSmoothLighting;
 
   private final List<Row> rows = new ArrayList<>();
@@ -297,6 +299,8 @@ public class MetalRenderSettingsScreen extends Screen {
     initialLodStickyTiers = config.lodStickyTiers;
     initialLodViewImpact = config.lodViewImpact;
     initialLodSkeletonFirst = config.lodSkeletonFirst;
+    initialGreedyMid = config.enableGreedyMid;
+    initialGreedyFar = config.enableGreedyFar;
     layout();
     rebuild();
   }
@@ -970,7 +974,9 @@ public class MetalRenderSettingsScreen extends Screen {
         || (config.smoothLighting != initialSmoothLighting)
         || (config.enableDistanceLod != initialDistanceLod)
         || (config.lodNearChunks != initialLodNearChunks)
-        || (config.lodMidChunks != initialLodMidChunks);
+        || (config.lodMidChunks != initialLodMidChunks)
+        || (config.enableGreedyMid != initialGreedyMid)
+        || (config.enableGreedyFar != initialGreedyFar);
 
     boolean biomeChanged = config.biomeTransitionDetail != initialBiomeDetail;
     boolean cameraFacingCullingChanged = config.enableCameraFacingCulling != initialCameraFacingCulling;
@@ -1235,6 +1241,8 @@ public class MetalRenderSettingsScreen extends Screen {
         v -> config.lodNearChunks = (int) (float) v);
     sld("Medium Detail Radius (chunks)", 4, 48, 1, config.lodMidChunks,
         v -> config.lodMidChunks = (int) (float) v);
+    tog("Greedy Meshing (Mid LOD)", config.enableGreedyMid, v -> config.enableGreedyMid = v);
+    tog("Greedy Meshing (Far LOD)", config.enableGreedyFar, v -> config.enableGreedyFar = v);
     tog("Thermal-Adaptive LOD", config.lodThermalAdaptive, v -> config.lodThermalAdaptive = v);
 
     sec("Extras");

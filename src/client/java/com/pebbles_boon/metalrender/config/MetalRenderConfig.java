@@ -24,6 +24,8 @@ public final class MetalRenderConfig {
   public boolean enableDistanceLod = true;
   public int lodNearChunks = 6;
   public int lodMidChunks = 16;
+  public boolean enableGreedyMid = true;
+  public boolean enableGreedyFar = true;
   public boolean lodThermalAdaptive = true;
   public boolean lodThroughputBudget = true;
   public boolean lodVisibilityGate = true;
@@ -143,6 +145,10 @@ public final class MetalRenderConfig {
           cfg.lodViewImpact = obj.get("lodViewImpact").getAsBoolean();
         if (obj.has("lodSkeletonFirst"))
           cfg.lodSkeletonFirst = obj.get("lodSkeletonFirst").getAsBoolean();
+        if (obj.has("enableGreedyMid"))
+          cfg.enableGreedyMid = obj.get("enableGreedyMid").getAsBoolean();
+        if (obj.has("enableGreedyFar"))
+          cfg.enableGreedyFar = obj.get("enableGreedyFar").getAsBoolean();
         if (obj.has("uiTheme"))
           cfg.uiTheme = obj.get("uiTheme").getAsString();
         if (obj.has("customHexBg")) cfg.customHexBg = obj.get("customHexBg").getAsString();
@@ -215,6 +221,8 @@ public final class MetalRenderConfig {
       obj.addProperty("lodStickyTiers", lodStickyTiers);
       obj.addProperty("lodViewImpact", lodViewImpact);
       obj.addProperty("lodSkeletonFirst", lodSkeletonFirst);
+      obj.addProperty("enableGreedyMid", enableGreedyMid);
+      obj.addProperty("enableGreedyFar", enableGreedyFar);
       obj.addProperty("uiTheme", uiTheme);
       obj.addProperty("customHexBg", customHexBg);
       obj.addProperty("customHexPanel", customHexPanel);
