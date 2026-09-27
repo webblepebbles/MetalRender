@@ -189,6 +189,7 @@ static uint64_t megaAlloc(size_t size) {
   if (g_megaVBHead + aligned > g_megaVBCap) {
 
     megaCoalesceFreeList();
+    megaTrimFreeTail();
 
     bestIdx = -1;
     bestSize = SIZE_MAX;
