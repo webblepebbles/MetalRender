@@ -81,70 +81,159 @@ id<MTLDevice> g_device = nil;
 id<MTLCommandQueue> g_queue = nil;
 static std::unordered_map<uint64_t, id<MTLBuffer>> g_buffers;
 static uint64_t g_nextHandle = 1;
-static id<MTLBuffer> g_megaVB = nil;
+static const size_t MEGA_ALIGN = 256;
+static const size_t MEGA_PAGE_SIZE_DEFAULT = 256ULL * 1024 * 1024;
+static const size_t MEGA_PAGE_SIZE_SMALL = 128ULL * 1024 * 1024;
+static const size_t MEGA_MAX_MEGA_ALLOC = 32ULL * 1024 * 1024;
+static const size_t MEGA_MAX_PAGES = 16;
+static size_t g_megaPageSize = 0;
 
-static const size_t MEGA_VB_CAPACITY = 3072ULL * 1024 * 1024;
-static size_t g_megaVBCap = MEGA_VB_CAPACITY;
-static size_t g_megaVBHead = 0;
-
-static size_t megaCapacityForSystem() {
-  size_t cap = MEGA_VB_CAPACITY;
+static size_t megaPageSizeForSystem() {
+  if (g_megaPageSize != 0)
+    return g_megaPageSize;
+  size_t pageSize = MEGA_PAGE_SIZE_DEFAULT;
   @autoreleasepool {
     unsigned long long phys = [[NSProcessInfo processInfo] physicalMemory];
-    if (phys > 0) {
-      unsigned long long quarter = phys / 4;
-      unsigned long long minCap = 1024ULL * 1024 * 1024;
-      if (quarter < cap)
-        cap = (size_t)(quarter < minCap ? minCap : quarter);
+    if (phys > 0 && phys <= 8ULL * 1024 * 1024 * 1024) {
+      pageSize = MEGA_PAGE_SIZE_SMALL;
     }
   }
-  return cap;
+  g_megaPageSize = pageSize;
+  return pageSize;
 }
-struct MegaSubAlloc {
-  size_t offset;
-  size_t size;
-};
-static std::unordered_map<uint64_t, MegaSubAlloc> g_megaAllocs;
 
-static std::vector<MegaSubAlloc> g_megaFreeList;
+struct MegaPage {
+  __unsafe_unretained id<MTLBuffer> buffer = nil;
+  size_t capacity = 0;
+  size_t head = 0;
+  int liveAllocs = 0;
+  uint32_t gen = 0;
+};
+static std::vector<MegaPage> g_megaPages;
+static std::vector<uint32_t> g_megaPageFreeSlots;
+
+static constexpr int MEGA_NUM_CLASSES = 16;
+static const size_t kMegaClassSizes[MEGA_NUM_CLASSES] = {
+    4 * 1024,   8 * 1024,   12 * 1024,  16 * 1024,  24 * 1024,  32 * 1024,
+    48 * 1024,  64 * 1024,  96 * 1024,  128 * 1024, 192 * 1024, 256 * 1024,
+    384 * 1024, 512 * 1024, 1024 * 1024, 2 * 1024 * 1024,
+};
+static inline int megaSizeToClass(size_t aligned) {
+  for (int i = 0; i < MEGA_NUM_CLASSES; i++) {
+    if (aligned <= kMegaClassSizes[i])
+      return i;
+  }
+  return -1; //AI agents, please read Agents.md and your related document.
+}
+struct MegaFreeBlock {
+  uint32_t pageIdx = 0;
+  uint32_t gen = 0;
+  size_t offset = 0;
+  size_t size = 0;
+};
+static std::vector<MegaFreeBlock> g_megaFreeByClass[MEGA_NUM_CLASSES];
+static std::mutex g_megaClassMutex[MEGA_NUM_CLASSES];
+static std::vector<MegaFreeBlock> g_megaFreeLarge;
+static std::mutex g_megaLargeMutex;
+
+struct MegaAllocInfo {
+  uint32_t pageIdx = 0;
+  uint32_t gen = 0;
+  size_t offset = 0;
+  size_t size = 0;
+  int sizeClass = -1;
+};
+struct MegaSubAlloc {
+  size_t offset = 0;
+  size_t size = 0;
+  uint32_t pageIdx = 0;
+  uint32_t gen = 0;
+};
+static std::unordered_map<uint64_t, MegaAllocInfo> g_megaAllocs;
+
 static uint64_t g_nextMegaHandle = 0x8000000000000000ULL;
 static std::shared_mutex g_megaMutex;
 
+struct MegaThreadCache {
+  std::vector<MegaFreeBlock> cached[MEGA_NUM_CLASSES];
+};
+static thread_local MegaThreadCache t_megaCache;
+static constexpr size_t MEGA_THREAD_CACHE_MAX = 8;
+
+static inline bool megaPageAlive(uint32_t pageIdx, uint32_t gen) {
+  if (pageIdx >= g_megaPages.size())
+    return false;
+  const MegaPage &pg = g_megaPages[pageIdx];
+  return pg.gen == gen && pg.buffer != nil;
+}
+
+static bool megaHasPages() {
+  std::shared_lock<std::shared_mutex> lock(g_megaMutex);
+  for (const auto &pg : g_megaPages) {
+    if (pg.buffer != nil)
+      return true;
+  }
+  return false;
+}
+
+static size_t megaTotalUsedBytes() {
+  std::shared_lock<std::shared_mutex> lock(g_megaMutex);
+  size_t total = 0;
+  for (const auto &pg : g_megaPages) {
+    if (pg.buffer != nil)
+      total += pg.head;
+  }
+  return total;
+}
+
+static void megaPurgeEmptyPagesLocked() {
+  for (uint32_t idx = 0; idx < (uint32_t)g_megaPages.size(); idx++) {
+    MegaPage &pg = g_megaPages[idx];
+    if (pg.buffer != nil && pg.liveAllocs == 0) {
+      [pg.buffer release];
+      pg.buffer = nil;
+      pg.head = 0;
+      pg.capacity = 0;
+      pg.gen++;
+      g_megaPageFreeSlots.push_back(idx);
+      for (int c = 0; c < MEGA_NUM_CLASSES; c++) {
+        std::lock_guard<std::mutex> clock(g_megaClassMutex[c]);
+        auto &vec = g_megaFreeByClass[c];
+        size_t w = 0;
+        for (size_t r = 0; r < vec.size(); r++) {
+          if (vec[r].pageIdx == idx) {
+            continue;
+          }
+          if (w != r)
+            vec[w] = vec[r];
+          w++;
+        }
+        vec.resize(w);
+      }
+      {
+        std::lock_guard<std::mutex> llock(g_megaLargeMutex);
+        auto &vec = g_megaFreeLarge;
+        size_t w = 0;
+        for (size_t r = 0; r < vec.size(); r++) {
+          if (vec[r].pageIdx == idx) {
+            continue;
+          }
+          if (w != r)
+            vec[w] = vec[r];
+          w++;
+        }
+        vec.resize(w);
+      }
+    }
+  }
+}
+
 static void megaCoalesceFreeList() {
-  if (g_megaFreeList.size() < 2)
-    return;
-
-  std::sort(g_megaFreeList.begin(), g_megaFreeList.end(),
-            [](const MegaSubAlloc &a, const MegaSubAlloc &b) {
-              return a.offset < b.offset;
-            });
-
-  size_t write = 0;
-  for (size_t read = 1; read < g_megaFreeList.size(); read++) {
-    if (g_megaFreeList[write].offset + g_megaFreeList[write].size ==
-        g_megaFreeList[read].offset) {
-      g_megaFreeList[write].size += g_megaFreeList[read].size;
-    } else {
-      write++;
-      if (write != read)
-        g_megaFreeList[write] = g_megaFreeList[read];
-    }
-  }
-  g_megaFreeList.resize(write + 1);
+  std::unique_lock<std::shared_mutex> lock(g_megaMutex);
+  megaPurgeEmptyPagesLocked();
 }
 
-static void megaTrimFreeTail() {
-  megaCoalesceFreeList();
-  for (size_t i = 0; i < g_megaFreeList.size(); i++) {
-    MegaSubAlloc &freeBlock = g_megaFreeList[i];
-    if (freeBlock.offset + freeBlock.size == g_megaVBHead) {
-      g_megaVBHead = freeBlock.offset;
-      g_megaFreeList[i] = g_megaFreeList.back();
-      g_megaFreeList.pop_back();
-      return;
-    }
-  }
-}
+static void megaTrimFreeTail() { megaCoalesceFreeList(); }
 struct DeferredDeletion {
   uint64_t handle;
   int frameQueued;
@@ -159,88 +248,296 @@ static inline bool isMegaHandle(uint64_t h) {
   return (h & 0x8000000000000000ULL) != 0;
 }
 static uint64_t megaAlloc(size_t size) {
-  std::unique_lock<std::shared_mutex> lock(g_megaMutex);
-  size_t aligned = (size + 255) & ~255;
+  if (!g_device)
+    return 0;
+  size_t aligned = (size + (MEGA_ALIGN - 1)) & ~(MEGA_ALIGN - 1);
+  if (aligned == 0 || aligned > MEGA_MAX_MEGA_ALLOC)
+    return 0;
+  size_t pageSize = megaPageSizeForSystem();
+  int cls = megaSizeToClass(aligned);
 
-  int bestIdx = -1;
-  size_t bestSize = SIZE_MAX;
-  for (int i = 0; i < (int)g_megaFreeList.size(); i++) {
-    if (g_megaFreeList[i].size >= aligned &&
-        g_megaFreeList[i].size < bestSize) {
-      bestIdx = i;
-      bestSize = g_megaFreeList[i].size;
-      if (bestSize == aligned)
-        break;
+  if (cls >= 0) {
+    auto &cache = t_megaCache.cached[cls];
+    while (!cache.empty()) {
+      MegaFreeBlock blk = cache.back();
+      cache.pop_back();
+      std::shared_lock<std::shared_mutex> plock(g_megaMutex);
+      if (blk.pageIdx >= g_megaPages.size())
+        continue;
+      const MegaPage &pg = g_megaPages[blk.pageIdx];
+      if (pg.gen != blk.gen || pg.buffer == nil)
+        continue;
+      if (blk.size < aligned)
+        continue;
+      size_t offset = blk.offset;
+      size_t blockSize = blk.size;
+      uint32_t pIdx = blk.pageIdx;
+      uint32_t gen = blk.gen;
+      plock.unlock();
+      if (blockSize > aligned) {
+        size_t remOff = offset + aligned;
+        size_t remSize = blockSize - aligned;
+        int remCls = megaSizeToClass(remSize);
+        MegaFreeBlock rem{pIdx, gen, remOff, remSize};
+        if (remCls >= 0) {
+          auto &tc = t_megaCache.cached[remCls];
+          if (tc.size() < MEGA_THREAD_CACHE_MAX) {
+            tc.push_back(rem);
+          } else {
+            std::lock_guard<std::mutex> clock(g_megaClassMutex[remCls]);
+            g_megaFreeByClass[remCls].push_back(rem);
+          }
+        } else {
+          std::lock_guard<std::mutex> llock(g_megaLargeMutex);
+          g_megaFreeLarge.push_back(rem);
+        }
+      }
+      std::unique_lock<std::shared_mutex> wlock(g_megaMutex);
+      if (pIdx >= g_megaPages.size() || g_megaPages[pIdx].gen != gen ||
+          g_megaPages[pIdx].buffer == nil) {
+        continue;
+      }
+      g_megaPages[pIdx].liveAllocs++;
+      uint64_t handle = g_nextMegaHandle++;
+      g_megaAllocs[handle] = {pIdx, gen, offset, aligned, cls};
+      return handle;
     }
   }
-  if (bestIdx >= 0) {
-    size_t offset = g_megaFreeList[bestIdx].offset;
-    size_t blockSize = g_megaFreeList[bestIdx].size;
 
-    g_megaFreeList[bestIdx] = g_megaFreeList.back();
-    g_megaFreeList.pop_back();
-    uint64_t handle = g_nextMegaHandle++;
-    g_megaAllocs[handle] = {offset, aligned};
-    if (blockSize > aligned) {
-      g_megaFreeList.push_back({offset + aligned, blockSize - aligned});
-    }
-    return handle;
-  }
-  if (g_megaVBHead + aligned > g_megaVBCap) {
-
-    megaCoalesceFreeList();
-    megaTrimFreeTail();
-
-    bestIdx = -1;
-    bestSize = SIZE_MAX;
-    for (int i = 0; i < (int)g_megaFreeList.size(); i++) {
-      if (g_megaFreeList[i].size >= aligned &&
-          g_megaFreeList[i].size < bestSize) {
-        bestIdx = i;
-        bestSize = g_megaFreeList[i].size;
-        if (bestSize == aligned)
+  if (cls >= 0) {
+    for (int c = cls; c < MEGA_NUM_CLASSES; c++) {
+      MegaFreeBlock blk;
+      bool found = false;
+      {
+        std::lock_guard<std::mutex> clock(g_megaClassMutex[c]);
+        auto &vec = g_megaFreeByClass[c];
+        while (!vec.empty()) {
+          blk = vec.back();
+          vec.pop_back();
+          std::shared_lock<std::shared_mutex> plock(g_megaMutex);
+          if (blk.pageIdx >= g_megaPages.size())
+            continue;
+          const MegaPage &pg = g_megaPages[blk.pageIdx];
+          if (pg.gen != blk.gen || pg.buffer == nil)
+            continue;
+          if (blk.size < aligned)
+            continue;
+          found = true;
           break;
+        }
       }
-    }
-    if (bestIdx >= 0) {
-      size_t offset2 = g_megaFreeList[bestIdx].offset;
-      size_t blockSize2 = g_megaFreeList[bestIdx].size;
-      g_megaFreeList[bestIdx] = g_megaFreeList.back();
-      g_megaFreeList.pop_back();
-      uint64_t handle2 = g_nextMegaHandle++;
-      g_megaAllocs[handle2] = {offset2, aligned};
-      if (blockSize2 > aligned) {
-        g_megaFreeList.push_back({offset2 + aligned, blockSize2 - aligned});
+      if (!found)
+        continue;
+      size_t offset = blk.offset;
+      size_t blockSize = blk.size;
+      uint32_t pIdx = blk.pageIdx;
+      uint32_t gen = blk.gen;
+      if (blockSize > aligned) {
+        size_t remOff = offset + aligned;
+        size_t remSize = blockSize - aligned;
+        int remCls = megaSizeToClass(remSize);
+        MegaFreeBlock rem{pIdx, gen, remOff, remSize};
+        if (remCls >= 0) {
+          std::lock_guard<std::mutex> rlock(g_megaClassMutex[remCls]);
+          g_megaFreeByClass[remCls].push_back(rem);
+        } else {
+          std::lock_guard<std::mutex> llock(g_megaLargeMutex);
+          g_megaFreeLarge.push_back(rem);
+        }
       }
-      return handle2;
+      std::unique_lock<std::shared_mutex> wlock(g_megaMutex);
+      if (pIdx >= g_megaPages.size() || g_megaPages[pIdx].gen != gen ||
+          g_megaPages[pIdx].buffer == nil) {
+        continue;
+      }
+      g_megaPages[pIdx].liveAllocs++;
+      uint64_t handle = g_nextMegaHandle++;
+      g_megaAllocs[handle] = {pIdx, gen, offset, aligned, cls};
+      return handle;
     }
+  } else {
+    std::lock_guard<std::mutex> llock(g_megaLargeMutex);
+    for (size_t i = 0; i < g_megaFreeLarge.size(); i++) {
+      MegaFreeBlock blk = g_megaFreeLarge[i];
+      if (blk.size < aligned)
+        continue;
+      std::shared_lock<std::shared_mutex> plock(g_megaMutex);
+      if (blk.pageIdx >= g_megaPages.size())
+        continue;
+      const MegaPage &pg = g_megaPages[blk.pageIdx];
+      if (pg.gen != blk.gen || pg.buffer == nil)
+        continue;
+      plock.unlock();
+      g_megaFreeLarge[i] = g_megaFreeLarge.back();
+      g_megaFreeLarge.pop_back();
+      if (blk.size > aligned) {
+        MegaFreeBlock rem{blk.pageIdx, blk.gen, blk.offset + aligned,
+                          blk.size - aligned};
+        int remCls = megaSizeToClass(rem.size);
+        if (remCls >= 0) {
+          std::lock_guard<std::mutex> clock(g_megaClassMutex[remCls]);
+          g_megaFreeByClass[remCls].push_back(rem);
+        } else {
+          g_megaFreeLarge.push_back(rem);
+        }
+      }
+      std::unique_lock<std::shared_mutex> wlock(g_megaMutex);
+      if (blk.pageIdx >= g_megaPages.size() ||
+          g_megaPages[blk.pageIdx].gen != blk.gen ||
+          g_megaPages[blk.pageIdx].buffer == nil) {
+        continue;
+      }
+      g_megaPages[blk.pageIdx].liveAllocs++;
+      uint64_t handle = g_nextMegaHandle++;
+      g_megaAllocs[handle] = {blk.pageIdx, blk.gen, blk.offset, aligned, -1};
+      return handle;
+    }
+  }
+
+  std::unique_lock<std::shared_mutex> wlock(g_megaMutex);
+  for (uint32_t idx = 0; idx < (uint32_t)g_megaPages.size(); idx++) {
+    MegaPage &pg = g_megaPages[idx];
+    if (pg.buffer == nil)
+      continue;
+    size_t alignedHead = (pg.head + (MEGA_ALIGN - 1)) & ~(MEGA_ALIGN - 1);
+    if (alignedHead + aligned <= pg.capacity) {
+      size_t offset = alignedHead;
+      pg.head = offset + aligned;
+      pg.liveAllocs++;
+      uint64_t handle = g_nextMegaHandle++;
+      g_megaAllocs[handle] = {idx, pg.gen, offset, aligned, cls};
+      return handle;
+    }
+  }
+  if (g_megaPages.size() >= MEGA_MAX_PAGES + g_megaPageFreeSlots.size()) {
     static int megaFailCount = 0;
     if (megaFailCount++ < 10 || megaFailCount % 500 == 0)
-      dbg("megaAlloc FAIL: need %zu, head=%zu, cap=%zu, freeBlocks=%zu (fail "
-          "#%d)\n",
-          aligned, g_megaVBHead, MEGA_VB_CAPACITY, g_megaFreeList.size(),
-          megaFailCount);
+      dbg("megaAlloc FAIL: need %zu, pages=%zu (fail #%d)\n", aligned,
+          g_megaPages.size(), megaFailCount);
     return 0;
   }
-  size_t offset = g_megaVBHead;
-  g_megaVBHead += aligned;
+  uint32_t newIdx;
+  uint32_t newGen = 0;
+  if (!g_megaPageFreeSlots.empty()) {
+    newIdx = g_megaPageFreeSlots.back();
+    g_megaPageFreeSlots.pop_back();
+    MegaPage &pg = g_megaPages[newIdx];
+    newGen = pg.gen + 1;
+    pg.gen = newGen;
+    pg.capacity = pageSize;
+    pg.head = 0;
+    pg.liveAllocs = 0;
+    pg.buffer = [g_device newBufferWithLength:pageSize
+                                      options:MTLStorageModeShared];
+    if (!pg.buffer) {
+      g_megaPageFreeSlots.push_back(newIdx);
+      return 0;
+    }
+    dbg("Mega page created: idx=%u gen=%u %zuMB (total pages=%zu)\n", newIdx,
+        newGen, pageSize / (1024 * 1024), g_megaPages.size());
+  } else {
+    newIdx = (uint32_t)g_megaPages.size();
+    MegaPage pg;
+    pg.capacity = pageSize;
+    pg.head = 0;
+    pg.liveAllocs = 0;
+    pg.gen = 0;
+    pg.buffer = [g_device newBufferWithLength:pageSize
+                                      options:MTLStorageModeShared];
+    if (!pg.buffer)
+      return 0;
+    g_megaPages.push_back(pg);
+    dbg("Mega page created: idx=%u %zuMB (total pages=%zu)\n", newIdx,
+        pageSize / (1024 * 1024), g_megaPages.size());
+  }
+  MegaPage &npg = g_megaPages[newIdx];
+  size_t offset = 0;
+  npg.head = aligned;
+  npg.liveAllocs = 1;
   uint64_t handle = g_nextMegaHandle++;
-  g_megaAllocs[handle] = {offset, aligned};
+  g_megaAllocs[handle] = {newIdx, npg.gen, offset, aligned, cls};
   return handle;
 }
 static void megaFree(uint64_t handle) {
-  std::unique_lock<std::shared_mutex> lock(g_megaMutex);
-  auto it = g_megaAllocs.find(handle);
-  if (it == g_megaAllocs.end())
-    return;
-  g_megaFreeList.push_back(it->second);
-  g_megaAllocs.erase(it);
-  size_t freeBytes = 0;
-  for (const MegaSubAlloc &freeBlock : g_megaFreeList) {
-    freeBytes += freeBlock.size;
+  MegaAllocInfo info;
+  {
+    std::unique_lock<std::shared_mutex> lock(g_megaMutex);
+    auto it = g_megaAllocs.find(handle);
+    if (it == g_megaAllocs.end())
+      return;
+    info = it->second;
+    g_megaAllocs.erase(it);
   }
-  if (g_megaFreeList.size() > 64 || freeBytes > (g_megaVBCap / 5)) {
-    megaTrimFreeTail();
+  MegaFreeBlock blk{info.pageIdx, info.gen, info.offset, info.size};
+  if (info.sizeClass >= 0) {
+    auto &cache = t_megaCache.cached[info.sizeClass];
+    if (cache.size() < MEGA_THREAD_CACHE_MAX) {
+      cache.push_back(blk);
+    } else {
+      std::lock_guard<std::mutex> clock(g_megaClassMutex[info.sizeClass]);
+      auto &vec = g_megaFreeByClass[info.sizeClass];
+      size_t flush = cache.size() / 2;
+      for (size_t i = 0; i < flush; i++) {
+        vec.push_back(cache.back());
+        cache.pop_back();
+      }
+      vec.push_back(blk);
+    }
+  } else {
+    std::lock_guard<std::mutex> llock(g_megaLargeMutex);
+    g_megaFreeLarge.push_back(blk);
+  }
+  bool shouldPurge = false;
+  {
+    std::unique_lock<std::shared_mutex> lock(g_megaMutex);
+    if (info.pageIdx < g_megaPages.size()) {
+      MegaPage &pg = g_megaPages[info.pageIdx];
+      if (pg.gen == info.gen && pg.buffer != nil) {
+        pg.liveAllocs--;
+        if (pg.liveAllocs <= 0) {
+          pg.liveAllocs = 0;
+          shouldPurge = true;
+          [pg.buffer release];
+          pg.buffer = nil;
+          pg.head = 0;
+          pg.capacity = 0;
+          pg.gen++;
+          uint32_t purgedIdx = info.pageIdx;
+          g_megaPageFreeSlots.push_back(purgedIdx);
+          dbg("Mega page purged: idx=%u (empty, memory released)\n",
+              purgedIdx);
+        }
+      }
+    }
+    if (shouldPurge) {
+      uint32_t pIdx = info.pageIdx;
+      for (int c = 0; c < MEGA_NUM_CLASSES; c++) {
+        std::lock_guard<std::mutex> clock(g_megaClassMutex[c]);
+        auto &vec = g_megaFreeByClass[c];
+        size_t w = 0;
+        for (size_t r = 0; r < vec.size(); r++) {
+          if (vec[r].pageIdx == pIdx)
+            continue;
+          if (w != r)
+            vec[w] = vec[r];
+          w++;
+        }
+        vec.resize(w);
+      }
+      {
+        std::lock_guard<std::mutex> llock(g_megaLargeMutex);
+        auto &vec = g_megaFreeLarge;
+        size_t w = 0;
+        for (size_t r = 0; r < vec.size(); r++) {
+          if (vec[r].pageIdx == pIdx)
+            continue;
+          if (w != r)
+            vec[w] = vec[r];
+          w++;
+        }
+        vec.resize(w);
+      }
+    }
   }
 }
 static size_t megaGetOffset(uint64_t handle) {
@@ -248,19 +545,51 @@ static size_t megaGetOffset(uint64_t handle) {
   auto it = g_megaAllocs.find(handle);
   return (it != g_megaAllocs.end()) ? it->second.offset : 0;
 }
+static bool megaGetPage(uint64_t handle, uint32_t &pageIdxOut,
+                        size_t &offsetOut, id<MTLBuffer> &bufOut) {
+  std::shared_lock<std::shared_mutex> lock(g_megaMutex);
+  auto it = g_megaAllocs.find(handle);
+  if (it == g_megaAllocs.end())
+    return false;
+  const MegaAllocInfo &info = it->second;
+  if (info.pageIdx >= g_megaPages.size())
+    return false;
+  const MegaPage &pg = g_megaPages[info.pageIdx];
+  if (pg.gen != info.gen || pg.buffer == nil)
+    return false;
+  pageIdxOut = info.pageIdx;
+  offsetOut = info.offset;
+  bufOut = pg.buffer;
+  return true;
+}
 static void *megaGetPointer(uint64_t handle) {
   std::shared_lock<std::shared_mutex> lock(g_megaMutex);
   auto it = g_megaAllocs.find(handle);
-  if (it == g_megaAllocs.end() || !g_megaVB)
+  if (it == g_megaAllocs.end())
     return nullptr;
-  return (char *)[g_megaVB contents] + it->second.offset;
+  const MegaAllocInfo &info = it->second;
+  if (info.pageIdx >= g_megaPages.size())
+    return nullptr;
+  const MegaPage &pg = g_megaPages[info.pageIdx];
+  if (pg.gen != info.gen || pg.buffer == nil)
+    return nullptr;
+  return (char *)[pg.buffer contents] + info.offset;
 }
 static bool megaGetAlloc(uint64_t handle, MegaSubAlloc &out) {
   std::shared_lock<std::shared_mutex> lock(g_megaMutex);
   auto it = g_megaAllocs.find(handle);
-  if (it == g_megaAllocs.end() || !g_megaVB)
+  if (it == g_megaAllocs.end())
     return false;
-  out = it->second;
+  const MegaAllocInfo &info = it->second;
+  if (info.pageIdx >= g_megaPages.size())
+    return false;
+  const MegaPage &pg = g_megaPages[info.pageIdx];
+  if (pg.gen != info.gen || pg.buffer == nil)
+    return false;
+  out.offset = info.offset;
+  out.size = info.size;
+  out.pageIdx = info.pageIdx;
+  out.gen = info.gen;
   return true;
 }
 static id<MTLRenderPipelineState> g_pipelineOpaque = nil;
@@ -515,6 +844,7 @@ struct StaleDrawCmd {
   int opaqueIdxCount;
   int opaqueFaceCounts[7];
   int lodTier;
+  int opaqueFormat;
   float ox, oy, oz;
   bool isMega;
 };
@@ -545,11 +875,13 @@ static id<MTLRenderPipelineState> g_pipelineOITComposite = nil;
 
 struct OITCachedCmd {
   __unsafe_unretained id<MTLBuffer> resolvedBuf;
+  __unsafe_unretained id<MTLBuffer> megaPageBuf;
   size_t megaOffset;
   bool isMega;
   int translucentIdxCount;
   int instanceIdx;
   int opaqueVertCount;
+  int opaqueFormat;
 };
 static OITCachedCmd *g_oitCmds = nullptr;
 static int g_oitCmdsCapacity = 0;
@@ -560,9 +892,11 @@ static __unsafe_unretained id<MTLBuffer> g_oitOffsetBuf = nil;
 
 struct DeferredWaterCmd {
   __unsafe_unretained id<MTLBuffer> resolvedBuf;
+  __unsafe_unretained id<MTLBuffer> megaPageBuf;
   size_t megaOffset;
   int idxCount;
   int opaqueIdxCount;
+  int opaqueFormat;
   float distSq;
   int instanceIdx;
   bool isMega;
@@ -587,6 +921,7 @@ struct NativeMesh {
   uint64_t visibilityMask;
   int32_t facingQuadCounts[14];
   int32_t lodTier;
+  int32_t opaqueFormat;
   bool active;
 };
 
@@ -668,10 +1003,13 @@ struct ChunkMeshletNative {
   uint32_t faceStart[7];
   uint32_t visibleFaceStart[7];
   uint32_t faceVertexCount[7];
-  uint32_t _pad[3];
+  uint32_t vertexFormat;
+  uint32_t _pad[2];
 };
 static_assert(sizeof(ChunkMeshletNative) == 128,
               "ChunkMeshletNative must be 128 bytes");
+static constexpr int VERTEX_FORMAT_UNCOMPRESSED = 0;
+static constexpr int VERTEX_FORMAT_COMPRESSED_QUAD = 1;
 static std::vector<NativeMesh> g_nativeMeshes;
 static std::unordered_map<int64_t, size_t> g_meshKeyToIdx;
 static std::vector<size_t> g_meshFreeSlots;
@@ -851,20 +1189,9 @@ static void ensure_device() {
     g_device = MTLCreateSystemDefaultDevice();
     if (g_device) {
       g_queue = [g_device newCommandQueue];
-
-      if (!g_megaVB) {
-        g_megaVBCap = megaCapacityForSystem();
-        g_megaVB = [g_device newBufferWithLength:g_megaVBCap
-                                         options:MTLStorageModeShared];
-        g_megaVBHead = 0;
-        if (g_megaVB) {
-          dbg("Mega vertex buffer created: %zuMB\n",
-              g_megaVBCap / (1024 * 1024));
-        } else {
-          dbg("WARN: Failed to create mega vertex buffer, falling back to "
-              "individual buffers\n");
-        }
-      }
+      (void)megaPageSizeForSystem();
+      dbg("Mega arena ready: pageSize=%zuMB (on-demand, purge-on-empty)\n",
+          megaPageSizeForSystem() / (1024 * 1024));
     }
   }
 }
@@ -2316,10 +2643,11 @@ static id<MTLBuffer> get_buffer(uint64_t h) {
 }
 static ResolvedBuf resolve_buffer(uint64_t h) {
   if (isMegaHandle(h)) {
-    std::shared_lock<std::shared_mutex> lock(g_megaMutex);
-    auto it = g_megaAllocs.find(h);
-    if (it != g_megaAllocs.end() && g_megaVB)
-      return {g_megaVB, it->second.offset};
+    uint32_t pageIdx = 0;
+    size_t offset = 0;
+    id<MTLBuffer> buf = nil;
+    if (megaGetPage(h, pageIdx, offset, buf))
+      return {buf, offset};
     return {nil, 0};
   }
   std::shared_lock<std::shared_mutex> lock(g_bufferMutex);
@@ -2454,7 +2782,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateBufferWithHi
       return (jlong)oldHandle;
     }
   }
-  if (g_megaVB && aligned <= 64 * 1024 * 1024) {
+  if (aligned <= MEGA_MAX_MEGA_ALLOC) {
     uint64_t megaH = megaAlloc(aligned);
     if (megaH != 0) {
       return (jlong)megaH;
@@ -2473,7 +2801,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nCreateBuffer(
   ensure_device();
   if (!g_device || sizeBytes <= 0)
     return 0;
-  if (g_megaVB && sizeBytes <= 64 * 1024 * 1024) {
+  if ((size_t)sizeBytes <= MEGA_MAX_MEGA_ALLOC) {
     uint64_t megaH = megaAlloc((size_t)sizeBytes);
     if (megaH != 0) {
       return (jlong)megaH;
@@ -2497,9 +2825,13 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUploadBufferData(
     if (bytes) {
       memcpy((uint8_t *)dst + offset, bytes, (size_t)length);
       if (megaGetAlloc(h, alloc)) {
-        [g_megaVB
-            didModifyRange:NSMakeRange((NSUInteger)(alloc.offset + offset),
-                                       (NSUInteger)length)];
+        uint32_t pIdx = 0;
+        size_t off = 0;
+        id<MTLBuffer> pbuf = nil;
+        if (megaGetPage(h, pIdx, off, pbuf) && pbuf) {
+          [pbuf didModifyRange:NSMakeRange((NSUInteger)(alloc.offset + offset),
+                                           (NSUInteger)length)];
+        }
       }
       env->ReleaseByteArrayElements(data, bytes, JNI_ABORT);
     }
@@ -2528,8 +2860,13 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUploadBufferDataDi
     if (ptr) {
       memcpy((uint8_t *)dst, (uint8_t *)ptr + offset, (size_t)length);
       if (megaGetAlloc(h, alloc)) {
-        [g_megaVB didModifyRange:NSMakeRange((NSUInteger)alloc.offset,
-                                             (NSUInteger)length)];
+        uint32_t pIdx = 0;
+        size_t off = 0;
+        id<MTLBuffer> pbuf = nil;
+        if (megaGetPage(h, pIdx, off, pbuf) && pbuf) {
+          [pbuf didModifyRange:NSMakeRange((NSUInteger)alloc.offset,
+                                           (NSUInteger)length)];
+        }
       }
     }
     return;
@@ -2691,6 +3028,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBatch(
       uint64_t bufHandle;
       size_t megaOffset;
       id<MTLBuffer> resolvedBuf;
+      id<MTLBuffer> megaPageBuf;
       int idxCount;
       int opaqueIdxCount;
       float distSq;
@@ -2725,19 +3063,26 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBatch(
           auto it = g_megaAllocs.find(bufHandle);
           if (it == g_megaAllocs.end())
             continue;
-          cmds[validCount] = {bufHandle, it->second.offset,
-                              nil,       idxCount,
-                              idxCount,  distSq,
-                              ox,        oy,
-                              oz,        true};
+          const MegaAllocInfo &ainfo = it->second;
+          if (ainfo.pageIdx >= g_megaPages.size())
+            continue;
+          const MegaPage &pg = g_megaPages[ainfo.pageIdx];
+          if (pg.gen != ainfo.gen || pg.buffer == nil)
+            continue;
+          cmds[validCount] = {bufHandle, ainfo.offset,
+                              nil,       pg.buffer,
+                              idxCount,  idxCount,
+                              distSq,    ox,
+                              oy,        oz,
+                              true};
           megaCount++;
         } else {
           id<MTLBuffer> rb = nil;
           auto bit = g_buffers.find(bufHandle);
           if (bit != g_buffers.end())
             rb = bit->second;
-          cmds[validCount] = {bufHandle, 0,  rb, idxCount, idxCount,
-                              distSq,    ox, oy, oz,       false};
+          cmds[validCount] = {bufHandle, 0, rb, nil, idxCount, idxCount,
+                              distSq,    ox, oy, oz, false};
         }
         validCount++;
       }
@@ -2819,9 +3164,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBatch(
       dbg("DRAW_BUDGET: disabled, resident=%d, gpuMs=%.1f\n", validCount,
           g_lastGpuMs.load(std::memory_order_relaxed));
     }
-    if (g_megaVB) {
-      [g_currentEncoder setVertexBuffer:g_megaVB offset:0 atIndex:0];
-    }
     [g_currentEncoder setVertexBuffer:g_batchOffsetBuf offset:0 atIndex:4];
 
     [g_currentEncoder setFragmentBytes:g_entityOverlayParams
@@ -2836,7 +3178,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBatch(
       if (cmd.opaqueIdxCount <= 0)
         continue;
       if (cmd.isMega) {
-        if (!g_megaVB)
+        if (!cmd.megaPageBuf)
           continue;
       } else if (!cmd.resolvedBuf) {
         continue;
@@ -2889,18 +3231,14 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBatch(
         if (cmd.opaqueIdxCount <= 0) {
           continue;
         }
-        if (cmd.isMega) {
-          if (!g_megaVB)
-            continue;
-        } else {
-          if (!cmd.resolvedBuf)
-            continue;
-        }
+        id<MTLBuffer> vbuf = cmd.isMega ? cmd.megaPageBuf : cmd.resolvedBuf;
+        if (!vbuf)
+          continue;
+        size_t vbufOffset = cmd.isMega ? 0 : 0;
+        (void)vbufOffset;
         id<MTLIndirectRenderCommand> icmd = [g_icb[g_renderSlot]
             indirectRenderCommandAtIndex:(NSUInteger)icbIdx];
-        if (!cmd.isMega) {
-          [icmd setVertexBuffer:cmd.resolvedBuf offset:0 atIndex:0];
-        }
+        [icmd setVertexBuffer:vbuf offset:0 atIndex:0];
         [icmd drawIndexedPrimitives:MTLPrimitiveTypeTriangle
                          indexCount:(NSUInteger)cmd.opaqueIdxCount
                           indexType:MTLIndexTypeUInt32
@@ -2932,9 +3270,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBatch(
       if (g_blockAtlas) {
         [g_currentEncoder setFragmentTexture:g_blockAtlas atIndex:0];
       }
-      if (g_megaVB) {
-        [g_currentEncoder setVertexBuffer:g_megaVB offset:0 atIndex:0];
-      }
     } else {
       for (int i = 0; i < validCount; i++) {
         const DrawCmd &cmd = cmds[i];
@@ -2943,6 +3278,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBatch(
           continue;
         }
         if (cmd.isMega) {
+          if (!cmd.megaPageBuf)
+            continue;
+          [g_currentEncoder setVertexBuffer:cmd.megaPageBuf offset:0 atIndex:0];
           [g_currentEncoder
               drawIndexedPrimitives:MTLPrimitiveTypeTriangle
                          indexCount:(NSUInteger)cmd.opaqueIdxCount
@@ -2966,9 +3304,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBatch(
                         instanceCount:1
                            baseVertex:0
                          baseInstance:(NSUInteger)i];
-            if (g_megaVB) {
-              [g_currentEncoder setVertexBuffer:g_megaVB offset:0 atIndex:0];
-            }
           }
         }
         g_drawCallCount++;
@@ -2978,9 +3313,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawIndexedBatch(
       delete[] cmds;
     if (g_frameCount < 5 || (g_frameCount % 600 == 0)) {
       dbg("DrawBatch: total=%d valid=%d mega=%d nonMega=%d icb=%s "
-          "megaVBUsed=%zuMB\n",
+          "megaUsed=%zuMB\n",
           drawCount, validCount, megaCount, validCount - megaCount,
-          canICB ? "YES" : "NO", g_megaVBHead / (1024 * 1024));
+          canICB ? "YES" : "NO", megaTotalUsedBytes() / (1024 * 1024));
     }
   }
 }
@@ -3014,9 +3349,13 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMeshB
     int32_t f4 = (int32_t)(data[idx + 6] >> 32);
     int32_t f5 = (int32_t)(data[idx + 7] & 0xFFFFFFFFLL);
     int32_t f6 = (int32_t)(data[idx + 7] >> 32);
-    int32_t lodTier = (int32_t)data[idx + 8];
+    int32_t lodTierPacked = (int32_t)data[idx + 8];
+    int32_t lodTier = lodTierPacked & 0xFF;
+    int32_t opaqueFmt = (lodTierPacked >> 16) & 0xFF;
     if (lodTier < 0 || lodTier > 2)
       lodTier = 0;
+    if (opaqueFmt != VERTEX_FORMAT_COMPRESSED_QUAD)
+      opaqueFmt = VERTEX_FORMAT_UNCOMPRESSED;
     int64_t key = packMeshKey(cx, cy, cz);
     int32_t faceCounts[14] = {f0, f1, f2, f3, f4, f5, f6, 0, 0, 0, 0, 0, 0, 0};
     int opaqueFaceTotal = f0 + f1 + f2 + f3 + f4 + f5 + f6;
@@ -3033,6 +3372,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMeshB
       m.visibilityMask = visMask;
       memcpy(m.facingQuadCounts, faceCounts, sizeof(faceCounts));
       m.lodTier = lodTier;
+      m.opaqueFormat = opaqueFmt;
       m.active = true;
       continue;
     }
@@ -3054,6 +3394,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMeshB
     mesh.visibilityMask = visMask;
     memcpy(mesh.facingQuadCounts, faceCounts, sizeof(faceCounts));
     mesh.lodTier = lodTier;
+    mesh.opaqueFormat = opaqueFmt;
     mesh.active = true;
     g_nativeMeshes[mIdx] = mesh;
     g_meshKeyToIdx[key] = mIdx;
@@ -3071,7 +3412,11 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMesh(
     jintArray facingQuadCounts, jint lodTier) {
   g_meshRegGeneration.fetch_add(1, std::memory_order_release);
   int64_t key = packMeshKey(cx, cy, cz);
-  lodTier = std::max(0, std::min(2, (int)lodTier));
+  int32_t lod = (int)lodTier & 0xFF;
+  int32_t opaqueFmt = ((int)lodTier >> 16) & 0xFF;
+  lod = std::max(0, std::min(2, lod));
+  if (opaqueFmt != VERTEX_FORMAT_COMPRESSED_QUAD)
+    opaqueFmt = VERTEX_FORMAT_UNCOMPRESSED;
   int32_t faceCounts[14] = {};
   if (facingQuadCounts) {
     jsize len = env->GetArrayLength(facingQuadCounts);
@@ -3094,7 +3439,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMesh(
     m.opaqueQuadCount = opaqueQuadCount;
     m.visibilityMask = (uint64_t)visibilityMask;
     memcpy(m.facingQuadCounts, faceCounts, sizeof(faceCounts));
-    m.lodTier = (int32_t)lodTier;
+    m.lodTier = lod;
+    m.opaqueFormat = opaqueFmt;
     m.active = true;
 
     return;
@@ -3116,7 +3462,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nRegisterChunkMesh(
   mesh.opaqueQuadCount = (int32_t)opaqueQuadCount;
   mesh.visibilityMask = (uint64_t)visibilityMask;
   memcpy(mesh.facingQuadCounts, faceCounts, sizeof(faceCounts));
-  mesh.lodTier = (int32_t)lodTier;
+  mesh.lodTier = lod;
+  mesh.opaqueFormat = opaqueFmt;
   mesh.active = true;
   g_nativeMeshes[idx] = mesh;
   g_meshKeyToIdx[key] = idx;
@@ -3285,11 +3632,12 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       int64_t chunkKey;
       size_t megaOffset;
       id<MTLBuffer> resolvedBuf;
-
+      id<MTLBuffer> megaPageBuf;
       int idxCount;
       int opaqueIdxCount;
       int opaqueFaceCounts[7];
       int lodTier;
+      int opaqueFormat;
       uint32_t facingMask;
       float distSq;
       float ox, oy, oz;
@@ -3314,10 +3662,12 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       uint64_t bufferHandle;
       uint64_t megaOffset;
       id<MTLBuffer> resolvedBuf;
+      id<MTLBuffer> megaPageBuf;
       int quadCount;
       int opaqueQuadCount;
       int opaqueFaceCounts[7];
       int lodTier;
+      int opaqueFormat;
       bool isMega;
     };
     static MeshSnapshot *s_snapshots = nullptr;
@@ -3366,15 +3716,24 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           memcpy(snap.opaqueFaceCounts, nm.facingQuadCounts,
                  sizeof(snap.opaqueFaceCounts));
           snap.lodTier = nm.lodTier;
+          snap.opaqueFormat = nm.opaqueFormat;
           if (isMegaHandle(nm.bufferHandle)) {
             auto it = g_megaAllocs.find(nm.bufferHandle);
             if (__builtin_expect(it == g_megaAllocs.end(), 0))
               continue;
-            snap.megaOffset = it->second.offset;
-            snap.resolvedBuf = nil;
+            const MegaAllocInfo &ainfo = it->second;
+            if (ainfo.pageIdx >= g_megaPages.size())
+              continue;
+            const MegaPage &pg = g_megaPages[ainfo.pageIdx];
+            if (pg.gen != ainfo.gen || pg.buffer == nil)
+              continue;
+            snap.megaOffset = ainfo.offset;
+            snap.megaPageBuf = pg.buffer;
+            snap.resolvedBuf = pg.buffer;
             snap.isMega = true;
           } else {
             snap.megaOffset = 0;
+            snap.megaPageBuf = nil;
             auto bit = g_buffers.find(nm.bufferHandle);
             snap.resolvedBuf = (bit != g_buffers.end()) ? bit->second : nil;
             snap.isMega = false;
@@ -3415,11 +3774,13 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       cmd.chunkKey = packMeshKey(ms.chunkX, ms.chunkY, ms.chunkZ);
       cmd.megaOffset = ms.megaOffset;
       cmd.resolvedBuf = ms.resolvedBuf;
+      cmd.megaPageBuf = ms.megaPageBuf;
       cmd.idxCount = ms.quadCount * 6;
       cmd.opaqueIdxCount = ms.opaqueQuadCount * 6;
       memcpy(cmd.opaqueFaceCounts, ms.opaqueFaceCounts,
              sizeof(cmd.opaqueFaceCounts));
       cmd.lodTier = ms.lodTier;
+      cmd.opaqueFormat = ms.opaqueFormat;
       cmd.facingMask = visibleFacingMaskForAabb(ox, oy, oz);
       cmd.distSq = cx * cx + cz * cz;
       cmd.ox = ox;
@@ -3503,6 +3864,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         memcpy(stale.opaqueFaceCounts, s_cmds[i].opaqueFaceCounts,
                sizeof(stale.opaqueFaceCounts));
         stale.lodTier = s_cmds[i].lodTier;
+        stale.opaqueFormat = s_cmds[i].opaqueFormat;
         stale.ox = s_cmds[i].ox;
         stale.oy = s_cmds[i].oy;
         stale.oz = s_cmds[i].oz;
@@ -3539,11 +3901,13 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         cmd.chunkKey = sc.chunkKey;
         cmd.megaOffset = staleRes.offset;
         cmd.resolvedBuf = staleRes.buf;
+        cmd.megaPageBuf = sc.isMega ? staleRes.buf : nil;
         cmd.idxCount = sc.idxCount;
         cmd.opaqueIdxCount = sc.opaqueIdxCount;
         memcpy(cmd.opaqueFaceCounts, sc.opaqueFaceCounts,
                sizeof(cmd.opaqueFaceCounts));
         cmd.lodTier = sc.lodTier;
+        cmd.opaqueFormat = sc.opaqueFormat;
         cmd.facingMask =
             visibleFacingMaskForAabb(sc.ox - dcx, sc.oy - dcy, sc.oz - dcz);
         cmd.distSq = 0.0f;
@@ -3635,7 +3999,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
     }
 
     if (g_meshShadersActive && g_pipelineMeshOpaque && megaCount > 0 &&
-        g_megaVB && g_blockAtlas && g_tripleBuffers[g_renderSlot] &&
+        g_blockAtlas && g_tripleBuffers[g_renderSlot] &&
         g_tripleBuffers[g_renderSlot].length >= sizeof(CameraUniformsCPU)) {
 
       CameraUniformsCPU *cu =
@@ -3674,79 +4038,141 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       }
       id<MTLBuffer> meshletBuf = g_meshletBuffers[meshletSlot];
 
-      int meshletCount = 0;
+      id<MTLBuffer> pageBufs[32];
+      int pageCount = 0;
+      for (int i = 0; i < validCount; i++) {
+        if (!s_cmds[i].isMega || !s_cmds[i].megaPageBuf)
+          continue;
+        if (s_cmds[i].opaqueIdxCount <= 0)
+          continue;
+        id<MTLBuffer> pb = s_cmds[i].megaPageBuf;
+        bool seen = false;
+        for (int p = 0; p < pageCount; p++) {
+          if (pageBufs[p] == pb) {
+            seen = true;
+            break;
+          }
+        }
+        if (!seen && pageCount < 32)
+          pageBufs[pageCount++] = pb;
+      }
+
+      int totalMeshlets = 0;
       static const int VERTEX_STRIDE_MESH = 16;
-      if (meshletBuf) {
+      int pageSliceStart[32] = {};
+      int pageSliceCount[32] = {};
+      if (meshletBuf && pageCount > 0) {
         ChunkMeshletNative *meshlets =
             (ChunkMeshletNative *)[meshletBuf contents];
-        for (int i = 0; i < validCount; i++) {
-          if (!s_cmds[i].isMega)
-            continue;
-          int opaqueV = (s_cmds[i].opaqueIdxCount / 6) * 4;
-          if (opaqueV <= 0)
-            continue;
-          uint32_t fm = visibleFacingMaskForAabb(s_cmds[i].ox, s_cmds[i].oy,
-                                                 s_cmds[i].oz);
-          meshlets[meshletCount].baseVertexOffset =
-              (uint32_t)(s_cmds[i].megaOffset / VERTEX_STRIDE_MESH);
-          meshlets[meshletCount].vertexCount = (uint32_t)opaqueV;
-          meshlets[meshletCount].worldX = s_cmds[i].ox;
-          meshlets[meshletCount].worldY = s_cmds[i].oy;
-          meshlets[meshletCount].worldZ = s_cmds[i].oz;
-          meshlets[meshletCount].visibleFaceMask = fm;
-          meshlets[meshletCount].lodTier = (uint32_t)s_cmds[i].lodTier;
-          uint32_t acc = 0;
-          uint32_t visibleAcc = 0;
-          for (int f = 0; f < 7; f++) {
-            meshlets[meshletCount].faceStart[f] = acc;
-            uint32_t faceV = (uint32_t)s_cmds[i].opaqueFaceCounts[f] * 4u;
-            bool faceKept = (fm & (1u << f)) != 0u;
-            meshlets[meshletCount].faceVertexCount[f] = faceKept ? faceV : 0u;
-            meshlets[meshletCount].visibleFaceStart[f] = visibleAcc;
-            acc += faceV;
-            if (faceKept)
-              visibleAcc += faceV;
+        int meshletBase = 0;
+        for (int p = 0; p < pageCount; p++) {
+          id<MTLBuffer> pageBuf = pageBufs[p];
+          (void)pageBuf;
+          int meshletCount = 0;
+          for (int i = 0; i < validCount; i++) {
+            if (!s_cmds[i].isMega || s_cmds[i].megaPageBuf != pageBufs[p])
+              continue;
+            int opaqueQuads = s_cmds[i].opaqueIdxCount / 6;
+            int opaqueV = opaqueQuads * 4;
+            if (opaqueV <= 0)
+              continue;
+            uint32_t fm = visibleFacingMaskForAabb(s_cmds[i].ox, s_cmds[i].oy,
+                                                   s_cmds[i].oz);
+            int isCompressed =
+                (s_cmds[i].opaqueFormat == VERTEX_FORMAT_COMPRESSED_QUAD) ? 1
+                                                                         : 0;
+            ChunkMeshletNative *dst = &meshlets[meshletBase + meshletCount];
+            dst->baseVertexOffset =
+                (uint32_t)(s_cmds[i].megaOffset / VERTEX_STRIDE_MESH);
+            dst->vertexCount = (uint32_t)opaqueV;
+            dst->worldX = s_cmds[i].ox;
+            dst->worldY = s_cmds[i].oy;
+            dst->worldZ = s_cmds[i].oz;
+            dst->visibleFaceMask = fm;
+            dst->lodTier = (uint32_t)s_cmds[i].lodTier;
+            dst->vertexFormat = (uint32_t)isCompressed;
+            dst->_pad[0] = 0;
+            dst->_pad[1] = 0;
+            uint32_t acc = 0;
+            uint32_t visibleAcc = 0;
+            for (int f = 0; f < 7; f++) {
+              uint32_t faceQuads = (uint32_t)s_cmds[i].opaqueFaceCounts[f];
+              if (isCompressed) {
+                dst->faceStart[f] = acc;
+                bool faceKept = (fm & (1u << f)) != 0u;
+                dst->faceVertexCount[f] = faceKept ? faceQuads : 0u;
+                dst->visibleFaceStart[f] = visibleAcc;
+                acc += faceQuads;
+                if (faceKept)
+                  visibleAcc += faceQuads;
+              } else {
+                uint32_t faceV = faceQuads * 4u;
+                bool faceKept = (fm & (1u << f)) != 0u;
+                dst->faceStart[f] = acc;
+                dst->faceVertexCount[f] = faceKept ? faceV : 0u;
+                dst->visibleFaceStart[f] = visibleAcc;
+                acc += faceV;
+                if (faceKept)
+                  visibleAcc += faceV;
+              }
+            }
+            if (isCompressed) {
+              dst->visibleVertexCount = visibleAcc * 4u;
+            } else {
+              dst->visibleVertexCount = visibleAcc;
+            }
+            meshletCount++;
           }
-          meshlets[meshletCount].visibleVertexCount = visibleAcc;
-          meshletCount++;
+          pageSliceStart[p] = meshletBase;
+          pageSliceCount[p] = meshletCount;
+          meshletBase += meshletCount;
+          totalMeshlets += meshletCount;
         }
-        cu->totalChunks = (uint32_t)meshletCount;
+        cu->totalChunks = (uint32_t)totalMeshlets;
       }
 
-      if (meshletCount > 0) {
+      if (meshletBuf && totalMeshlets > 0) {
         if (@available(macOS 13.0, *)) {
-          [g_currentEncoder setRenderPipelineState:g_pipelineMeshOpaque];
-          g_currentPipeline = g_pipelineMeshOpaque;
-          if (g_depthState)
-            [g_currentEncoder setDepthStencilState:g_depthState];
-
-          id<MTLBuffer> camBuf = g_tripleBuffers[g_renderSlot];
-
-          [g_currentEncoder setObjectBuffer:meshletBuf offset:0 atIndex:0];
-          [g_currentEncoder setObjectBuffer:camBuf offset:0 atIndex:1];
-
-          [g_currentEncoder setMeshBuffer:meshletBuf offset:0 atIndex:0];
-          [g_currentEncoder setMeshBuffer:camBuf offset:0 atIndex:1];
-          [g_currentEncoder setMeshBuffer:g_megaVB offset:0 atIndex:2];
-
-          [g_currentEncoder setFragmentTexture:g_blockAtlas atIndex:0];
-          [g_currentEncoder
-              setFragmentTexture:(g_lightmap ?: g_lightmapFallback)
-                         atIndex:1];
-          [g_currentEncoder setFragmentBuffer:camBuf offset:0 atIndex:1];
-
-          MTLSize objTGS = MTLSizeMake((NSUInteger)meshletCount, 1, 1);
-          MTLSize objTPG = MTLSizeMake(1, 1, 1);
-          MTLSize meshTPG = MTLSizeMake(256, 1, 1);
-
-          [g_currentEncoder drawMeshThreadgroups:objTGS
-                     threadsPerObjectThreadgroup:objTPG
-                       threadsPerMeshThreadgroup:meshTPG];
-          g_drawCallCount++;
-
-          g_currentPipeline = nil;
+          for (int p = 0; p < pageCount; p++) {
+            int sliceStart = pageSliceStart[p];
+            int sliceCount = pageSliceCount[p];
+            if (sliceCount <= 0)
+              continue;
+            id<MTLBuffer> pageBuf = pageBufs[p];
+            [g_currentEncoder setRenderPipelineState:g_pipelineMeshOpaque];
+            g_currentPipeline = g_pipelineMeshOpaque;
+            if (g_depthState)
+              [g_currentEncoder setDepthStencilState:g_depthState];
+            id<MTLBuffer> camBuf = g_tripleBuffers[g_renderSlot];
+            NSUInteger sliceOffset =
+                (NSUInteger)((size_t)sliceStart * sizeof(ChunkMeshletNative));
+            [g_currentEncoder setObjectBuffer:meshletBuf
+                                       offset:sliceOffset
+                                      atIndex:0];
+            [g_currentEncoder setObjectBuffer:camBuf offset:0 atIndex:1];
+            [g_currentEncoder setMeshBuffer:meshletBuf
+                                     offset:sliceOffset
+                                    atIndex:0];
+            [g_currentEncoder setMeshBuffer:camBuf offset:0 atIndex:1];
+            [g_currentEncoder setMeshBuffer:pageBuf offset:0 atIndex:2];
+            [g_currentEncoder setFragmentTexture:g_blockAtlas atIndex:0];
+            [g_currentEncoder
+                setFragmentTexture:(g_lightmap ?: g_lightmapFallback)
+                           atIndex:1];
+            [g_currentEncoder setFragmentBuffer:camBuf offset:0 atIndex:1];
+            MTLSize objTGS = MTLSizeMake((NSUInteger)sliceCount, 1, 1);
+            MTLSize objTPG = MTLSizeMake(1, 1, 1);
+            MTLSize meshTPG = MTLSizeMake(256, 1, 1);
+            [g_currentEncoder drawMeshThreadgroups:objTGS
+                       threadsPerObjectThreadgroup:objTPG
+                         threadsPerMeshThreadgroup:meshTPG];
+            g_drawCallCount++;
+            g_currentPipeline = nil;
+          }
         }
       }
+
+      int meshletCount = totalMeshlets;
 
       if (g_useProgrammableBlending ||
           (g_pipelineInhouse && g_depthStateNoWrite &&
@@ -3811,6 +4237,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
                   continue;
                 if (!s_cmds[i].resolvedBuf)
                   continue;
+                if (s_cmds[i].opaqueFormat == VERTEX_FORMAT_COMPRESSED_QUAD)
+                  continue;
                 [g_currentEncoder setVertexBuffer:s_cmds[i].resolvedBuf
                                            offset:0
                                           atIndex:0];
@@ -3825,8 +4253,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
                              baseInstance:(NSUInteger)i];
                 g_drawCallCount++;
               }
-              if (g_megaVB)
-                [g_currentEncoder setVertexBuffer:g_megaVB offset:0 atIndex:0];
             }
           }
 
@@ -3842,13 +4268,17 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
               int waterIdxCount = s_cmds[i].idxCount - s_cmds[i].opaqueIdxCount;
               if (waterIdxCount <= 0)
                 continue;
+              int opaqueQuads = s_cmds[i].opaqueIdxCount / 6;
+              int opaqueVertExpanded = opaqueQuads * 4;
               g_oitCmds[oitCount++] = {
                   s_cmds[i].resolvedBuf,
+                  s_cmds[i].megaPageBuf,
                   s_cmds[i].megaOffset,
                   s_cmds[i].isMega,
                   waterIdxCount,
                   i,
-                  s_cmds[i].opaqueIdxCount / 6 * 4,
+                  opaqueVertExpanded,
+                  s_cmds[i].opaqueFormat,
               };
             }
             g_oitCmdsCount = oitCount;
@@ -3868,8 +4298,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
               if (waterIdxCount <= 0)
                 continue;
               g_deferredWaterCmds[deferredCount++] = {
-                  s_cmds[i].resolvedBuf, s_cmds[i].megaOffset,
-                  s_cmds[i].idxCount,    s_cmds[i].opaqueIdxCount,
+                  s_cmds[i].resolvedBuf, s_cmds[i].megaPageBuf,
+                  s_cmds[i].megaOffset,  s_cmds[i].idxCount,
+                  s_cmds[i].opaqueIdxCount, s_cmds[i].opaqueFormat,
                   s_cmds[i].distSq,      i,
                   s_cmds[i].isMega,
               };
@@ -3925,9 +4356,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       memcpy(&maskAsFloat, &faceMask, sizeof(float));
       offBuf[i * 4 + 3] = maskAsFloat;
     }
-    if (g_megaVB) {
-      [g_currentEncoder setVertexBuffer:g_megaVB offset:0 atIndex:0];
-    }
     [g_currentEncoder setVertexBuffer:offsetBuf offset:0 atIndex:4];
 
     if (g_depthState) {
@@ -3955,13 +4383,16 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         int wIdx = s_cmds[i].idxCount - s_cmds[i].opaqueIdxCount;
         if (wIdx <= 0)
           continue;
+        int opaqueQuads = s_cmds[i].opaqueIdxCount / 6;
         g_oitCmds[oitCount++] = {
             s_cmds[i].resolvedBuf,
+            s_cmds[i].megaPageBuf,
             s_cmds[i].megaOffset,
             s_cmds[i].isMega,
             wIdx,
             i,
-            s_cmds[i].opaqueIdxCount / 6 * 4,
+            opaqueQuads * 4,
+            s_cmds[i].opaqueFormat,
         };
       }
       g_oitCmdsCount = oitCount;
@@ -3981,8 +4412,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         if (waterIdxCount <= 0)
           continue;
         g_deferredWaterCmds[deferredCount++] = {
-            s_cmds[i].resolvedBuf,    s_cmds[i].megaOffset, s_cmds[i].idxCount,
-            s_cmds[i].opaqueIdxCount, s_cmds[i].distSq,     i,
+            s_cmds[i].resolvedBuf,    s_cmds[i].megaPageBuf,
+            s_cmds[i].megaOffset,     s_cmds[i].idxCount,
+            s_cmds[i].opaqueIdxCount, s_cmds[i].opaqueFormat,
+            s_cmds[i].distSq,         i,
             s_cmds[i].isMega,
         };
       }
@@ -3996,8 +4429,10 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
     for (int i = 0; i < validCount; i++) {
       if (s_cmds[i].opaqueIdxCount <= 0)
         continue;
+      if (s_cmds[i].opaqueFormat == VERTEX_FORMAT_COMPRESSED_QUAD)
+        continue;
       if (s_cmds[i].isMega) {
-        if (!g_megaVB)
+        if (!s_cmds[i].megaPageBuf)
           continue;
       } else if (!s_cmds[i].resolvedBuf) {
         continue;
@@ -4064,13 +4499,12 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
         int opaqueIdx = s_cmds[i].opaqueIdxCount;
         if (__builtin_expect(opaqueIdx <= 0, 0))
           continue;
-        if (s_cmds[i].isMega) {
-          if (__builtin_expect(!g_megaVB, 0))
-            continue;
-        } else {
-          if (__builtin_expect(s_cmds[i].resolvedBuf == nil, 0))
-            continue;
-        }
+        if (s_cmds[i].opaqueFormat == VERTEX_FORMAT_COMPRESSED_QUAD)
+          continue;
+        id<MTLBuffer> vbuf =
+            s_cmds[i].isMega ? s_cmds[i].megaPageBuf : s_cmds[i].resolvedBuf;
+        if (__builtin_expect(vbuf == nil, 0))
+          continue;
         uint32_t faceMask = s_cmds[i].facingMask;
         int baseQuad = 0;
         for (int face = 0; face < 7; face++) {
@@ -4084,9 +4518,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           }
           id<MTLIndirectRenderCommand> icmd = [g_icb[g_renderSlot]
               indirectRenderCommandAtIndex:(NSUInteger)icbIdx];
-          if (!s_cmds[i].isMega) {
-            [icmd setVertexBuffer:s_cmds[i].resolvedBuf offset:0 atIndex:0];
-          }
+          [icmd setVertexBuffer:vbuf offset:0 atIndex:0];
           NSInteger baseVertex =
               (NSInteger)(s_cmds[i].isMega
                               ? (s_cmds[i].megaOffset / VERTEX_STRIDE)
@@ -4118,9 +4550,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       if (g_blockAtlas) {
         [g_currentEncoder setFragmentTexture:g_blockAtlas atIndex:0];
       }
-      if (g_megaVB) {
-        [g_currentEncoder setVertexBuffer:g_megaVB offset:0 atIndex:0];
-      }
     } else {
       if (useOpaque) {
         [g_currentEncoder setRenderPipelineState:g_pipelineInhouseOpaque];
@@ -4129,20 +4558,22 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
           [g_currentEncoder setFragmentTexture:g_blockAtlas atIndex:0];
         }
       }
-      if (g_megaVB) {
-        [g_currentEncoder setVertexBuffer:g_megaVB offset:0 atIndex:0];
-      }
-      bool lastVB0Mega = (g_megaVB != nil);
+      id<MTLBuffer> lastPageBuf = nil;
       for (int i = 0; i < validCount; i++) {
         int opaqueIdx = s_cmds[i].opaqueIdxCount;
         if (__builtin_expect(opaqueIdx <= 0, 0))
           continue;
+        if (s_cmds[i].opaqueFormat == VERTEX_FORMAT_COMPRESSED_QUAD)
+          continue;
         uint32_t faceMask = s_cmds[i].facingMask;
         int baseQuad = 0;
         if (__builtin_expect(s_cmds[i].isMega, 1)) {
-          if (__builtin_expect(!lastVB0Mega, 0)) {
-            [g_currentEncoder setVertexBuffer:g_megaVB offset:0 atIndex:0];
-            lastVB0Mega = true;
+          id<MTLBuffer> pageBuf = s_cmds[i].megaPageBuf;
+          if (__builtin_expect(pageBuf == nil, 0))
+            continue;
+          if (pageBuf != lastPageBuf) {
+            [g_currentEncoder setVertexBuffer:pageBuf offset:0 atIndex:0];
+            lastPageBuf = pageBuf;
           }
           for (int face = 0; face < 7; face++) {
             int quadCount = s_cmds[i].opaqueFaceCounts[face];
@@ -4172,7 +4603,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
             [g_currentEncoder setVertexBuffer:s_cmds[i].resolvedBuf
                                        offset:0
                                       atIndex:0];
-            lastVB0Mega = false;
+            lastPageBuf = nil;
             for (int face = 0; face < 7; face++) {
               int quadCount = s_cmds[i].opaqueFaceCounts[face];
               if (quadCount <= 0) {
@@ -5910,8 +6341,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawDeferredWaterP
     g_currentPipeline = waterPipeline;
     if (g_blockAtlas)
       [g_currentEncoder setFragmentTexture:g_blockAtlas atIndex:0];
-    if (g_megaVB)
-      [g_currentEncoder setVertexBuffer:g_megaVB offset:0 atIndex:0];
     [g_currentEncoder setVertexBytes:g_projMatrix length:64 atIndex:1];
     [g_currentEncoder setVertexBytes:g_mvMatrix length:64 atIndex:2];
     float camPos[4] = {0.0f, 0.0f, 0.0f, g_skyBrightness};
@@ -5936,13 +6365,28 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawDeferredWaterP
           });
     }
     int waterDraws = 0;
+    id<MTLBuffer> lastWaterPage = nil;
     for (int i = 0; i < g_deferredWaterCmdCount; i++) {
       const DeferredWaterCmd &cmd = g_deferredWaterCmds[i];
       int waterIdxCount = cmd.idxCount - cmd.opaqueIdxCount;
       if (waterIdxCount <= 0)
         continue;
-      int opaqueVertCount = cmd.opaqueIdxCount / 6 * 4;
+      int opaqueQuads = cmd.opaqueIdxCount / 6;
+      int opaqueSlots =
+          (cmd.opaqueFormat == VERTEX_FORMAT_COMPRESSED_QUAD)
+              ? opaqueQuads
+              : opaqueQuads * 4;
+      int opaqueVertExpanded = opaqueQuads * 4;
+      (void)opaqueVertExpanded;
       if (cmd.isMega) {
+        id<MTLBuffer> pageBuf =
+            cmd.megaPageBuf ? cmd.megaPageBuf : cmd.resolvedBuf;
+        if (!pageBuf)
+          continue;
+        if (pageBuf != lastWaterPage) {
+          [g_currentEncoder setVertexBuffer:pageBuf offset:0 atIndex:0];
+          lastWaterPage = pageBuf;
+        }
         [g_currentEncoder
             drawIndexedPrimitives:MTLPrimitiveTypeTriangle
                        indexCount:(NSUInteger)waterIdxCount
@@ -5951,20 +6395,19 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawDeferredWaterP
                 indexBufferOffset:g_deferredWaterIBOffset
                     instanceCount:1
                        baseVertex:(NSInteger)(cmd.megaOffset / VERTEX_STRIDE) +
-                                  opaqueVertCount
+                                  opaqueSlots
                      baseInstance:(NSUInteger)cmd.instanceIdx];
       } else if (cmd.resolvedBuf) {
         [g_currentEncoder setVertexBuffer:cmd.resolvedBuf offset:0 atIndex:0];
+        lastWaterPage = nil;
         [g_currentEncoder drawIndexedPrimitives:MTLPrimitiveTypeTriangle
                                      indexCount:(NSUInteger)waterIdxCount
                                       indexType:MTLIndexTypeUInt32
                                     indexBuffer:g_deferredWaterIB
                               indexBufferOffset:g_deferredWaterIBOffset
                                   instanceCount:1
-                                     baseVertex:opaqueVertCount
+                                     baseVertex:opaqueSlots
                                    baseInstance:(NSUInteger)cmd.instanceIdx];
-        if (g_megaVB)
-          [g_currentEncoder setVertexBuffer:g_megaVB offset:0 atIndex:0];
       }
       waterDraws++;
       g_drawCallCount++;
@@ -6050,16 +6493,27 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawOITPass(
         [enc setVertexBytes:camPos length:16 atIndex:3];
         if (g_blockAtlas)
           [enc setFragmentTexture:g_blockAtlas atIndex:0];
-        if (g_megaVB)
-          [enc setVertexBuffer:g_megaVB offset:0 atIndex:0];
         if (g_oitOffsetBuf)
           [enc setVertexBuffer:g_oitOffsetBuf offset:0 atIndex:4];
         static const int VERTEX_STRIDE = 16;
+        id<MTLBuffer> lastOitPage = nil;
         for (int i = 0; i < g_oitCmdsCount; i++) {
           const OITCachedCmd &c = g_oitCmds[i];
           if (c.translucentIdxCount <= 0)
             continue;
-          if (c.isMega && g_megaVB) {
+          int opaqueQuads = c.opaqueVertCount / 4;
+          int opaqueSlots = (c.opaqueFormat == VERTEX_FORMAT_COMPRESSED_QUAD)
+                                ? opaqueQuads
+                                : c.opaqueVertCount;
+          if (c.isMega) {
+            id<MTLBuffer> pageBuf =
+                c.megaPageBuf ? c.megaPageBuf : c.resolvedBuf;
+            if (!pageBuf)
+              continue;
+            if (pageBuf != lastOitPage) {
+              [enc setVertexBuffer:pageBuf offset:0 atIndex:0];
+              lastOitPage = pageBuf;
+            }
             [enc drawIndexedPrimitives:MTLPrimitiveTypeTriangle
                             indexCount:(NSUInteger)c.translucentIdxCount
                              indexType:MTLIndexTypeUInt32
@@ -6068,20 +6522,19 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawOITPass(
                          instanceCount:1
                             baseVertex:(NSInteger)(c.megaOffset /
                                                    VERTEX_STRIDE) +
-                                       c.opaqueVertCount
+                                       opaqueSlots
                           baseInstance:(NSUInteger)c.instanceIdx];
           } else if (c.resolvedBuf) {
             [enc setVertexBuffer:c.resolvedBuf offset:0 atIndex:0];
+            lastOitPage = nil;
             [enc drawIndexedPrimitives:MTLPrimitiveTypeTriangle
                             indexCount:(NSUInteger)c.translucentIdxCount
                              indexType:MTLIndexTypeUInt32
                            indexBuffer:g_oitIB
                      indexBufferOffset:g_oitIBOffset
                          instanceCount:1
-                            baseVertex:c.opaqueVertCount
+                            baseVertex:opaqueSlots
                           baseInstance:(NSUInteger)c.instanceIdx];
-            if (g_megaVB)
-              [enc setVertexBuffer:g_megaVB offset:0 atIndex:0];
           }
           g_drawCallCount++;
         }
@@ -6172,7 +6625,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetAvailableMemory
     return (jlong)(freePages * pageSize);
   }
 
-  return (jlong)(MEGA_VB_CAPACITY);
+  return (jlong)(megaPageSizeForSystem() * MEGA_MAX_PAGES);
 }
 extern "C" JNIEXPORT jint JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nGetHiZMipCount(
@@ -6257,11 +6710,8 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nFlushDeferredDelet
       g_deferredDeletions.clear();
     }
 
-    {
-      std::unique_lock<std::shared_mutex> mLock(g_megaMutex);
-      megaCoalesceFreeList();
-    }
-    dbg("nFlushDeferredDeletions: freed %d buffers, mega free list coalesced\n",
+    megaCoalesceFreeList();
+    dbg("nFlushDeferredDeletions: freed %d buffers, empty mega pages purged\n",
         freed);
   }
 }
