@@ -44,6 +44,19 @@ import org.joml.Vector3f;
 
 public class CustomChunkMesher {
     private static final int VERTEX_STRIDE = 16;
+    //AI agents, please read Agents.md and your related document.
+    private static final int QUAD_RECORD_STRIDE = 16;
+    private static final int VERTEX_FORMAT_UNCOMPRESSED = 0;
+    private static final int VERTEX_FORMAT_COMPRESSED_QUAD = 1;
+    private static final int[][] FACE_VERTS = {
+            { 0, 0, 1, 0, 0, 0, 1, 0, 0, 1, 0, 1 },
+            { 0, 1, 0, 0, 1, 1, 1, 1, 1, 1, 1, 0 },
+            { 1, 1, 0, 1, 0, 0, 0, 0, 0, 0, 1, 0 },
+            { 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1 },
+            { 0, 1, 0, 0, 0, 0, 0, 0, 1, 0, 1, 1 },
+            { 1, 1, 1, 1, 0, 1, 1, 0, 0, 1, 1, 0 },
+    };
+    private static final int[][] UV_PAT = { { 0, 0 }, { 0, 1 }, { 1, 1 }, { 1, 0 } };
     private static final int SECTION_SIZE = 16;
     private static final int BIOME_TINT_SLOTS = 4;
     private static final int PADDED_RADIUS = 2;
@@ -185,30 +198,42 @@ public class CustomChunkMesher {
         public final byte missingNeighborMask;
         public final byte faceOcclusionMask;
         public final long[] sectionVisibility;
+        public final int opaqueFormat;
 
         public ChunkMeshData(long bufferHandle, int quadCount, int chunkX, int chunkY, int chunkZ,
                 int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ) {
             this(bufferHandle, quadCount, chunkX, chunkY, chunkZ, buildPlayerCX, buildPlayerCY, buildPlayerCZ, 0L,
-                    new int[7], 0, (byte) 0, (byte) 0, null);
+                    new int[7], 0, (byte) 0, (byte) 0, null, VERTEX_FORMAT_UNCOMPRESSED);
         }
 
         public ChunkMeshData(long bufferHandle, int quadCount, int chunkX, int chunkY, int chunkZ,
                 int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ, long visibilityMask, int[] facingQuadCounts,
                 int lodTier, byte missingNeighborMask) {
             this(bufferHandle, quadCount, chunkX, chunkY, chunkZ, buildPlayerCX, buildPlayerCY, buildPlayerCZ,
-                    visibilityMask, facingQuadCounts, lodTier, missingNeighborMask, (byte) 0, null);
+                    visibilityMask, facingQuadCounts, lodTier, missingNeighborMask, (byte) 0, null,
+                    VERTEX_FORMAT_UNCOMPRESSED);
         }
 
         public ChunkMeshData(long bufferHandle, int quadCount, int chunkX, int chunkY, int chunkZ,
                 int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ, long visibilityMask, int[] facingQuadCounts,
                 int lodTier, byte missingNeighborMask, byte faceOcclusionMask) {
             this(bufferHandle, quadCount, chunkX, chunkY, chunkZ, buildPlayerCX, buildPlayerCY, buildPlayerCZ,
-                    visibilityMask, facingQuadCounts, lodTier, missingNeighborMask, faceOcclusionMask, null);
+                    visibilityMask, facingQuadCounts, lodTier, missingNeighborMask, faceOcclusionMask, null,
+                    VERTEX_FORMAT_UNCOMPRESSED);
         }
 
         public ChunkMeshData(long bufferHandle, int quadCount, int chunkX, int chunkY, int chunkZ,
                 int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ, long visibilityMask, int[] facingQuadCounts,
                 int lodTier, byte missingNeighborMask, byte faceOcclusionMask, long[] sectionVisibility) {
+            this(bufferHandle, quadCount, chunkX, chunkY, chunkZ, buildPlayerCX, buildPlayerCY, buildPlayerCZ,
+                    visibilityMask, facingQuadCounts, lodTier, missingNeighborMask, faceOcclusionMask,
+                    sectionVisibility, VERTEX_FORMAT_UNCOMPRESSED);
+        }
+
+        public ChunkMeshData(long bufferHandle, int quadCount, int chunkX, int chunkY, int chunkZ,
+                int buildPlayerCX, int buildPlayerCY, int buildPlayerCZ, long visibilityMask, int[] facingQuadCounts,
+                int lodTier, byte missingNeighborMask, byte faceOcclusionMask, long[] sectionVisibility,
+                int opaqueFormat) {
             this.bufferHandle = bufferHandle;
             this.quadCount = quadCount;
             this.chunkX = chunkX;
@@ -223,6 +248,7 @@ public class CustomChunkMesher {
             this.missingNeighborMask = missingNeighborMask;
             this.faceOcclusionMask = faceOcclusionMask;
             this.sectionVisibility = sectionVisibility != null ? sectionVisibility.clone() : null;
+            this.opaqueFormat = opaqueFormat;
         }
 
         public int getChunkX() {
@@ -1934,29 +1960,73 @@ public class CustomChunkMesher {
                 return;
             }
 
-            int opaqueBytes = opaqueQuadCount * 4 * VERTEX_STRIDE;
+            int opaqueBytesUncompressed = opaqueQuadCount * 4 * VERTEX_STRIDE;
             ByteBuffer vertexBuffer = vertexHolder.buf;
             vertexBuffer.flip();
             int[] facingQuadCounts = bucketQuadsByFacing(vertexHolder, opaqueQuadCount, waterQuadCount);
+
+            int opaqueFormat = VERTEX_FORMAT_UNCOMPRESSED;
+            int opaqueBytes = opaqueBytesUncompressed;
+            ByteBuffer compressedOpaque = null;
+            boolean meshShadersOn = false;
+            try {
+                meshShadersOn = NativeBridge.nAreMeshShadersActive();
+            } catch (Throwable ignored) {
+                meshShadersOn = false;
+            }
+            if (meshShadersOn && opaqueQuadCount > 0) {
+                try {
+                    ByteBuffer srcDup = vertexHolder.buf.duplicate();
+                    srcDup.position(0);
+                    srcDup.limit(opaqueBytesUncompressed);
+                    compressedOpaque = tryCompressOpaqueQuads(srcDup, opaqueQuadCount);
+                } catch (Exception ignored) {
+                    compressedOpaque = null;
+                }
+                if (compressedOpaque != null) {
+                    opaqueFormat = VERTEX_FORMAT_COMPRESSED_QUAD;
+                    opaqueBytes = opaqueQuadCount * QUAD_RECORD_STRIDE;
+                }
+            }
 
             if (waterQuadCount > 0) {
                 ByteBuffer waterBuffer = waterHolder.buf;
                 waterBuffer.flip();
                 int waterBytes = waterBuffer.remaining();
-                if (vertexHolder.buf.capacity() < opaqueBytes + waterBytes) {
-                    vertexHolder.growPreservingPrefix(opaqueBytes + waterBytes, opaqueBytes);
+                if (compressedOpaque != null) {
+                    if (vertexHolder.buf.capacity() < opaqueBytes + waterBytes) {
+                        vertexHolder.growPreservingPrefix(opaqueBytes + waterBytes, 0);
+                    }
+                    vertexBuffer = vertexHolder.buf;
+                    vertexBuffer.clear();
+                    ByteBuffer cdup = compressedOpaque.duplicate();
+                    vertexBuffer.put(cdup);
+                    vertexBuffer.limit(vertexBuffer.capacity());
+                    vertexBuffer.position(opaqueBytes);
+                    vertexBuffer.put(waterBuffer);
+                } else {
+                    if (vertexHolder.buf.capacity() < opaqueBytes + waterBytes) {
+                        vertexHolder.growPreservingPrefix(opaqueBytes + waterBytes, opaqueBytes);
+                    }
+                    vertexBuffer = vertexHolder.buf;
+                    vertexBuffer.limit(vertexBuffer.capacity());
+                    vertexBuffer.position(opaqueBytes);
+                    vertexBuffer.put(waterBuffer);
+                }
+            } else if (compressedOpaque != null) {
+                if (vertexHolder.buf.capacity() < opaqueBytes) {
+                    vertexHolder.growPreservingPrefix(opaqueBytes, 0);
                 }
                 vertexBuffer = vertexHolder.buf;
-                vertexBuffer.limit(vertexBuffer.capacity());
-                vertexBuffer.position(opaqueBytes);
-                vertexBuffer.put(waterBuffer);
+                vertexBuffer.clear();
+                vertexBuffer.put(compressedOpaque.duplicate());
             }
             vertexBuffer = vertexHolder.buf;
             vertexBuffer.flip();
             long visibilityMask = computeVisibilityMask(snapshot.paddedBlockStates);
             byte faceOcclusionMask = computeFaceOcclusionMask(snapshot.paddedBlockStates);
             long[] sectionVisibility = buildSectionVisibility(snapshot.paddedBlockStates);
-            int dataLen = quadCount * 4 * VERTEX_STRIDE;
+            int dataLen = opaqueBytes + waterQuadCount * 4 * VERTEX_STRIDE;
 
             if (isTaskCancelled(key, generation, globalGeneration)) {
                 return;
@@ -1987,7 +2057,8 @@ public class CustomChunkMesher {
             ChunkMeshData mesh = new ChunkMeshData(bufferHandle, quadCount, chunkX, chunkY, chunkZ,
                     context.buildPlayerCX, context.buildPlayerCY, context.buildPlayerCZ,
                     visibilityMask, facingQuadCounts, lodTier,
-                    computeMissingNeighborMask(context.world, chunkX, chunkZ), faceOcclusionMask, sectionVisibility);
+                    computeMissingNeighborMask(context.world, chunkX, chunkZ), faceOcclusionMask, sectionVisibility,
+                    opaqueFormat);
             ChunkMeshData old;
             synchronized (dirtyGeneration) {
                 if (isTaskCancelled(key, generation, globalGeneration)) {
@@ -2026,7 +2097,7 @@ public class CustomChunkMesher {
                     batchRegData[idx
                             + 7] = ((long) (facingQuadCounts.length > 5 ? facingQuadCounts[5] : 0) & 0xFFFFFFFFL)
                                     | ((long) (facingQuadCounts.length > 6 ? facingQuadCounts[6] : 0) << 32);
-                    batchRegData[idx + 8] = lodTier;
+                    batchRegData[idx + 8] = (lodTier & 0xFF) | ((long) (opaqueFormat & 0xFF) << 16);
                     batchRegCount++;
                     if (batchRegCount >= BATCH_REG_CAPACITY) {
                         flushCount = batchRegCount;
@@ -3617,6 +3688,234 @@ public class CustomChunkMesher {
         return (byte) (w1 >>> 56);
     }
 
+    private static ByteBuffer tryCompressOpaqueQuads(ByteBuffer src, int opaqueQuadCount) {
+        if (src == null || opaqueQuadCount <= 0)
+            return null;
+        if (src.limit() < opaqueQuadCount * 4 * VERTEX_STRIDE)
+            return null;
+        ByteBuffer out = ByteBuffer.allocateDirect(opaqueQuadCount * QUAD_RECORD_STRIDE)
+                .order(ByteOrder.nativeOrder());
+        for (int q = 0; q < opaqueQuadCount; q++) {
+            int base = q * 4 * VERTEX_STRIDE;
+            long w0_0 = src.getLong(base + 0);
+            long w1_0 = src.getLong(base + 8);
+            long w0_1 = src.getLong(base + 16);
+            long w1_1 = src.getLong(base + 24);
+            long w0_2 = src.getLong(base + 32);
+            long w1_2 = src.getLong(base + 40);
+            long w0_3 = src.getLong(base + 48);
+            long w1_3 = src.getLong(base + 56);
+
+            int n0 = (int) ((w1_0 >>> 56) & 0xFF);
+            int n1 = (int) ((w1_1 >>> 56) & 0xFF);
+            int n2 = (int) ((w1_2 >>> 56) & 0xFF);
+            int n3 = (int) ((w1_3 >>> 56) & 0xFF);
+            if (n0 < 0 || n0 > 5 || n1 != n0 || n2 != n0 || n3 != n0)
+                return null;
+            int normal = n0;
+
+            int r0 = (int) ((w1_0 >>> 16) & 0xFF);
+            int g0 = (int) ((w1_0 >>> 24) & 0xFF);
+            int b0 = (int) ((w1_0 >>> 32) & 0xFF);
+            int a0 = (int) ((w1_0 >>> 40) & 0xFF);
+            int l0 = (int) ((w1_0 >>> 48) & 0xFF);
+            int r1 = (int) ((w1_1 >>> 16) & 0xFF);
+            int g1 = (int) ((w1_1 >>> 24) & 0xFF);
+            int b1 = (int) ((w1_1 >>> 32) & 0xFF);
+            int a1 = (int) ((w1_1 >>> 40) & 0xFF);
+            int l1 = (int) ((w1_1 >>> 48) & 0xFF);
+            int r2 = (int) ((w1_2 >>> 16) & 0xFF);
+            int g2 = (int) ((w1_2 >>> 24) & 0xFF);
+            int b2 = (int) ((w1_2 >>> 32) & 0xFF);
+            int a2 = (int) ((w1_2 >>> 40) & 0xFF);
+            int l2 = (int) ((w1_2 >>> 48) & 0xFF);
+            int r3 = (int) ((w1_3 >>> 16) & 0xFF);
+            int g3 = (int) ((w1_3 >>> 24) & 0xFF);
+            int b3 = (int) ((w1_3 >>> 32) & 0xFF);
+            int a3 = (int) ((w1_3 >>> 40) & 0xFF);
+            int l3 = (int) ((w1_3 >>> 48) & 0xFF);
+            if (r1 != r0 || g1 != g0 || b1 != b0 || a1 != a0 || l1 != l0)
+                return null;
+            if (r2 != r0 || g2 != g0 || b2 != b0 || a2 != a0 || l2 != l0)
+                return null;
+            if (r3 != r0 || g3 != g0 || b3 != b0 || a3 != a0 || l3 != l0)
+                return null;
+            if (a0 != 0xFF && a0 != 0xFE)
+                return null;
+
+            int px0 = (short) (w0_0 & 0xFFFF);
+            int py0 = (short) ((w0_0 >> 16) & 0xFFFF);
+            int pz0 = (short) ((w0_0 >> 32) & 0xFFFF);
+            int u0 = (int) ((w0_0 >>> 48) & 0xFFFF);
+            int px1 = (short) (w0_1 & 0xFFFF);
+            int py1 = (short) ((w0_1 >> 16) & 0xFFFF);
+            int pz1 = (short) ((w0_1 >> 32) & 0xFFFF);
+            int u1 = (int) ((w0_1 >>> 48) & 0xFFFF);
+            int px2 = (short) (w0_2 & 0xFFFF);
+            int py2 = (short) ((w0_2 >> 16) & 0xFFFF);
+            int pz2 = (short) ((w0_2 >> 32) & 0xFFFF);
+            int u2 = (int) ((w0_2 >>> 48) & 0xFFFF);
+            int px3 = (short) (w0_3 & 0xFFFF);
+            int py3 = (short) ((w0_3 >> 16) & 0xFFFF);
+            int pz3 = (short) ((w0_3 >> 32) & 0xFFFF);
+            int u3 = (int) ((w0_3 >>> 48) & 0xFFFF);
+            int v0 = (int) (w1_0 & 0xFFFF);
+            int v1 = (int) (w1_1 & 0xFFFF);
+            int v2 = (int) (w1_2 & 0xFFFF);
+            int v3 = (int) (w1_3 & 0xFFFF);
+
+            int uMin = Math.min(Math.min(u0, u1), Math.min(u2, u3));
+            int uMax = Math.max(Math.max(u0, u1), Math.max(u2, u3));
+            int vMin = Math.min(Math.min(v0, v1), Math.min(v2, v3));
+            int vMax = Math.max(Math.max(v0, v1), Math.max(v2, v3));
+            if (uMin == uMax || vMin == vMax)
+                return null;
+            if (u0 != (UV_PAT[0][0] == 0 ? uMin : uMax)
+                    || v0 != (UV_PAT[0][1] == 0 ? vMin : vMax))
+                return null;
+            if (u1 != (UV_PAT[1][0] == 0 ? uMin : uMax)
+                    || v1 != (UV_PAT[1][1] == 0 ? vMin : vMax))
+                return null;
+            if (u2 != (UV_PAT[2][0] == 0 ? uMin : uMax)
+                    || v2 != (UV_PAT[2][1] == 0 ? vMin : vMax))
+                return null;
+            if (u3 != (UV_PAT[3][0] == 0 ? uMin : uMax)
+                    || v3 != (UV_PAT[3][1] == 0 ? vMin : vMax))
+                return null;
+
+            int minX = Math.min(Math.min(px0, px1), Math.min(px2, px3));
+            int maxX = Math.max(Math.max(px0, px1), Math.max(px2, px3));
+            int minY = Math.min(Math.min(py0, py1), Math.min(py2, py3));
+            int maxY = Math.max(Math.max(py0, py1), Math.max(py2, py3));
+            int minZ = Math.min(Math.min(pz0, pz1), Math.min(pz2, pz3));
+            int maxZ = Math.max(Math.max(pz0, pz1), Math.max(pz2, pz3));
+
+            int bx = 0, by = 0, bz = 0, w = 0, h = 0;
+            int overlay = 0;
+            int[] pat = FACE_VERTS[normal];
+            if (normal == 0 || normal == 1) {
+                if (minY != maxY)
+                    return null;
+                if (minX == maxX || minZ == maxZ)
+                    return null;
+                if ((minX & 255) != 0 || (maxX & 255) != 0
+                        || (minZ & 255) != 0 || (maxZ & 255) != 0)
+                    return null;
+                if ((minY & 255) != 0)
+                    return null;
+                int plane = minY;
+                int expectedBy = (normal == 1) ? (plane / 256 - 1) : (plane / 256);
+                if (expectedBy < 0 || expectedBy > 15)
+                    return null;
+                bx = minX / 256;
+                by = expectedBy;
+                bz = minZ / 256;
+                w = (maxX - minX) / 256;
+                h = (maxZ - minZ) / 256;
+            } else if (normal == 4 || normal == 5) {
+                if (minX != maxX)
+                    return null;
+                if (minY == maxY || minZ == maxZ)
+                    return null;
+                if ((minY & 255) != 0 || (maxY & 255) != 0
+                        || (minZ & 255) != 0 || (maxZ & 255) != 0)
+                    return null;
+                int plane = minX;
+                int rem = plane & 255;
+                int planeMod = ((plane % 256) + 256) % 256;
+                int basePlane = plane;
+                if (planeMod == 0) {
+                    overlay = 0;
+                } else if (planeMod == 1 && normal == 5) {
+                    overlay = 1;
+                    basePlane = plane - 1;
+                } else if (planeMod == 255 && normal == 4) {
+                    overlay = 1;
+                    basePlane = plane + 1;
+                } else {
+                    return null;
+                }
+                int expectedBx = (normal == 5) ? (basePlane / 256 - 1) : (basePlane / 256);
+                if (expectedBx < 0 || expectedBx > 15)
+                    return null;
+                if ((basePlane & 255) != 0)
+                    return null;
+                bx = expectedBx;
+                by = minY / 256;
+                bz = minZ / 256;
+                w = (maxZ - minZ) / 256;
+                h = (maxY - minY) / 256;
+                if (rem != 0 && overlay == 0)
+                    return null;
+            } else {
+                if (minZ != maxZ)
+                    return null;
+                if (minX == maxX || minY == maxY)
+                    return null;
+                if ((minX & 255) != 0 || (maxX & 255) != 0
+                        || (minY & 255) != 0 || (maxY & 255) != 0)
+                    return null;
+                int plane = minZ;
+                int planeMod = ((plane % 256) + 256) % 256;
+                int basePlane = plane;
+                if (planeMod == 0) {
+                    overlay = 0;
+                } else if (planeMod == 1 && normal == 3) {
+                    overlay = 1;
+                    basePlane = plane - 1;
+                } else if (planeMod == 255 && normal == 2) {
+                    overlay = 1;
+                    basePlane = plane + 1;
+                } else {
+                    return null;
+                }
+                int expectedBz = (normal == 3) ? (basePlane / 256 - 1) : (basePlane / 256);
+                if (expectedBz < 0 || expectedBz > 15)
+                    return null;
+                if ((basePlane & 255) != 0)
+                    return null;
+                bx = minX / 256;
+                by = minY / 256;
+                bz = expectedBz;
+                w = (maxX - minX) / 256;
+                h = (maxY - minY) / 256;
+            }
+            if (bx < 0 || bx > 15 || by < 0 || by > 15 || bz < 0 || bz > 15)
+                return null;
+            if (w < 1 || w > 16 || h < 1 || h > 16)
+                return null;
+            if (bx + (normal == 1 || normal == 0 || normal == 3 || normal == 2 ? w : 0) > 16)
+                return null;
+            int[] pxA = { px0, px1, px2, px3 };
+            int[] pyA = { py0, py1, py2, py3 };
+            int[] pzA = { pz0, pz1, pz2, pz3 };
+            for (int j = 0; j < 4; j++) {
+                int ex = (pat[j * 3 + 0] == 0) ? minX : maxX;
+                int ey = (pat[j * 3 + 1] == 0) ? minY : maxY;
+                int ez = (pat[j * 3 + 2] == 0) ? minZ : maxZ;
+                if (pxA[j] != ex || pyA[j] != ey || pzA[j] != ez)
+                    return null;
+            }
+
+            int leavesBit = (a0 == 0xFE) ? 1 : 0;
+            int word0 = (bx & 0xF) | ((by & 0xF) << 4) | ((bz & 0xF) << 8)
+                    | ((normal & 0x7) << 12) | ((leavesBit & 0x1) << 15)
+                    | (((w - 1) & 0xF) << 16) | (((h - 1) & 0xF) << 20)
+                    | ((l0 & 0xFF) << 24);
+            int flags = (overlay & 0x1);
+            int word1 = (r0 & 0xFF) | ((g0 & 0xFF) << 8) | ((b0 & 0xFF) << 16)
+                    | ((flags & 0xFF) << 24);
+            int word2 = (uMin & 0xFFFF) | ((uMax & 0xFFFF) << 16);
+            int word3 = (vMin & 0xFFFF) | ((vMax & 0xFFFF) << 16);
+            out.putInt(word0);
+            out.putInt(word1);
+            out.putInt(word2);
+            out.putInt(word3);
+        }
+        out.flip();
+        return out;
+    }
+
     public ChunkMeshData getMesh(int cx, int cy, int cz) {
         long key = packChunkKey(cx, cy, cz);
         synchronized (meshCache) {
@@ -3658,7 +3957,7 @@ public class CustomChunkMesher {
                     | ((long) (facing.length > 4 ? Math.max(0, facing[4]) : 0) << 32);
             batchRegData[idx + 7] = ((long) (facing.length > 5 ? Math.max(0, facing[5]) : 0) & 0xFFFFFFFFL)
                     | ((long) (facing.length > 6 ? Math.max(0, facing[6]) : 0) << 32);
-            batchRegData[idx + 8] = mesh.lodTier;
+            batchRegData[idx + 8] = (mesh.lodTier & 0xFF) | ((long) (mesh.opaqueFormat & 0xFF) << 16);
             batchRegCount++;
             if (batchRegCount >= BATCH_REG_CAPACITY) {
                 flushCount = batchRegCount;
