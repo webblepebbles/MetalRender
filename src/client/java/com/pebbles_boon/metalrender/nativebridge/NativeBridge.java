@@ -138,9 +138,6 @@ public final class NativeBridge {
     public static native boolean nReadbackPixels(long handle,
             java.nio.ByteBuffer dest);
 
-    public static native boolean nReadbackDepth(long handle,
-            java.nio.ByteBuffer dest);
-
     public static native long nGetParticlePipelineHandle(long handle);
 
     public static native long nGetWeatherPipelineHandle(long handle);
