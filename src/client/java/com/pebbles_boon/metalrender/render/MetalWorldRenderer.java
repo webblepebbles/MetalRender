@@ -2794,39 +2794,6 @@ public class MetalWorldRenderer {
         return false;
     }
 
-    public void forceBlitDepthNow(int width, int height) {
-        MetalRenderer renderer = MetalRenderClient.getRenderer();
-        if (renderer == null || !renderer.isAvailable())
-            return;
-        long handle = renderer.getHandle();
-        if (handle == 0)
-            return;
-        ioSurfaceBlitter.blitDepth(handle, width, height);
-    }
-
-    public boolean uploadDepthDirect(int mcDepthTexId, int width, int height) {
-        MetalRenderer renderer = MetalRenderClient.getRenderer();
-        if (renderer == null || !renderer.isAvailable())
-            return false;
-        long handle = renderer.getHandle();
-        if (handle == 0)
-            return false;
-        return ioSurfaceBlitter.uploadDepthDirect(handle, mcDepthTexId, width,
-                height);
-    }
-
-    public boolean blitDepthViaFBO(int mcDepthTexId, int mcFboId, int width,
-            int height) {
-        MetalRenderer renderer = MetalRenderClient.getRenderer();
-        if (renderer == null || !renderer.isAvailable())
-            return false;
-        long handle = renderer.getHandle();
-        if (handle == 0)
-            return false;
-        return ioSurfaceBlitter.blitDepthViaFBO(handle, mcDepthTexId, mcFboId,
-                width, height);
-    }
-
     public boolean isReady() {
         return worldLoaded && renderingActive;
     }
