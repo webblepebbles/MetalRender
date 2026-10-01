@@ -649,7 +649,6 @@ static id<MTLCommandBuffer> g_tbCmdBuf[3] = {};
 static id<MTLTexture> g_color = nil;
 static id<MTLTexture> g_depth = nil;
 static IOSurfaceRef g_ioSurface = NULL;
-static id<MTLBuffer> g_depthReadBuffer = nil;
 static id<MTLCommandBuffer> g_depthCmdBuffer = nil;
 static id<MTLTexture> g_blockAtlas = nil;
 static id<MTLTexture> g_lightmap = nil;
@@ -2518,13 +2517,6 @@ static void ensure_offscreen() {
   g_oitRevealTex = [g_device newTextureWithDescriptor:oitRevDesc];
   dbg("OIT render targets created: %dx%d (accum RGBA16F + revealage R8)\n", w,
       h);
-  NSUInteger depthBufSize = (NSUInteger)(w * h * 4);
-  if (!g_depthReadBuffer || g_depthReadBuffer.length < depthBufSize) {
-    if (g_depthReadBuffer)
-      [g_depthReadBuffer release];
-    g_depthReadBuffer = [g_device newBufferWithLength:depthBufSize
-                                              options:MTLStorageModeShared];
-  }
 }
 extern "C" JNIEXPORT jboolean JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nIsAvailable(
@@ -5651,37 +5643,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nReadbackPixels(
         bytesPerRow:(NSUInteger)(w * 4)
          fromRegion:MTLRegionMake2D(0, 0, w, h)
         mipmapLevel:0];
-  return JNI_TRUE;
-}
-extern "C" JNIEXPORT jboolean JNICALL
-Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nReadbackDepth(
-    JNIEnv *env, jclass, jlong handle, jobject dest) {
-  (void)handle;
-  if (!g_depthReadBuffer || !dest || !env)
-    return JNI_FALSE;
-  void *destPtr = env->GetDirectBufferAddress(dest);
-  if (!destPtr)
-    return JNI_FALSE;
-  jlong capacity = env->GetDirectBufferCapacity(dest);
-  NSUInteger bufLen = g_depthReadBuffer.length;
-  if (capacity < (jlong)bufLen)
-    return JNI_FALSE;
-
-  if (!g_currentFrameReady) {
-    int spins = 0;
-    while (!g_currentFrameReady && spins < 300) {
-      std::this_thread::yield();
-      spins++;
-    }
-  }
-  if (!g_currentFrameReady && g_depthCmdBuffer) {
-    [g_depthCmdBuffer waitUntilCompleted];
-  }
-  if (g_depthCmdBuffer) {
-    [g_depthCmdBuffer release];
-    g_depthCmdBuffer = nil;
-  }
-  memcpy(destPtr, g_depthReadBuffer.contents, bufLen);
   return JNI_TRUE;
 }
 extern "C" JNIEXPORT jlong JNICALL
