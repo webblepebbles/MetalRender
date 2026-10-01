@@ -1549,6 +1549,58 @@ public class CustomChunkMesher {
         int baseZ = chunkZ * 16;
 
         net.minecraft.world.level.chunk.PalettedContainer<BlockState> localStates = section.getStates();
+        BlockState[] uniformHolder = new BlockState[1];
+        int[] distinctHolder = new int[1];
+        try {
+            localStates.getAll(s -> {
+                if (distinctHolder[0] == 0) {
+                    uniformHolder[0] = s;
+                }
+                distinctHolder[0]++;
+            });
+        } catch (Exception ignored) {
+            distinctHolder[0] = 0;
+            uniformHolder[0] = null;
+        }
+        boolean uniformInner = distinctHolder[0] == 1 && uniformHolder[0] != null
+                && !uniformHolder[0].isAir();
+        BlockState uniformState = uniformInner ? uniformHolder[0] : null;
+        int uniformStateId = 0;
+        byte uniformOcc = 0;
+        byte uniformShade = (byte) 255;
+        byte uniformEmission = 0;
+        if (uniformInner) {
+            hasAnyBlock = true;
+            mutablePos.set(baseX + 8, baseY + 8, baseZ + 8);
+            int cachedUniformId = bsIdCache.getInt(uniformState);
+            if (cachedUniformId != -1) {
+                uniformStateId = cachedUniformId;
+            } else {
+                uniformStateId = Block.getId(uniformState);
+                if (bsIdCache.size() < BS_ID_CACHE_CAP) {
+                    bsIdCache.put(uniformState, uniformStateId);
+                }
+            }
+            Byte uniformOccCached = OCCLUSION_CACHE.get().get(uniformState);
+            if (uniformOccCached != null) {
+                uniformOcc = uniformOccCached;
+                uniformShade = SHADE_CACHE.get().get(uniformState);
+                uniformEmission = EMISSION_CACHE.get().get(uniformState);
+            } else {
+                uniformOcc = (byte) (uniformState.isViewBlocking(world, mutablePos)
+                        && uniformState.getLightDampening() != 0 ? 1 : 0);
+                float uniformShadeF = Math.max(0.0f,
+                        Math.min(1.0f, uniformState.getShadeBrightness(world, mutablePos)));
+                uniformShade = (byte) Math.round(uniformShadeF * 255.0f);
+                uniformEmission = (byte) (uniformState.emissiveRendering(world, mutablePos) ? 1 : 0);
+                IdentityHashMap<BlockState, Byte> uniformOccMap = OCCLUSION_CACHE.get();
+                if (uniformOccMap.size() < PROP_CACHE_CAP) {
+                    uniformOccMap.put(uniformState, uniformOcc);
+                    SHADE_CACHE.get().put(uniformState, uniformShade);
+                    EMISSION_CACHE.get().put(uniformState, uniformEmission);
+                }
+            }
+        }
 
         LevelChunk[] neighborChunks = new LevelChunk[9];
         var chunkSource = world.getChunkSource();
@@ -1612,7 +1664,9 @@ public class CustomChunkMesher {
                     boolean inner = px >= PADDED_RADIUS && px < PADDED_RADIUS + SECTION_SIZE
                             && py >= PADDED_RADIUS && py < PADDED_RADIUS + SECTION_SIZE
                             && pz >= PADDED_RADIUS && pz < PADDED_RADIUS + SECTION_SIZE;
-                    if (inner) {
+                    if (inner && uniformInner) {
+                        state = uniformState;
+                    } else if (inner) {
                         try {
                             state = localStates.get(px - PADDED_RADIUS, py - PADDED_RADIUS,
                                     pz - PADDED_RADIUS);
@@ -1624,8 +1678,16 @@ public class CustomChunkMesher {
                                 chunkY, wx, wy, wz, world, mutablePos);
                     }
 
-                    int stateId = 0;
-                    if (!state.isAir()) {
+                    int stateId;
+                    if (inner && uniformInner) {
+                        stateId = uniformStateId;
+                        paddedBlockStates[pIdx] = stateId;
+                        paddedOcclusion[pIdx] = uniformOcc;
+                        paddedShade[pIdx] = uniformShade;
+                        paddedEmission[pIdx] = uniformEmission;
+                    } else {
+                        stateId = 0;
+                        if (!state.isAir()) {
                         hasAnyBlock = true;
                         int cachedId = bsIdCache.getInt(state);
                         if (cachedId != -1) {
@@ -1665,6 +1727,7 @@ public class CustomChunkMesher {
                             paddedShade[pIdx] = sh;
                             paddedEmission[pIdx] = em;
                         }
+                    }
                     }
 
                     int sectionX = wx >> 4;
