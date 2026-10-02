@@ -1539,16 +1539,25 @@ public class CustomChunkMesher {
         byte[] paddedEmission = data.paddedEmission;
         int[] biomeTints = data.biomeTints;
         boolean hasAnyBlock = false;
-
-        Object2IntOpenHashMap<BlockState> bsIdCache = BS_ID_CACHE.get();
+        boolean far = lodTier >= 1;
+        int effR = far ? 1 : PADDED_RADIUS;
+        int effMin = PADDED_RADIUS - effR;
+        int effMax = PADDED_RADIUS + SECTION_SIZE + effR;
+        Object2IntOpenHashMap<BlockState> bsIdCacheLocal = BS_ID_CACHE.get();
+        IdentityHashMap<BlockState, Byte> occCacheLocal = OCCLUSION_CACHE.get();
+        IdentityHashMap<BlockState, Byte> shadeCacheLocal = SHADE_CACHE.get();
+        IdentityHashMap<BlockState, Byte> emissionCacheLocal = EMISSION_CACHE.get();
+        IdentityHashMap<BlockState, Byte> maskCacheLocal = TINT_SLOT_MASK_CACHE.get();
         BlockPos.MutableBlockPos mutablePos = new BlockPos.MutableBlockPos();
         net.minecraft.client.color.block.BlockColors blockColors = Minecraft.getInstance().getBlockColors();
-
         int baseX = chunkX * 16;
         int baseY = chunkY * 16;
         int baseZ = chunkZ * 16;
-
+        mutablePos.set(baseX + 8, baseY + 8, baseZ + 8);
+        BlockPos centerPos = mutablePos.immutable();
         net.minecraft.world.level.chunk.PalettedContainer<BlockState> localStates = section.getStates();
+        SnapshotPalette palette = new SnapshotPalette(bsIdCacheLocal, occCacheLocal, shadeCacheLocal,
+                emissionCacheLocal, maskCacheLocal, world, centerPos, blockColors);
         BlockState[] uniformHolder = new BlockState[1];
         int[] distinctHolder = new int[1];
         try {
@@ -1564,41 +1573,122 @@ public class CustomChunkMesher {
         }
         boolean uniformInner = distinctHolder[0] == 1 && uniformHolder[0] != null
                 && !uniformHolder[0].isAir();
-        BlockState uniformState = uniformInner ? uniformHolder[0] : null;
-        int uniformStateId = 0;
-        byte uniformOcc = 0;
-        byte uniformShade = (byte) 255;
-        byte uniformEmission = 0;
-        if (uniformInner) {
-            hasAnyBlock = true;
-            mutablePos.set(baseX + 8, baseY + 8, baseZ + 8);
-            int cachedUniformId = bsIdCache.getInt(uniformState);
-            if (cachedUniformId != -1) {
-                uniformStateId = cachedUniformId;
-            } else {
-                uniformStateId = Block.getId(uniformState);
-                if (bsIdCache.size() < BS_ID_CACHE_CAP) {
-                    bsIdCache.put(uniformState, uniformStateId);
+        boolean deepCandidate = false;
+        com.pebbles_boon.metalrender.culling.DirectionalVisGraph deepGraph = null;
+        if (far) {
+            try {
+                deepCandidate = isDeepBelowSurface(world, chunkX, chunkY, chunkZ);
+            } catch (Exception ignored) {
+                deepCandidate = false;
+            }
+            if (deepCandidate) {
+                try {
+                    deepGraph = VIS_GRAPH_POOL.get();
+                    deepGraph.reset();
+                } catch (Exception ignored) {
+                    deepGraph = null;
+                    deepCandidate = false;
                 }
             }
-            Byte uniformOccCached = OCCLUSION_CACHE.get().get(uniformState);
-            if (uniformOccCached != null) {
-                uniformOcc = uniformOccCached;
-                uniformShade = SHADE_CACHE.get().get(uniformState);
-                uniformEmission = EMISSION_CACHE.get().get(uniformState);
-            } else {
-                uniformOcc = (byte) (uniformState.isViewBlocking(world, mutablePos)
-                        && uniformState.getLightDampening() != 0 ? 1 : 0);
-                float uniformShadeF = Math.max(0.0f,
-                        Math.min(1.0f, uniformState.getShadeBrightness(world, mutablePos)));
-                uniformShade = (byte) Math.round(uniformShadeF * 255.0f);
-                uniformEmission = (byte) (uniformState.emissiveRendering(world, mutablePos) ? 1 : 0);
-                IdentityHashMap<BlockState, Byte> uniformOccMap = OCCLUSION_CACHE.get();
-                if (uniformOccMap.size() < PROP_CACHE_CAP) {
-                    uniformOccMap.put(uniformState, uniformOcc);
-                    SHADE_CACHE.get().put(uniformState, uniformShade);
-                    EMISSION_CACHE.get().put(uniformState, uniformEmission);
+        }
+        if (uniformInner) {
+            BlockState us = uniformHolder[0];
+            int pu = palette.indexFor(us);
+            int uid = palette.ids.get(pu);
+            byte uo = palette.occ.get(pu);
+            byte uh = palette.shade.get(pu);
+            byte ue = palette.emission.get(pu);
+            boolean usol = false;
+            try {
+                usol = palette.solid.get(pu);
+            } catch (Exception ignored) {
+            }
+            if (uid != 0) {
+                hasAnyBlock = true;
+            }
+            if (deepCandidate && usol) {
+                return new SectionSnapshot(true, true, null, null, null, null, null, null);
+            }
+            for (int y = 0; y < SECTION_SIZE; y++) {
+                for (int z = 0; z < SECTION_SIZE; z++) {
+                    for (int x = 0; x < SECTION_SIZE; x++) {
+                        int pIdx = ((y + PADDED_RADIUS) * PADDED_SIZE + (z + PADDED_RADIUS)) * PADDED_SIZE
+                                + (x + PADDED_RADIUS);
+                        paddedBlockStates[pIdx] = uid;
+                        if (!far) {
+                            paddedOcclusion[pIdx] = uo;
+                            paddedShade[pIdx] = uh;
+                            paddedEmission[pIdx] = ue;
+                        }
+                        if (deepGraph != null && usol) {
+                            try {
+                                deepGraph.setOpaque(x, y, z);
+                            } catch (Exception ignored) {
+                            }
+                        }
+                    }
                 }
+            }
+        } else {
+            for (int y = 0; y < SECTION_SIZE; y++) {
+                for (int z = 0; z < SECTION_SIZE; z++) {
+                    for (int x = 0; x < SECTION_SIZE; x++) {
+                        BlockState s = null;
+                        try {
+                            s = localStates.get(x, y, z);
+                        } catch (Exception e) {
+                            try {
+                                mutablePos.set(baseX + x, baseY + y, baseZ + z);
+                                s = world.getBlockState(mutablePos);
+                            } catch (Exception ignored2) {
+                                s = Blocks.AIR.defaultBlockState();
+                            }
+                        }
+                        int pi = palette.indexFor(s);
+                        int sid = 0;
+                        try {
+                            sid = palette.ids.get(pi);
+                        } catch (Exception ignored) {
+                        }
+                        int pIdx = ((y + PADDED_RADIUS) * PADDED_SIZE + (z + PADDED_RADIUS)) * PADDED_SIZE
+                                + (x + PADDED_RADIUS);
+                        paddedBlockStates[pIdx] = sid;
+                        if (sid != 0) {
+                            hasAnyBlock = true;
+                        }
+                        if (!far) {
+                            try {
+                                paddedOcclusion[pIdx] = palette.occ.get(pi);
+                                paddedShade[pIdx] = palette.shade.get(pi);
+                                paddedEmission[pIdx] = palette.emission.get(pi);
+                            } catch (Exception ignored) {
+                            }
+                        } else if (deepGraph != null) {
+                            boolean sol = false;
+                            try {
+                                sol = palette.solid.get(pi);
+                            } catch (Exception ignored) {
+                            }
+                            if (sol) {
+                                try {
+                                    deepGraph.setOpaque(x, y, z);
+                                } catch (Exception ignored) {
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        if (deepCandidate && deepGraph != null && !uniformInner) {
+            long[] enc = null;
+            try {
+                enc = deepGraph.resolveEncoded();
+            } catch (Exception ignored) {
+                enc = null;
+            }
+            if (enc != null && !hasUpVisibility(enc)) {
+                return new SectionSnapshot(true, true, null, null, null, null, null, null);
             }
         }
 
@@ -1639,7 +1729,7 @@ public class CustomChunkMesher {
             checkStaleLight = false;
         }
 
-        boolean coarseTint = lodTier >= 2;
+        boolean coarseTint = lodTier >= 1;
         int[] waterColumnTint = new int[256];
         boolean[] waterColumnInit = new boolean[256];
         int[] grassColumnTint = new int[256];
@@ -1651,85 +1741,130 @@ public class CustomChunkMesher {
         int[] coarseTint3 = coarseTint ? new int[64] : null;
         boolean[] coarseTintInit = coarseTint ? new boolean[64] : null;
 
-        for (int py = 0; py < PADDED_SIZE; py++) {
-            for (int pz = 0; pz < PADDED_SIZE; pz++) {
-                for (int px = 0; px < PADDED_SIZE; px++) {
+        for (int py = effMin; py < effMax; py++) {
+            for (int pz = effMin; pz < effMax; pz++) {
+                for (int px = effMin; px < effMax; px++) {
                     int wx = baseX + px - PADDED_RADIUS;
                     int wy = baseY + py - PADDED_RADIUS;
                     int wz = baseZ + pz - PADDED_RADIUS;
                     int pIdx = (py * PADDED_SIZE + pz) * PADDED_SIZE + px;
 
                     mutablePos.set(wx, wy, wz);
-                    BlockState state;
                     boolean inner = px >= PADDED_RADIUS && px < PADDED_RADIUS + SECTION_SIZE
                             && py >= PADDED_RADIUS && py < PADDED_RADIUS + SECTION_SIZE
                             && pz >= PADDED_RADIUS && pz < PADDED_RADIUS + SECTION_SIZE;
-                    if (inner && uniformInner) {
-                        state = uniformState;
-                    } else if (inner) {
-                        try {
-                            state = localStates.get(px - PADDED_RADIUS, py - PADDED_RADIUS,
-                                    pz - PADDED_RADIUS);
-                        } catch (Exception e) {
-                            state = world.getBlockState(mutablePos);
-                        }
-                    } else {
-                        state = getBorderBlockState(neighborChunks, chunk, chunkX, chunkZ,
-                                chunkY, wx, wy, wz, world, mutablePos);
-                    }
-
                     int stateId;
-                    if (inner && uniformInner) {
-                        stateId = uniformStateId;
-                        paddedBlockStates[pIdx] = stateId;
-                        paddedOcclusion[pIdx] = uniformOcc;
-                        paddedShade[pIdx] = uniformShade;
-                        paddedEmission[pIdx] = uniformEmission;
-                    } else {
-                        stateId = 0;
-                        if (!state.isAir()) {
-                        hasAnyBlock = true;
-                        int cachedId = bsIdCache.getInt(state);
-                        if (cachedId != -1) {
-                            stateId = cachedId;
+                    BlockState state;
+                    if (inner) {
+                        stateId = paddedBlockStates[pIdx];
+                        if (uniformInner) {
+                            state = uniformHolder[0];
                         } else {
-                            stateId = Block.getId(state);
-                            if (bsIdCache.size() < BS_ID_CACHE_CAP) {
-                                bsIdCache.put(state, stateId);
+                            int lx = px - PADDED_RADIUS;
+                            int ly = py - PADDED_RADIUS;
+                            int lz = pz - PADDED_RADIUS;
+                            BlockState s2 = null;
+                            try {
+                                s2 = localStates.get(lx, ly, lz);
+                            } catch (Exception e) {
+                                try {
+                                    mutablePos.set(baseX + lx, baseY + ly, baseZ + lz);
+                                    s2 = world.getBlockState(mutablePos);
+                                    mutablePos.set(wx, wy, wz);
+                                } catch (Exception ignored) {
+                                    s2 = Blocks.AIR.defaultBlockState();
+                                }
+                            }
+                            state = s2;
+                        }
+                    } else {
+                        BlockState bs = null;
+                        try {
+                            bs = getBorderBlockState(neighborChunks, chunk, chunkX, chunkZ, chunkY, wx, wy, wz,
+                                    world, mutablePos);
+                        } catch (Exception ignored) {
+                            try {
+                                bs = world.getBlockState(mutablePos);
+                            } catch (Exception ignored2) {
+                                bs = Blocks.AIR.defaultBlockState();
                             }
                         }
-                    }
-                    paddedBlockStates[pIdx] = stateId;
-                    if (stateId == 0) {
-                        paddedOcclusion[pIdx] = 0;
-                        paddedShade[pIdx] = (byte) 255;
-                        paddedEmission[pIdx] = 0;
-                    } else {
-                        Byte occCached = OCCLUSION_CACHE.get().get(state);
-                        if (occCached != null) {
-                            paddedOcclusion[pIdx] = occCached;
-                            paddedShade[pIdx] = SHADE_CACHE.get().get(state);
-                            paddedEmission[pIdx] = EMISSION_CACHE.get().get(state);
-                        } else {
-                            byte occ = (byte) (state.isViewBlocking(world, mutablePos)
-                                    && state.getLightDampening() != 0 ? 1 : 0);
-                            float shade = Math.max(0.0f, Math.min(1.0f,
-                                    state.getShadeBrightness(world, mutablePos)));
-                            byte sh = (byte) Math.round(shade * 255.0f);
-                            byte em = (byte) (state.emissiveRendering(world, mutablePos) ? 1 : 0);
-                            IdentityHashMap<BlockState, Byte> occMap = OCCLUSION_CACHE.get();
-                            if (occMap.size() < PROP_CACHE_CAP) {
-                                occMap.put(state, occ);
-                                SHADE_CACHE.get().put(state, sh);
-                                EMISSION_CACHE.get().put(state, em);
-                            }
-                            paddedOcclusion[pIdx] = occ;
-                            paddedShade[pIdx] = sh;
-                            paddedEmission[pIdx] = em;
+                        state = bs;
+                        int pi = palette.indexFor(bs);
+                        int sid = 0;
+                        try {
+                            sid = palette.ids.get(pi);
+                        } catch (Exception ignored) {
                         }
-                    }
+                        stateId = sid;
+                        paddedBlockStates[pIdx] = sid;
+                        if (sid != 0) {
+                            hasAnyBlock = true;
+                        }
+                        if (!far) {
+                            try {
+                                paddedOcclusion[pIdx] = palette.occ.get(pi);
+                                paddedShade[pIdx] = palette.shade.get(pi);
+                                paddedEmission[pIdx] = palette.emission.get(pi);
+                            } catch (Exception ignored) {
+                            }
+                        }
                     }
 
+                    boolean needLight = false;
+                    if (stateId != 0) {
+                        needLight = true;
+                    } else if (far) {
+                        if (px + 1 < PADDED_SIZE && paddedBlockStates[pIdx + 1] != 0) {
+                            needLight = true;
+                        } else if (px - 1 >= 0 && paddedBlockStates[pIdx - 1] != 0) {
+                            needLight = true;
+                        } else if (pz + 1 < PADDED_SIZE && paddedBlockStates[pIdx + PADDED_SIZE] != 0) {
+                            needLight = true;
+                        } else if (pz - 1 >= 0 && paddedBlockStates[pIdx - PADDED_SIZE] != 0) {
+                            needLight = true;
+                        } else {
+                            int upIdx = pIdx + PADDED_SIZE * PADDED_SIZE;
+                            int dnIdx = pIdx - PADDED_SIZE * PADDED_SIZE;
+                            if (upIdx >= 0 && upIdx < PADDED_VOLUME && paddedBlockStates[upIdx] != 0) {
+                                needLight = true;
+                            } else if (dnIdx >= 0 && dnIdx < PADDED_VOLUME && paddedBlockStates[dnIdx] != 0) {
+                                needLight = true;
+                            }
+                        }
+                    } else {
+                        boolean foundSolid = false;
+                        for (int dy = -1; dy <= 1 && !foundSolid; dy++) {
+                            int ny = py + dy;
+                            if (ny < 0 || ny >= PADDED_SIZE) {
+                                continue;
+                            }
+                            for (int dzz = -1; dzz <= 1 && !foundSolid; dzz++) {
+                                int nz = pz + dzz;
+                                if (nz < 0 || nz >= PADDED_SIZE) {
+                                    continue;
+                                }
+                                for (int dxx = -1; dxx <= 1; dxx++) {
+                                    if (dxx == 0 && dy == 0 && dzz == 0) {
+                                        continue;
+                                    }
+                                    int nx = px + dxx;
+                                    if (nx < 0 || nx >= PADDED_SIZE) {
+                                        continue;
+                                    }
+                                    int nIdx = (ny * PADDED_SIZE + nz) * PADDED_SIZE + nx;
+                                    if (paddedBlockStates[nIdx] != 0) {
+                                        foundSolid = true;
+                                        break;
+                                    }
+                                }
+                            }
+                        }
+                        needLight = foundSolid;
+                    }
+                    if (!needLight) {
+                        paddedLight[pIdx] = 0;
+                    } else {
                     int sectionX = wx >> 4;
                     int sectionY = wy >> 4;
                     int sectionZ = wz >> 4;
@@ -1774,6 +1909,7 @@ public class CustomChunkMesher {
                         }
                     }
                     paddedLight[pIdx] = (byte) ((bl & 0xF) | ((sl & 0xF) << 4));
+                    }
 
                     if (inner) {
                         int x = px - PADDED_RADIUS;
@@ -1844,7 +1980,17 @@ public class CustomChunkMesher {
                                 }
                                 biomeTints[tintBase] = tint;
                             } else if (!lava) {
-                                byte mask = getTintSlotMask(state, blockColors);
+                                byte mask = 0;
+                                try {
+                                    Integer mpi = palette.index.get(state);
+                                    if (mpi != null) {
+                                        mask = palette.tintMask.get(mpi);
+                                    } else {
+                                        mask = getTintSlotMask(state, blockColors);
+                                    }
+                                } catch (Exception ignored) {
+                                    mask = 0;
+                                }
                                 int remaining = mask;
                                 while (remaining != 0) {
                                     int tintIndex = Integer.numberOfTrailingZeros(remaining);
@@ -1891,6 +2037,253 @@ public class CustomChunkMesher {
                 centerBlockLightHash, centerSkyLightHash);
     }
 
+    private static final class SnapshotPalette {
+        final java.util.HashMap<BlockState, Integer> index = new java.util.HashMap<>(128);
+        final java.util.ArrayList<BlockState> states = new java.util.ArrayList<>(64);
+        final java.util.ArrayList<Integer> ids = new java.util.ArrayList<>(64);
+        final java.util.ArrayList<Byte> occ = new java.util.ArrayList<>(64);
+        final java.util.ArrayList<Byte> shade = new java.util.ArrayList<>(64);
+        final java.util.ArrayList<Byte> emission = new java.util.ArrayList<>(64);
+        final java.util.ArrayList<Byte> tintMask = new java.util.ArrayList<>(64);
+        final java.util.ArrayList<Boolean> solid = new java.util.ArrayList<>(64);
+        final Object2IntOpenHashMap<BlockState> idCache;
+        final IdentityHashMap<BlockState, Byte> occCache;
+        final IdentityHashMap<BlockState, Byte> shadeCache;
+        final IdentityHashMap<BlockState, Byte> emissionCache;
+        final IdentityHashMap<BlockState, Byte> maskCache;
+        final ClientLevel world;
+        final BlockPos pos;
+        final net.minecraft.client.color.block.BlockColors colors;
+        SnapshotPalette(Object2IntOpenHashMap<BlockState> idCache,
+                IdentityHashMap<BlockState, Byte> occCache,
+                IdentityHashMap<BlockState, Byte> shadeCache,
+                IdentityHashMap<BlockState, Byte> emissionCache,
+                IdentityHashMap<BlockState, Byte> maskCache,
+                ClientLevel world, BlockPos pos,
+                net.minecraft.client.color.block.BlockColors colors) {
+            this.idCache = idCache;
+            this.occCache = occCache;
+            this.shadeCache = shadeCache;
+            this.emissionCache = emissionCache;
+            this.maskCache = maskCache;
+            this.world = world;
+            this.pos = pos;
+            this.colors = colors;
+        }
+        int indexFor(BlockState state) {
+            Integer existing = index.get(state);
+            if (existing != null) {
+                return existing;
+            }
+            boolean air = true;
+            try {
+                air = state == null || state.isAir();
+            } catch (Exception ignored) {
+                air = false;
+            }
+            int id = 0;
+            if (!air && state != null) {
+                int cached = -1;
+                try {
+                    cached = idCache.getInt(state);
+                } catch (Exception ignored) {
+                    cached = -1;
+                }
+                if (cached != -1) {
+                    id = cached;
+                } else {
+                    try {
+                        id = Block.getId(state);
+                    } catch (Exception ignored) {
+                        id = 0;
+                    }
+                    if (id != 0) {
+                        try {
+                            if (idCache.size() < BS_ID_CACHE_CAP) {
+                                idCache.put(state, id);
+                            }
+                        } catch (Exception ignored) {
+                        }
+                    }
+                }
+            }
+            byte o = 0;
+            byte s = (byte) 255;
+            byte e = 0;
+            if (id != 0 && state != null) {
+                Byte cachedOcc = null;
+                try {
+                    cachedOcc = occCache.get(state);
+                } catch (Exception ignored) {
+                    cachedOcc = null;
+                }
+                if (cachedOcc != null) {
+                    o = cachedOcc;
+                    try {
+                        Byte sh = shadeCache.get(state);
+                        Byte em = emissionCache.get(state);
+                        if (sh != null) {
+                            s = sh;
+                        }
+                        if (em != null) {
+                            e = em;
+                        }
+                    } catch (Exception ignored) {
+                    }
+                } else {
+                    byte no = 0;
+                    byte ns = (byte) 255;
+                    byte ne = 0;
+                    try {
+                        boolean vb = false;
+                        try {
+                            vb = state.isViewBlocking(world, pos);
+                        } catch (Exception ignored) {
+                        }
+                        int damp = 0;
+                        try {
+                            damp = state.getLightDampening();
+                        } catch (Exception ignored) {
+                        }
+                        no = (byte) ((vb && damp != 0) ? 1 : 0);
+                        float sf = 1.0f;
+                        try {
+                            sf = state.getShadeBrightness(world, pos);
+                        } catch (Exception ignored) {
+                        }
+                        if (sf < 0.0f) {
+                            sf = 0.0f;
+                        }
+                        if (sf > 1.0f) {
+                            sf = 1.0f;
+                        }
+                        ns = (byte) Math.round(sf * 255.0f);
+                        boolean er = false;
+                        try {
+                            er = state.emissiveRendering(world, pos);
+                        } catch (Exception ignored) {
+                        }
+                        ne = (byte) (er ? 1 : 0);
+                    } catch (Exception ignored) {
+                    }
+                    try {
+                        if (occCache.size() < PROP_CACHE_CAP) {
+                            occCache.put(state, no);
+                            shadeCache.put(state, ns);
+                            emissionCache.put(state, ne);
+                        }
+                    } catch (Exception ignored) {
+                    }
+                    o = no;
+                    s = ns;
+                    e = ne;
+                }
+            }
+            byte tm = 0;
+            if (id != 0 && state != null) {
+                try {
+                    Byte cachedMask = maskCache.get(state);
+                    if (cachedMask != null) {
+                        tm = cachedMask;
+                    } else {
+                        byte mm = 0;
+                        for (int i = 0; i < BIOME_TINT_SLOTS; i++) {
+                            try {
+                                if (colors != null && colors.getTintSource(state, i) != null) {
+                                    mm |= (byte) (1 << i);
+                                }
+                            } catch (Exception ignored) {
+                            }
+                        }
+                        try {
+                            if (maskCache.size() < 8192) {
+                                maskCache.put(state, mm);
+                            }
+                        } catch (Exception ignored) {
+                        }
+                        tm = mm;
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+            boolean sol = false;
+            if (state != null) {
+                try {
+                    sol = state.isSolidRender();
+                } catch (Exception ignored) {
+                }
+            }
+            int idx = ids.size();
+            try {
+                index.put(state, idx);
+            } catch (Exception ignored) {
+                return 0;
+            }
+            states.add(state);
+            ids.add(id);
+            occ.add(o);
+            shade.add(s);
+            emission.add(e);
+            tintMask.add(tm);
+            solid.add(sol);
+            return idx;
+        }
+    }
+    private boolean isDeepBelowSurface(ClientLevel world, int chunkX, int chunkY, int chunkZ) {
+        try {
+            int top = chunkY * 16 + 15;
+            int baseX = chunkX * 16;
+            int baseZ = chunkZ * 16;
+            int minH = Integer.MAX_VALUE;
+            net.minecraft.world.level.levelgen.Heightmap.Types type = net.minecraft.world.level.levelgen.Heightmap.Types.MOTION_BLOCKING;
+            for (int x = 0; x < 16; x += 2) {
+                for (int z = 0; z < 16; z += 2) {
+                    int h = Integer.MAX_VALUE;
+                    try {
+                        h = world.getHeight(type, baseX + x, baseZ + z);
+                    } catch (Exception ignored) {
+                        continue;
+                    }
+                    if (h < minH) {
+                        minH = h;
+                        if (minH <= top + 16) {
+                            return false;
+                        }
+                    }
+                }
+            }
+            if (minH == Integer.MAX_VALUE) {
+                return false;
+            }
+            return top < minH - 16;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+    private boolean hasUpVisibility(long[] encoded) {
+        if (encoded == null) {
+            return true;
+        }
+        if (encoded.length == 1) {
+            if (encoded[0] == 0L) {
+                return false;
+            }
+            if (encoded[0] == 0xFFFFFFFFFFFFL) {
+                return true;
+            }
+        }
+        long upRow = 16128L;
+        long upCol = 2L | 512L | 131072L | 33554432L | 8589934592L | 2199023255552L;
+        for (long v : encoded) {
+            if ((v & upRow) != 0L) {
+                return true;
+            }
+            if ((v & upCol) != 0L) {
+                return true;
+            }
+        }
+        return false;
+    }
     private static final ThreadLocal<Object2IntOpenHashMap<BlockState>> BS_ID_CACHE = ThreadLocal.withInitial(() -> {
         Object2IntOpenHashMap<BlockState> m = new Object2IntOpenHashMap<>(8192);
         m.defaultReturnValue(-1);
