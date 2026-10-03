@@ -407,8 +407,10 @@ public class MetalEntityRenderer {
                     reusableCameraRenderState);
             if (hasFireRenderState(state) &&
                     reusableCameraRenderState.orientation != null) {
-                appendFireOverlay(captured, state, ex, ey, ez,
-                        reusableCameraRenderState.orientation);
+                Quaternionf flameRotation = net.minecraft.util.Mth.rotationAroundAxis(
+                        net.minecraft.util.Mth.Y_AXIS,
+                        reusableCameraRenderState.orientation, new Quaternionf());
+                appendFireOverlay(captured, state, ex, ey, ez, flameRotation);
             }
         } catch (Throwable e) {
             return false;
@@ -483,13 +485,28 @@ public class MetalEntityRenderer {
         }
 
         int startVertex = metalVertexConsumer.getVertexCount();
-        float scale = Math.max(getFloatField(state, "width", 0.6f) * 1.4f, 0.6f);
+        float width = getFloatField(state, "boundingBoxWidth",
+                getFloatField(state, "width", 0.6f));
+        float height = getFloatField(state, "boundingBoxHeight",
+                getFloatField(state, "height", 1.8f));
+        float scale = width * 1.4f;
+        if (!(scale > 0.0f)) {
+            return;
+        }
         float sliceHalfWidth = 0.5f;
-        float normalizedHeight = getFloatField(state, "height", 1.8f) / scale;
+        float normalizedHeight = height / scale;
         float verticalOffset = 0.0f;
         float depthOffset = 0.0f;
         float baseDepth = 0.3f - (float) ((int) normalizedHeight) * 0.02f;
         int sliceIndex = 0;
+        int entityLight = captured.light != 0 ? captured.light
+                : net.minecraft.util.LightCoordsUtil.FULL_BRIGHT;
+        int fireLight;
+        try {
+            fireLight = net.minecraft.util.LightCoordsUtil.withBlock(entityLight, 15);
+        } catch (Exception ignored) {
+            fireLight = 0x00F000F0;
+        }
 
         while (normalizedHeight > 0.0f) {
             TextureAtlasSprite sprite = (sliceIndex & 1) == 0 ? fire0 : fire1;
@@ -508,7 +525,7 @@ public class MetalEntityRenderer {
 
             emitFireSlice(ex, ey, ez, cameraOrientation, scale, sliceHalfWidth,
                     verticalOffset, baseDepth + depthOffset, minU, minV, maxU,
-                    maxV);
+                    maxV, fireLight);
 
             normalizedHeight -= 0.45f;
             verticalOffset -= 0.45f;
@@ -528,7 +545,7 @@ public class MetalEntityRenderer {
     private void emitFireSlice(double ex, double ey, double ez,
             Quaternionf rotation, float scale, float halfWidth,
             float verticalOffset, float depthOffset,
-            float minU, float minV, float maxU, float maxV) {
+            float minU, float minV, float maxU, float maxV, int light) {
         setOverlayCorner(rotation, ex, ey, ez, -halfWidth * scale,
                 (-verticalOffset) * scale, depthOffset * scale, 0);
         setOverlayCorner(rotation, ex, ey, ez, halfWidth * scale,
@@ -538,20 +555,19 @@ public class MetalEntityRenderer {
         setOverlayCorner(rotation, ex, ey, ez, -halfWidth * scale,
                 (1.4f - verticalOffset) * scale, depthOffset * scale, 3);
 
-        int fullBright = 0x00F000F0;
         int color = 0xFFFFFFFF;
         metalVertexConsumer.vertex(overlayCorners[0].x, overlayCorners[0].y,
                 overlayCorners[0].z, color, maxU, maxV, 0,
-                fullBright, 0.0f, 1.0f, 0.0f);
+                light, 0.0f, 1.0f, 0.0f);
         metalVertexConsumer.vertex(overlayCorners[1].x, overlayCorners[1].y,
                 overlayCorners[1].z, color, minU, maxV, 0,
-                fullBright, 0.0f, 1.0f, 0.0f);
+                light, 0.0f, 1.0f, 0.0f);
         metalVertexConsumer.vertex(overlayCorners[2].x, overlayCorners[2].y,
                 overlayCorners[2].z, color, minU, minV, 0,
-                fullBright, 0.0f, 1.0f, 0.0f);
+                light, 0.0f, 1.0f, 0.0f);
         metalVertexConsumer.vertex(overlayCorners[3].x, overlayCorners[3].y,
                 overlayCorners[3].z, color, maxU, minV, 0,
-                fullBright, 0.0f, 1.0f, 0.0f);
+                light, 0.0f, 1.0f, 0.0f);
     }
 
     private void setOverlayCorner(Quaternionf rotation, double ex, double ey,
@@ -589,47 +605,217 @@ public class MetalEntityRenderer {
 
     private boolean renderFallingBlockFallback(Entity entity,
             CapturedEntity captured,
-            double camX, double camY, // だバル カルメル
+            double camX, double camY,
             double camZ) {
-        TextureAtlasSprite sprite = resolveFallingBlockSprite(entity);
+        Object blockStateObj = invokeNamedMethod(entity, new String[] { "getBlockState" });
+        if (!(blockStateObj instanceof net.minecraft.world.level.block.state.BlockState blockState)) {
+            return false;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.getModelManager() == null) {
+            return false;
+        }
+        net.minecraft.client.renderer.block.BlockStateModelSet modelSet;
+        try {
+            modelSet = mc.getModelManager().getBlockStateModelSet();
+        } catch (Exception ignored) {
+            return false;
+        }
+        if (modelSet == null) {
+            return false;
+        }
+        net.minecraft.client.renderer.block.dispatch.BlockStateModel model;
+        try {
+            model = modelSet.get(blockState);
+        } catch (Exception ignored) {
+            return false;
+        }
+        if (model == null) {
+            return false;
+        }
         int blockAtlasTextureId = getBlockAtlasTextureId();
-        if (sprite == null || blockAtlasTextureId == 0) {
+        if (blockAtlasTextureId == 0) {
             return false;
         }
 
         Vec3 position = entity.getPosition(captured.tickDelta);
-        float ex = (float) (position.x - camX);
-        float ey = (float) (position.y - camY);
-        float ez = (float) (position.z - camZ);
-        float halfWidth = Math.max(0.45f, entity.getBbWidth() * 0.5f);
-        float height = Math.max(0.9f, entity.getBbHeight());
-        float x0 = ex - halfWidth;
-        float y0 = ey;
-        float z0 = ez - halfWidth;
-        float x1 = ex + halfWidth;
-        float y1 = ey + height;
-        float z1 = ez + halfWidth;
+        float ox = (float) (position.x - camX) - 0.5f;
+        float oy = (float) (position.y - camY);
+        float oz = (float) (position.z - camZ) - 0.5f;
         int light = captured.light != 0 ? captured.light : 0x00F000F0;
-        int color = 0xFFFFFFFF;
-        float u0 = sprite.getU0();
-        float u1 = sprite.getU1();
-        float v0 = sprite.getV0();
-        float v1 = sprite.getV1();
 
-        emitTexturedQuad(x0, y0, z1, x1, y0, z1, x1, y1, z1, x0, y1, z1, 0.0f, 0.0f,
-                1.0f, u0, u1, v0, v1, color, light);
-        emitTexturedQuad(x1, y0, z0, x0, y0, z0, x0, y1, z0, x1, y1, z0, 0.0f, 0.0f,
-                -1.0f, u0, u1, v0, v1, color, light);
-        emitTexturedQuad(x0, y1, z0, x0, y1, z1, x1, y1, z1, x1, y1, z0, 0.0f, 1.0f,
-                0.0f, u0, u1, v0, v1, color, light);
-        emitTexturedQuad(x0, y0, z1, x0, y0, z0, x1, y0, z0, x1, y0, z1, 0.0f,
-                -1.0f, 0.0f, u0, u1, v0, v1, color, light);
-        emitTexturedQuad(x1, y0, z1, x1, y0, z0, x1, y1, z0, x1, y1, z1, 1.0f, 0.0f,
-                0.0f, u0, u1, v0, v1, color, light);
-        emitTexturedQuad(x0, y0, z0, x0, y0, z1, x0, y1, z1, x0, y1, z0, -1.0f,
-                0.0f, 0.0f, u0, u1, v0, v1, color, light);
+        net.minecraft.util.RandomSource random = net.minecraft.util.RandomSource.create();
+        try {
+            net.minecraft.core.BlockPos seedPos = entity.blockPosition();
+            random.setSeed(blockState.getSeed(seedPos));
+        } catch (Exception ignored) {
+        }
+        java.util.ArrayList<net.minecraft.client.renderer.block.dispatch.BlockStateModelPart> parts =
+                new java.util.ArrayList<>(4);
+        try {
+            model.collectParts(random, parts);
+        } catch (Exception ignored) {
+            return false;
+        }
+        if (parts.isEmpty()) {
+            return false;
+        }
+
+        net.minecraft.core.BlockPos tintPos;
+        try {
+            tintPos = net.minecraft.core.BlockPos.containing(position.x, position.y, position.z);
+        } catch (Exception ignored) {
+            tintPos = net.minecraft.core.BlockPos.ZERO;
+        }
+        net.minecraft.client.renderer.block.BlockAndTintGetter tintLevel = null;
+        try {
+            if (mc.level != null) {
+                tintLevel = mc.level;
+            }
+        } catch (Exception ignored) {
+        }
+
+        int emitted = 0;
+        for (net.minecraft.client.renderer.block.dispatch.BlockStateModelPart part : parts) {
+            if (part == null) {
+                continue;
+            }
+            for (net.minecraft.core.Direction dir : net.minecraft.core.Direction.values()) {
+                java.util.List<net.minecraft.client.resources.model.geometry.BakedQuad> quads;
+                try {
+                    quads = part.getQuads(dir);
+                } catch (Exception ignored) {
+                    continue;
+                }
+                if (quads == null) {
+                    continue;
+                }
+                for (net.minecraft.client.resources.model.geometry.BakedQuad quad : quads) {
+                    if (quad == null) {
+                        continue;
+                    }
+                    emitFallbackBakedQuad(quad, blockState, tintLevel, tintPos, ox, oy, oz, light);
+                    emitted++;
+                }
+            }
+            java.util.List<net.minecraft.client.resources.model.geometry.BakedQuad> unculled;
+            try {
+                unculled = part.getQuads(null);
+            } catch (Exception ignored) {
+                continue;
+            }
+            if (unculled == null) {
+                continue;
+            }
+            for (net.minecraft.client.resources.model.geometry.BakedQuad quad : unculled) {
+                if (quad == null) {
+                    continue;
+                }
+                emitFallbackBakedQuad(quad, blockState, tintLevel, tintPos, ox, oy, oz, light);
+                emitted++;
+            }
+        }
+        if (emitted == 0) {
+            return false;
+        }
         captured.glTextureId = blockAtlasTextureId;
         return true;
+    }
+
+    private void emitFallbackBakedQuad(
+            net.minecraft.client.resources.model.geometry.BakedQuad quad,
+            net.minecraft.world.level.block.state.BlockState blockState,
+            net.minecraft.client.renderer.block.BlockAndTintGetter tintLevel,
+            net.minecraft.core.BlockPos tintPos,
+            float ox, float oy, float oz, int light) {
+        int tintIndex = -1;
+        boolean shade = true;
+        int emission = 0;
+        try {
+            tintIndex = quad.materialInfo().tintIndex();
+            shade = quad.materialInfo().shade();
+            emission = quad.materialInfo().lightEmission();
+        } catch (Exception ignored) {
+        }
+        int color = 0xFFFFFFFF;
+        if (tintIndex >= 0) {
+            color = resolveFallbackTint(blockState, tintLevel, tintPos, tintIndex);
+        }
+        float shadeFactor = 1.0f;
+        if (shade) {
+            net.minecraft.core.Direction dir = null;
+            try {
+                dir = quad.direction();
+            } catch (Exception ignored) {
+            }
+            if (dir != null) {
+                shadeFactor = switch (dir) {
+                    case DOWN -> 0.5f;
+                    case UP -> 1.0f;
+                    case NORTH, SOUTH -> 0.8f;
+                    case WEST, EAST -> 0.6f;
+                };
+            }
+        }
+        if (shadeFactor != 1.0f) {
+            int r = Math.min(255, (int) (((color >> 16) & 0xFF) * shadeFactor));
+            int g = Math.min(255, (int) (((color >> 8) & 0xFF) * shadeFactor));
+            int b = Math.min(255, (int) ((color & 0xFF) * shadeFactor));
+            color = (color & 0xFF000000) | (r << 16) | (g << 8) | b;
+        }
+        if (emission > 0) {
+            light = 0x00F000F0;
+        }
+        float invLen = 1.0f / (float) Math.sqrt(0.2f * 0.2f + 1.0f + 0.5f * 0.5f);
+        float nx = 0.2f * invLen;
+        float ny = 1.0f * invLen;
+        float nz = 0.5f * invLen;
+        for (int i = 0; i < 4; i++) {
+            org.joml.Vector3fc pos;
+            long packed;
+            try {
+                pos = quad.position(i);
+                packed = quad.packedUV(i);
+            } catch (Exception ignored) {
+                return;
+            }
+            float u = Float.intBitsToFloat((int) (packed >> 32));
+            float v = Float.intBitsToFloat((int) packed);
+            metalVertexConsumer.vertex(ox + pos.x(), oy + pos.y(), oz + pos.z(),
+                    color, u, v, 0, light, nx, ny, nz);
+        }
+    }
+
+    private static int resolveFallbackTint(
+            net.minecraft.world.level.block.state.BlockState blockState,
+            net.minecraft.client.renderer.block.BlockAndTintGetter tintLevel,
+            net.minecraft.core.BlockPos tintPos, int tintIndex) {
+        if (tintIndex < 0 || blockState == null) {
+            return 0xFFFFFFFF;
+        }
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc == null || mc.getBlockColors() == null) {
+                return 0xFFFFFFFF;
+            }
+            net.minecraft.client.color.block.BlockTintSource source =
+                    mc.getBlockColors().getTintSource(blockState, tintIndex);
+            if (source == null) {
+                return 0xFFFFFFFF;
+            }
+            int rgb;
+            if (tintLevel != null && tintPos != null) {
+                rgb = source.colorInWorld(blockState, tintLevel, tintPos);
+            } else {
+                rgb = source.color(blockState);
+            }
+            if (rgb == -1) {
+                return 0xFFFFFFFF;
+            }
+            return 0xFF000000 | (rgb & 0x00FFFFFF);
+        } catch (Exception ignored) {
+            return 0xFFFFFFFF;
+        }
     }
 
     private TextureAtlasSprite resolveFallingBlockSprite(Entity entity) {
@@ -1019,6 +1205,10 @@ public class MetalEntityRenderer {
         if (glTextureId == 0 || device == 0) {
             return 0;
         }
+        long liveAtlas = getLiveBlockAtlasTexture(glTextureId);
+        if (liveAtlas != 0) {
+            return liveAtlas;
+        }
         if (glTextureId >= 0 && glTextureId < TEXTURE_CACHE_SIZE) {
             long cached = textureCache[glTextureId];
             if (cached != TEXTURE_UNCACHED) {
@@ -1058,6 +1248,30 @@ public class MetalEntityRenderer {
             if (glTextureId >= 0 && glTextureId < TEXTURE_CACHE_SIZE) {
                 textureCache[glTextureId] = 0L;
             }
+            return 0;
+        }
+    }
+
+    private long getLiveBlockAtlasTexture(int glTextureId) {
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc == null || mc.getTextureManager() == null) {
+                return 0;
+            }
+            AbstractTexture atlasTexture = mc.getTextureManager()
+                    .getTexture(TextureAtlas.LOCATION_BLOCKS);
+            if (!(atlasTexture != null
+                    && atlasTexture.getTexture() instanceof GlTexture glTexture)
+                    || glTexture.glId() != glTextureId) {
+                return 0;
+            }
+            com.pebbles_boon.metalrender.render.MetalWorldRenderer worldRenderer =
+                    MetalRenderClient.getWorldRenderer();
+            if (worldRenderer == null || worldRenderer.getTextureManager() == null) {
+                return 0;
+            }
+            return worldRenderer.getTextureManager().getBlockAtlasTexture();
+        } catch (Exception ignored) {
             return 0;
         }
     }

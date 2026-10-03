@@ -15,6 +15,8 @@ import net.minecraft.client.renderer.block.BlockStateModelSet;
 import net.minecraft.client.renderer.block.MovingBlockRenderState;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModel;
 import net.minecraft.client.renderer.block.dispatch.BlockStateModelPart;
+import net.minecraft.core.BlockPos;
+import net.minecraft.core.Direction;
 import net.minecraft.client.renderer.entity.state.EntityRenderState;
 import net.minecraft.client.renderer.feature.ModelFeatureRenderer;
 import net.minecraft.client.renderer.item.ItemStackRenderState;
@@ -26,6 +28,8 @@ import net.minecraft.client.renderer.texture.TextureAtlasSprite;
 import net.minecraft.client.resources.model.geometry.BakedQuad;
 import net.minecraft.network.chat.Component;
 import net.minecraft.util.FormattedCharSequence;
+import net.minecraft.util.RandomSource;
+import net.minecraft.world.level.block.state.BlockState;
 import net.minecraft.world.item.ItemDisplayContext;
 import net.minecraft.world.phys.Vec3;
 import org.joml.Quaternionf;
@@ -331,51 +335,159 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
         if (state == null || state.blockState == null || vertexConsumer == null) {
             return;
         }
+        if (!(vertexConsumer instanceof MetalVertexConsumer metalVertexConsumer)) {
+            return;
+        }
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.getModelManager() == null) {
+            return;
+        }
+        BlockStateModelSet modelSet = mc.getModelManager().getBlockStateModelSet();
+        if (modelSet == null) {
+            return;
+        }
+        BlockStateModel model;
+        try {
+            model = modelSet.get(state.blockState);
+        } catch (Exception ignored) {
+            return;
+        }
+        if (model == null) {
+            return;
+        }
 
-        TextureAtlasSprite sprite = getMovingBlockSprite(state);
         int blockAtlasTextureId = getBlockAtlasTextureId();
-        if (sprite == null || blockAtlasTextureId == 0) {
+        if (blockAtlasTextureId == 0) {
+            return;
+        }
+
+        BlockPos seedPos = state.randomSeedPos != null ? state.randomSeedPos
+                : (state.blockPos != null ? state.blockPos : BlockPos.ZERO);
+        RandomSource random;
+        try {
+            random = RandomSource.create();
+            random.setSeed(state.blockState.getSeed(seedPos));
+        } catch (Exception ignored) {
+            random = RandomSource.create();
+        }
+
+        java.util.ArrayList<BlockStateModelPart> parts = new java.util.ArrayList<>(4);
+        try {
+            model.collectParts(random, parts);
+        } catch (Exception ignored) {
+            return;
+        }
+        if (parts.isEmpty()) {
             return;
         }
 
         int light = defaultLight != 0 ? defaultLight : 0x00F000F0;
-        int color = 0xFFFFFFFF;
-        float u0 = sprite.getU0();
-        float u1 = sprite.getU1();
-        float v0 = sprite.getV0();
-        float v1 = sprite.getV1();
-
-        emitTexturedQuad(matrices,
-                0.0f, 0.0f, 1.0f, 1.0f, 0.0f, 1.0f,
-                1.0f, 1.0f, 1.0f, 0.0f, 1.0f, 1.0f,
-                0.0f, 0.0f, 1.0f, u0, u1, v0, v1, color, light);
-        emitTexturedQuad(matrices,
-                1.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-                0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 0.0f,
-                0.0f, 0.0f, -1.0f, u0, u1, v0, v1, color, light);
-        emitTexturedQuad(matrices,
-                0.0f, 1.0f, 0.0f, 0.0f, 1.0f, 1.0f,
-                1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 0.0f,
-                0.0f, 1.0f, 0.0f, u0, u1, v0, v1, color, light);
-        emitTexturedQuad(matrices,
-                0.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f,
-                1.0f, 0.0f, 0.0f, 1.0f, 0.0f, 1.0f,
-                0.0f, -1.0f, 0.0f, u0, u1, v0, v1, color, light);
-        emitTexturedQuad(matrices,
-                1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f,
-                1.0f, 1.0f, 0.0f, 1.0f, 1.0f, 1.0f,
-                1.0f, 0.0f, 0.0f, u0, u1, v0, v1, color, light);
-        emitTexturedQuad(matrices,
-                0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 1.0f,
-                0.0f, 1.0f, 1.0f, 0.0f, 1.0f, 0.0f,
-                -1.0f, 0.0f, 0.0f, u0, u1, v0, v1, color, light);
-        requestedGlTextureId = blockAtlasTextureId;
+        int start = currentVertexCount();
+        for (BlockStateModelPart part : parts) {
+            if (part == null) {
+                continue;
+            }
+            for (Direction dir : Direction.values()) {
+                java.util.List<BakedQuad> quads;
+                try {
+                    quads = part.getQuads(dir);
+                } catch (Exception ignored) {
+                    continue;
+                }
+                if (quads == null || quads.isEmpty()) {
+                    continue;
+                }
+                for (BakedQuad quad : quads) {
+                    if (quad != null) {
+                        emitMovingBlockQuad(metalVertexConsumer, matrices, quad, state, light);
+                    }
+                }
+            }
+            java.util.List<BakedQuad> unculled;
+            try {
+                unculled = part.getQuads(null);
+            } catch (Exception ignored) {
+                continue;
+            }
+            if (unculled == null || unculled.isEmpty()) {
+                continue;
+            }
+            for (BakedQuad quad : unculled) {
+                if (quad != null) {
+                    emitMovingBlockQuad(metalVertexConsumer, matrices, quad, state, light);
+                }
+            }
+        }
+        int end = currentVertexCount();
+        if (end > start) {
+            requestedGlTextureId = blockAtlasTextureId;
+        }
     }
 
     @Override
     public void submitBlockModel(PoseStack matrices, RenderType layer,
             List<BlockStateModelPart> parts, int[] colors,
             int x, int y, int z) {
+        if (matrices == null || parts == null || parts.isEmpty() || vertexConsumer == null) {
+            return;
+        }
+        if (!(vertexConsumer instanceof MetalVertexConsumer metalVertexConsumer)) {
+            return;
+        }
+        int blockAtlasTextureId = getBlockAtlasTextureId();
+        if (blockAtlasTextureId == 0) {
+            return;
+        }
+        int start = currentVertexCount();
+        for (BlockStateModelPart part : parts) {
+            if (part == null) {
+                continue;
+            }
+            for (Direction dir : Direction.values()) {
+                java.util.List<BakedQuad> quads;
+                try {
+                    quads = part.getQuads(dir);
+                } catch (Exception ignored) {
+                    continue;
+                }
+                if (quads == null || quads.isEmpty()) {
+                    continue;
+                }
+                for (BakedQuad quad : quads) {
+                    if (quad != null) {
+                        emitBlockModelQuad(metalVertexConsumer, matrices, quad, colors,
+                                defaultLight != 0 ? defaultLight : 0x00F000F0);
+                    }
+                }
+            }
+            java.util.List<BakedQuad> unculled;
+            try {
+                unculled = part.getQuads(null);
+            } catch (Exception ignored) {
+                continue;
+            }
+            if (unculled == null || unculled.isEmpty()) {
+                continue;
+            }
+            for (BakedQuad quad : unculled) {
+                if (quad != null) {
+                    emitBlockModelQuad(metalVertexConsumer, matrices, quad, colors,
+                            defaultLight != 0 ? defaultLight : 0x00F000F0);
+                }
+            }
+        }
+        int end = currentVertexCount();
+        if (end > start) {
+            if (requestedGlTextureId == 0) {
+                requestedGlTextureId = blockAtlasTextureId;
+            }
+            DrawSegment seg = new DrawSegment();
+            seg.startVertex = start;
+            seg.vertexCount = end - start;
+            seg.glTextureId = blockAtlasTextureId;
+            seg.renderFlags = renderFlagsFor(layer);
+            segments.add(seg);
+        }
     }
 
     @Override
@@ -480,6 +592,162 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
         } catch (Exception ignored) {
             BlockStateModel model = modelSet.get(state.blockState);
             return model != null ? model.particleMaterial().sprite() : null;
+        }
+    }
+
+    private void emitMovingBlockQuad(MetalVertexConsumer mvc, PoseStack matrices,
+            BakedQuad quad, MovingBlockRenderState state, int light) {
+        int tintIndex;
+        boolean shade;
+        int emission;
+        try {
+            tintIndex = quad.materialInfo().tintIndex();
+            shade = quad.materialInfo().shade();
+            emission = quad.materialInfo().lightEmission();
+        } catch (Exception ignored) {
+            tintIndex = -1;
+            shade = true;
+            emission = 0;
+        }
+        int baseColor = 0xFFFFFFFF;
+        if (tintIndex >= 0) {
+            baseColor = resolveBlockTint(state.blockState, state,
+                    state.blockPos != null ? state.blockPos : BlockPos.ZERO, tintIndex);
+        }
+        float shadeFactor = 1.0f;
+        if (shade) {
+            shadeFactor = diffuseShade(state, quad.direction());
+        }
+        if (shadeFactor != 1.0f) {
+            int r = Math.min(255, (int) (((baseColor >> 16) & 0xFF) * shadeFactor));
+            int g = Math.min(255, (int) (((baseColor >> 8) & 0xFF) * shadeFactor));
+            int b = Math.min(255, (int) ((baseColor & 0xFF) * shadeFactor));
+            baseColor = (baseColor & 0xFF000000) | (r << 16) | (g << 8) | b;
+        }
+        if (emission > 0) {
+            light = 0x00F000F0;
+        }
+        emitBakedQuadVertices(mvc, matrices, quad, baseColor, light);
+    }
+
+    private void emitBlockModelQuad(MetalVertexConsumer mvc, PoseStack matrices,
+            BakedQuad quad, int[] colors, int light) {
+        int tintIndex;
+        boolean shade;
+        int emission;
+        try {
+            tintIndex = quad.materialInfo().tintIndex();
+            shade = quad.materialInfo().shade();
+            emission = quad.materialInfo().lightEmission();
+        } catch (Exception ignored) {
+            tintIndex = -1;
+            shade = true;
+            emission = 0;
+        }
+        int baseColor = 0xFFFFFFFF;
+        if (tintIndex >= 0 && colors != null && tintIndex < colors.length) {
+            int c = colors[tintIndex];
+            if ((c & 0xFF000000) == 0) {
+                c |= 0xFF000000;
+            }
+            baseColor = c;
+        }
+        float shadeFactor = 1.0f;
+        if (shade) {
+            shadeFactor = diffuseShade(null, quad.direction());
+        }
+        if (shadeFactor != 1.0f) {
+            int r = Math.min(255, (int) (((baseColor >> 16) & 0xFF) * shadeFactor));
+            int g = Math.min(255, (int) (((baseColor >> 8) & 0xFF) * shadeFactor));
+            int b = Math.min(255, (int) ((baseColor & 0xFF) * shadeFactor));
+            baseColor = (baseColor & 0xFF000000) | (r << 16) | (g << 8) | b;
+        }
+        if (emission > 0) {
+            light = 0x00F000F0;
+        }
+        emitBakedQuadVertices(mvc, matrices, quad, baseColor, light);
+    }
+
+    private static float diffuseShade(MovingBlockRenderState state, Direction dir) {
+        if (dir == null) {
+            return 1.0f;
+        }
+        if (state != null) {
+            try {
+                if (state.cardinalLighting() != null) {
+                    return state.cardinalLighting().byFace(dir);
+                }
+            } catch (Exception ignored) {
+            }
+        }
+        return switch (dir) {
+            case DOWN -> 0.5f;
+            case UP -> 1.0f;
+            case NORTH, SOUTH -> 0.8f;
+            case WEST, EAST -> 0.6f;
+        };
+    }
+
+    private static final float ENTITY_SHADER_LX = 0.2f;
+    private static final float ENTITY_SHADER_LY = 1.0f;
+    private static final float ENTITY_SHADER_LZ = 0.5f;
+
+    private void emitBakedQuadVertices(MetalVertexConsumer mvc, PoseStack matrices,
+            BakedQuad quad, int color, int light) {
+        float invLen = 1.0f / (float) Math.sqrt(
+                ENTITY_SHADER_LX * ENTITY_SHADER_LX + ENTITY_SHADER_LY * ENTITY_SHADER_LY
+                        + ENTITY_SHADER_LZ * ENTITY_SHADER_LZ);
+        float nnx = ENTITY_SHADER_LX * invLen;
+        float nny = ENTITY_SHADER_LY * invLen;
+        float nnz = ENTITY_SHADER_LZ * invLen;
+        for (int i = 0; i < 4; i++) {
+            org.joml.Vector3fc pos;
+            long packed;
+            try {
+                pos = quad.position(i);
+                packed = quad.packedUV(i);
+            } catch (Exception ignored) {
+                return;
+            }
+            float u = Float.intBitsToFloat((int) (packed >> 32));
+            float v = Float.intBitsToFloat((int) packed);
+            Vector3f p = new Vector3f(pos.x(), pos.y(), pos.z());
+            try {
+                matrices.last().pose().transformPosition(p);
+            } catch (Exception ignored) {
+            }
+            mvc.vertex(p.x, p.y, p.z, color, u, v, 0, light, nnx, nny, nnz);
+        }
+    }
+
+    private static int resolveBlockTint(BlockState blockState,
+            net.minecraft.client.renderer.block.BlockAndTintGetter level,
+            BlockPos pos, int tintIndex) {
+        if (tintIndex < 0 || blockState == null) {
+            return 0xFFFFFFFF;
+        }
+        try {
+            Minecraft mc = Minecraft.getInstance();
+            if (mc == null || mc.getBlockColors() == null) {
+                return 0xFFFFFFFF;
+            }
+            net.minecraft.client.color.block.BlockTintSource source =
+                    mc.getBlockColors().getTintSource(blockState, tintIndex);
+            if (source == null) {
+                return 0xFFFFFFFF;
+            }
+            int rgb;
+            if (level != null && pos != null) {
+                rgb = source.colorInWorld(blockState, level, pos);
+            } else {
+                rgb = source.color(blockState);
+            }
+            if (rgb == -1) {
+                return 0xFFFFFFFF;
+            }
+            return 0xFF000000 | (rgb & 0x00FFFFFF);
+        } catch (Exception ignored) {
+            return 0xFFFFFFFF;
         }
     }
 
