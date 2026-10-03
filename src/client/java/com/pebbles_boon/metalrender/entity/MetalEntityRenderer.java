@@ -979,7 +979,7 @@ public class MetalEntityRenderer {
             ey += bobY;
             float sinSpin = (float) Math.sin(Math.toRadians(spinAngle));
             float cosSpin = (float) Math.cos(Math.toRadians(spinAngle));
-            float halfWidth = 0.125f;
+            float halfWidth = 0.25f;
             int light = 0x00F000F0;
             int color = 0xFFFFFFFF;
 
@@ -1014,6 +1014,22 @@ public class MetalEntityRenderer {
                     -nz);
             metalVertexConsumer.vertex(x1, y1, z1, color, u1, v0, 0, light, -nx, 0.0f,
                     -nz);
+            float cosSpin2 = -sinSpin;
+            float sinSpin2 = cosSpin;
+            float nx2 = sinSpin2;
+            float nz2 = cosSpin2;
+            float xa0 = ex + cosSpin2 * (-halfWidth);
+            float za0 = ez + sinSpin2 * (-halfWidth);
+            float xa1 = ex + cosSpin2 * halfWidth;
+            float za1 = ez + sinSpin2 * halfWidth;
+            metalVertexConsumer.vertex(xa0, y0, za0, color, u0, v1, 0, light, nx2, 0.0f, nz2);
+            metalVertexConsumer.vertex(xa1, y0, za1, color, u1, v1, 0, light, nx2, 0.0f, nz2);
+            metalVertexConsumer.vertex(xa1, y1, za1, color, u1, v0, 0, light, nx2, 0.0f, nz2);
+            metalVertexConsumer.vertex(xa0, y1, za0, color, u0, v0, 0, light, nx2, 0.0f, nz2);
+            metalVertexConsumer.vertex(xa1, y0, za1, color, u1, v1, 0, light, -nx2, 0.0f, -nz2);
+            metalVertexConsumer.vertex(xa0, y0, za0, color, u0, v1, 0, light, -nx2, 0.0f, -nz2);
+            metalVertexConsumer.vertex(xa0, y1, za0, color, u0, v0, 0, light, -nx2, 0.0f, -nz2);
+            metalVertexConsumer.vertex(xa1, y1, za1, color, u1, v0, 0, light, -nx2, 0.0f, -nz2);
             return true;
         } catch (Exception e) {
             if (frameCount < 5) {

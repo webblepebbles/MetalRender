@@ -501,6 +501,78 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
             int light, int overlay, int color, int[] tintColors,
             List<BakedQuad> quads,
             ItemStackRenderState.FoilType foilType) {
+        if (matrices == null || quads == null || quads.isEmpty() || vertexConsumer == null) {
+            return;
+        }
+        if (!(vertexConsumer instanceof MetalVertexConsumer metalVertexConsumer)) {
+            return;
+        }
+        int start = currentVertexCount();
+        int actualLight = light != 0 ? light : (defaultLight != 0 ? defaultLight : 0x00F000F0);
+        for (BakedQuad quad : quads) {
+            if (quad == null) {
+                continue;
+            }
+            int tintIndex;
+            boolean shade;
+            int emission;
+            try {
+                tintIndex = quad.materialInfo().tintIndex();
+                shade = quad.materialInfo().shade();
+                emission = quad.materialInfo().lightEmission();
+            } catch (Exception ignored) {
+                tintIndex = -1;
+                shade = true;
+                emission = 0;
+            }
+            int baseColor = color != 0 ? color : 0xFFFFFFFF;
+            if ((baseColor & 0xFF000000) == 0) {
+                baseColor |= 0xFF000000;
+            }
+            if (tintIndex >= 0 && tintColors != null && tintIndex < tintColors.length) {
+                int tint = tintColors[tintIndex];
+                if (tint != -1 && tint != 0) {
+                    if ((tint & 0xFF000000) == 0) {
+                        tint |= 0xFF000000;
+                    }
+                    int r1 = ((baseColor >> 16) & 0xFF) * ((tint >> 16) & 0xFF) / 255;
+                    int g1 = ((baseColor >> 8) & 0xFF) * ((tint >> 8) & 0xFF) / 255;
+                    int b1 = (baseColor & 0xFF) * (tint & 0xFF) / 255;
+                    baseColor = (0xFF << 24) | (r1 << 16) | (g1 << 8) | b1;
+                }
+            }
+            float shadeFactor = 1.0f;
+            if (shade) {
+                shadeFactor = diffuseShade(null, quad.direction());
+            }
+            if (shadeFactor != 1.0f) {
+                int r = Math.min(255, (int) (((baseColor >> 16) & 0xFF) * shadeFactor));
+                int g = Math.min(255, (int) (((baseColor >> 8) & 0xFF) * shadeFactor));
+                int b = Math.min(255, (int) ((baseColor & 0xFF) * shadeFactor));
+                baseColor = (baseColor & 0xFF000000) | (r << 16) | (g << 8) | b;
+            }
+            int quadLight = emission > 0 ? 0x00F000F0 : actualLight;
+            emitBakedQuadVertices(metalVertexConsumer, matrices, quad, baseColor, quadLight);
+        }
+        int end = currentVertexCount();
+        if (end > start) {
+            int texId = resolveItemTexture(quads);
+            if (texId == 0) {
+                texId = getBlockAtlasTextureId();
+            }
+            if (texId == 0) {
+                texId = getItemsAtlasTextureId();
+            }
+            if (texId != 0) {
+                requestedGlTextureId = texId;
+            }
+            DrawSegment seg = new DrawSegment();
+            seg.startVertex = start;
+            seg.vertexCount = end - start;
+            seg.glTextureId = texId;
+            seg.renderFlags = 0;
+            segments.add(seg);
+        }
     }
 
     @Override
@@ -872,5 +944,42 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
             return glTexture.glId();
         }
         return 0;
+    }
+
+    private int getItemsAtlasTextureId() {
+        Minecraft mc = Minecraft.getInstance();
+        if (mc == null || mc.getTextureManager() == null) {
+            return 0;
+        }
+        AbstractTexture atlasTexture = mc.getTextureManager().getTexture(TextureAtlas.LOCATION_ITEMS);
+        if (atlasTexture != null && atlasTexture.getTexture() instanceof GlTexture glTexture) {
+            return glTexture.glId();
+        }
+        return 0;
+    }
+
+    private int resolveItemTexture(List<BakedQuad> quads) {
+        if (quads != null) {
+            for (BakedQuad quad : quads) {
+                if (quad == null) {
+                    continue;
+                }
+                try {
+                    TextureAtlasSprite sprite = quad.materialInfo().sprite();
+                    if (sprite != null && sprite.atlasLocation() != null) {
+                        int glId = getTextureGlId(sprite.atlasLocation());
+                        if (glId != 0) {
+                            return glId;
+                        }
+                    }
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        int blockId = getBlockAtlasTextureId();
+        if (blockId != 0) {
+            return blockId;
+        }
+        return getItemsAtlasTextureId();
     }
 }
