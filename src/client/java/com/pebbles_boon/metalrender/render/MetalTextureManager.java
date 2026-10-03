@@ -130,21 +130,26 @@ public class MetalTextureManager {
             return;
         atlasFramesSinceUpload++;
 
-        if (atlasFramesSinceUpload < ATLAS_MIN_UPLOAD_INTERVAL)
-            return;
-        if (!atlasDirty && atlasFramesSinceUpload < ATLAS_HEARTBEAT_FRAMES)
-            return;
-        long nowMs = System.currentTimeMillis();
-        long minIntervalMs = atlasBackoffActive
-                ? ATLAS_BACKOFF_INTERVAL_MS
-                : ATLAS_MIN_UPLOAD_INTERVAL_MS;
-        if (atlasDirty &&
-                nowMs - lastAtlasUploadMs < minIntervalMs + atlasExtraDelayMs) {
-            return;
+        boolean dirty = atlasDirty;
+        if (dirty) {
+            if (atlasFramesSinceUpload < ATLAS_MIN_UPLOAD_INTERVAL)
+                return;
+            atlasDirty = false;
+            atlasFramesSinceUpload = 0;
+            lastAtlasUploadMs = System.currentTimeMillis();
+        } else {
+            if (atlasFramesSinceUpload < ATLAS_HEARTBEAT_FRAMES)
+                return;
+            long nowMs = System.currentTimeMillis();
+            long minIntervalMs = atlasBackoffActive
+                    ? ATLAS_BACKOFF_INTERVAL_MS
+                    : ATLAS_MIN_UPLOAD_INTERVAL_MS;
+            if (nowMs - lastAtlasUploadMs < minIntervalMs + atlasExtraDelayMs) {
+                return;
+            }
+            lastAtlasUploadMs = nowMs;
+            atlasFramesSinceUpload = 0;
         }
-        lastAtlasUploadMs = nowMs;
-        atlasFramesSinceUpload = 0;
-        atlasDirty = false;
         int mipLevels = currentMipmapLevels();
         if (mipLevels != blockAtlasMipLevels) {
             loadBlockAtlas();
@@ -153,18 +158,27 @@ public class MetalTextureManager {
 
         try {
             Minecraft mc = Minecraft.getInstance();
-            if (mc == null || mc.getTextureManager() == null)
+            if (mc == null || mc.getTextureManager() == null) {
+                if (dirty)
+                    atlasDirty = true;
                 return;
+            }
             AbstractTexture atlasTexture = mc.getTextureManager().getTexture(BLOCKS_ATLAS_ID);
-            if (atlasTexture == null)
+            if (atlasTexture == null) {
+                if (dirty)
+                    atlasDirty = true;
                 return;
+            }
             int glTexId = 0;
             var gpuTex = atlasTexture.getTexture();
             if (gpuTex instanceof GlTexture glTex) {
                 glTexId = glTex.glId();
             }
-            if (glTexId == 0)
+            if (glTexId == 0) {
+                if (dirty)
+                    atlasDirty = true;
                 return;
+            }
             int prevTex = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
             GL11.glBindTexture(GL11.GL_TEXTURE_2D, glTexId);
             int width = GL11.glGetTexLevelParameteri(GL11.GL_TEXTURE_2D, 0,
@@ -192,6 +206,8 @@ public class MetalTextureManager {
             uploadAtlasDiff(width, height, dataSize);
             trackAtlasSyncCost(syncStartNs);
         } catch (Exception e) {
+            if (dirty)
+                atlasDirty = true;
         }
     }
 
