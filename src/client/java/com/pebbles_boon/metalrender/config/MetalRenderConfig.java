@@ -44,8 +44,8 @@ public final class MetalRenderConfig {
     public String customHexAccent = "5AC8FF";
     public String customHexText = "E8F0FF";
     private static volatile float resolutionScale = 1.0f;
-    private static volatile boolean adaptiveResolutionEnabled = true;
-    private static volatile boolean metalFXTemporalEnabled = true;
+    private static volatile boolean adaptiveResolutionEnabled = false;
+    private static volatile boolean metalFXTemporalEnabled = false;
     private static volatile boolean deepDebugActive = false;
 
     private static java.nio.file.Path configFile() {
