@@ -138,30 +138,55 @@ public final class IOSurfaceBlitter {
 
     public void destroy() {
         destroyed = true;
-        deleteShaderProgram();
-        if (rectShaderProgram != 0) {
-            GL20.glDeleteProgram(rectShaderProgram);
-            rectShaderProgram = 0;
-            rectTexSizeLoc = -1;
+        try {
+            deleteShaderProgram();
+        } catch (Throwable ignored) {
         }
-        deleteQuadGeometry();
-        deleteTextures();
-        if (ioSurfaceFbo != 0) {
-            GL30.glDeleteFramebuffers(ioSurfaceFbo);
-            ioSurfaceFbo = 0;
+        try {
+            if (rectShaderProgram != 0) {
+                GL20.glDeleteProgram(rectShaderProgram);
+                rectShaderProgram = 0;
+                rectTexSizeLoc = -1;
+            }
+        } catch (Throwable ignored) {
         }
-        if (intermediateFbo != 0) {
-            GL30.glDeleteFramebuffers(intermediateFbo);
-            intermediateFbo = 0;
+        try {
+            deleteQuadGeometry();
+        } catch (Throwable ignored) {
         }
-        if (intermediateTexture != 0) {
-            GL11.glDeleteTextures(intermediateTexture);
-            intermediateTexture = 0;
+        try {
+            deleteTextures();
+        } catch (Throwable ignored) {
+        }
+        try {
+            if (ioSurfaceFbo != 0) {
+                GL30.glDeleteFramebuffers(ioSurfaceFbo);
+                ioSurfaceFbo = 0;
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            if (intermediateFbo != 0) {
+                GL30.glDeleteFramebuffers(intermediateFbo);
+                intermediateFbo = 0;
+            }
+        } catch (Throwable ignored) {
+        }
+        try {
+            if (intermediateTexture != 0) {
+                GL11.glDeleteTextures(intermediateTexture);
+                intermediateTexture = 0;
+            }
+        } catch (Throwable ignored) {
         }
         initialized = false;
         boundWidth = 0;
         boundHeight = 0;
         pixelBuffer = null;
+        glStateQueried = false;
+        quadStateQueried = false;
+        readFboVerified = false;
+        drawFboVerified = false;
         resetFastPathState();
         MetalLogger.info("[iosurface] destroyed");
     }
@@ -278,22 +303,14 @@ public final class IOSurfaceBlitter {
 
     private boolean blitToIntermediateImpl(int width, int height) {
 
-        int prevReadFbo, prevDrawFbo;
-        boolean scissor;
-        if (!glStateQueried) {
-            prevReadFbo = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
-            prevDrawFbo = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
-            scissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
-            GL11.glGetFloatv(GL11.GL_COLOR_CLEAR_VALUE, prevClearColor);
-            cachedPrevReadFbo = prevReadFbo;
-            cachedPrevDrawFbo = prevDrawFbo;
-            cachedScissor = scissor;
-            glStateQueried = true;
-        } else {
-            prevReadFbo = cachedPrevReadFbo;
-            prevDrawFbo = cachedPrevDrawFbo;
-            scissor = cachedScissor;
-        }
+        int prevReadFbo = GL11.glGetInteger(GL30.GL_READ_FRAMEBUFFER_BINDING);
+        int prevDrawFbo = GL11.glGetInteger(GL30.GL_DRAW_FRAMEBUFFER_BINDING);
+        boolean scissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
+        GL11.glGetFloatv(GL11.GL_COLOR_CLEAR_VALUE, prevClearColor);
+        cachedPrevReadFbo = prevReadFbo;
+        cachedPrevDrawFbo = prevDrawFbo;
+        cachedScissor = scissor;
+        glStateQueried = true;
         try {
             if (ioSurfaceFbo == 0) {
                 ioSurfaceFbo = GL30.glGenFramebuffers();
@@ -446,68 +463,47 @@ public final class IOSurfaceBlitter {
         boolean wasDepth, wasBlend, wasCull, wasScissor, wasStencil, wasDepthMask;
         boolean cmR, cmG, cmB, cmA;
         int bSrcRGB, bDstRGB, bSrcA, bDstA;
-        if (!quadStateQueried) {
-            prevProgram = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
-            prevVao = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING);
-            prevActiveTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
-            prevTex = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
-            wasDepth = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
-            wasBlend = GL11.glIsEnabled(GL11.GL_BLEND);
-            wasCull = GL11.glIsEnabled(GL11.GL_CULL_FACE);
-            wasScissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
-            wasStencil = GL11.glIsEnabled(GL11.GL_STENCIL_TEST);
-            wasDepthMask = GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK);
-            reusableCmBuf.clear();
-            GL11.glGetBooleanv(GL11.GL_COLOR_WRITEMASK, reusableCmBuf);
-            ByteBuffer cmBuf = reusableCmBuf;
-            cmR = cmBuf.get(0) != 0;
-            cmG = cmBuf.get(1) != 0;
-            cmB = cmBuf.get(2) != 0;
-            cmA = cmBuf.get(3) != 0;
-            bSrcRGB = GL11.glGetInteger(GL14.GL_BLEND_SRC_RGB);
-            bDstRGB = GL11.glGetInteger(GL14.GL_BLEND_DST_RGB);
-            bSrcA = GL11.glGetInteger(GL14.GL_BLEND_SRC_ALPHA);
-            bDstA = GL11.glGetInteger(GL14.GL_BLEND_DST_ALPHA);
-            cachedQuadPrevProgram = prevProgram;
-            cachedQuadPrevVao = prevVao;
-            cachedQuadPrevActiveTexture = prevActiveTexture;
-            cachedQuadPrevTex = prevTex;
-            cachedQuadWasDepth = wasDepth;
-            cachedQuadWasBlend = wasBlend;
-            cachedQuadWasCull = wasCull;
-            cachedQuadWasScissor = wasScissor;
-            cachedQuadWasStencil = wasStencil;
-            cachedQuadWasDepthMask = wasDepthMask;
-            cachedQuadCmR = cmR;
-            cachedQuadCmG = cmG;
-            cachedQuadCmB = cmB;
-            cachedQuadCmA = cmA;
-            cachedQuadBSrcRGB = bSrcRGB;
-            cachedQuadBDstRGB = bDstRGB;
-            cachedQuadBSrcA = bSrcA;
-            cachedQuadBDstA = bDstA;
-            GL11.glGetIntegerv(GL11.GL_VIEWPORT, cachedQuadViewport);
-            quadStateQueried = true;
-        } else {
-            prevProgram = cachedQuadPrevProgram;
-            prevVao = cachedQuadPrevVao;
-            prevActiveTexture = cachedQuadPrevActiveTexture;
-            prevTex = cachedQuadPrevTex;
-            wasDepth = cachedQuadWasDepth;
-            wasBlend = cachedQuadWasBlend;
-            wasCull = cachedQuadWasCull;
-            wasScissor = cachedQuadWasScissor;
-            wasStencil = cachedQuadWasStencil;
-            wasDepthMask = cachedQuadWasDepthMask;
-            cmR = cachedQuadCmR;
-            cmG = cachedQuadCmG;
-            cmB = cachedQuadCmB;
-            cmA = cachedQuadCmA;
-            bSrcRGB = cachedQuadBSrcRGB;
-            bDstRGB = cachedQuadBDstRGB;
-            bSrcA = cachedQuadBSrcA;
-            bDstA = cachedQuadBDstA;
-        }
+        prevProgram = GL11.glGetInteger(GL20.GL_CURRENT_PROGRAM);
+        prevVao = GL11.glGetInteger(GL30.GL_VERTEX_ARRAY_BINDING);
+        prevActiveTexture = GL11.glGetInteger(GL13.GL_ACTIVE_TEXTURE);
+        prevTex = GL11.glGetInteger(GL11.GL_TEXTURE_BINDING_2D);
+        wasDepth = GL11.glIsEnabled(GL11.GL_DEPTH_TEST);
+        wasBlend = GL11.glIsEnabled(GL11.GL_BLEND);
+        wasCull = GL11.glIsEnabled(GL11.GL_CULL_FACE);
+        wasScissor = GL11.glIsEnabled(GL11.GL_SCISSOR_TEST);
+        wasStencil = GL11.glIsEnabled(GL11.GL_STENCIL_TEST);
+        wasDepthMask = GL11.glGetBoolean(GL11.GL_DEPTH_WRITEMASK);
+        reusableCmBuf.clear();
+        GL11.glGetBooleanv(GL11.GL_COLOR_WRITEMASK, reusableCmBuf);
+        ByteBuffer cmBuf = reusableCmBuf;
+        cmR = cmBuf.get(0) != 0;
+        cmG = cmBuf.get(1) != 0;
+        cmB = cmBuf.get(2) != 0;
+        cmA = cmBuf.get(3) != 0;
+        bSrcRGB = GL11.glGetInteger(GL14.GL_BLEND_SRC_RGB);
+        bDstRGB = GL11.glGetInteger(GL14.GL_BLEND_DST_RGB);
+        bSrcA = GL11.glGetInteger(GL14.GL_BLEND_SRC_ALPHA);
+        bDstA = GL11.glGetInteger(GL14.GL_BLEND_DST_ALPHA);
+        cachedQuadPrevProgram = prevProgram;
+        cachedQuadPrevVao = prevVao;
+        cachedQuadPrevActiveTexture = prevActiveTexture;
+        cachedQuadPrevTex = prevTex;
+        cachedQuadWasDepth = wasDepth;
+        cachedQuadWasBlend = wasBlend;
+        cachedQuadWasCull = wasCull;
+        cachedQuadWasScissor = wasScissor;
+        cachedQuadWasStencil = wasStencil;
+        cachedQuadWasDepthMask = wasDepthMask;
+        cachedQuadCmR = cmR;
+        cachedQuadCmG = cmG;
+        cachedQuadCmB = cmB;
+        cachedQuadCmA = cmA;
+        cachedQuadBSrcRGB = bSrcRGB;
+        cachedQuadBDstRGB = bDstRGB;
+        cachedQuadBSrcA = bSrcA;
+        cachedQuadBDstA = bDstA;
+        GL11.glGetIntegerv(GL11.GL_VIEWPORT, cachedQuadViewport);
+        quadStateQueried = true;
         int[] prevViewport = cachedQuadViewport;
         try {
             GL11.glViewport(0, 0, width, height);

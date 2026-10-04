@@ -6,9 +6,9 @@ import com.pebbles_boon.metalrender.util.MetalLogger;
 public final class AdaptiveResolutionController {
     private static final long CHECK_INTERVAL_MS = 400;
     private static final long CHANGE_COOLDOWN_MS = 1500;
-    private static final double DOWN_STEP = 0.85;
+    private static final double DOWN_STEP = 0.90;
     private static final double UP_STEP = 1.12;
-    private static final double MIN_SCALE = 0.70;
+    private static final double MIN_SCALE = 0.85;
     private static final double MAX_SCALE = 1.0;
     private static final double HIGH_WATERMARK_RATIO = 0.80;
     private static final double LOW_WATERMARK_RATIO = 0.62;
