@@ -121,7 +121,11 @@ public final class LodPolicy {
 
         Decision decision = Decision.KEEP;
         if (ringTier < currentTier) {
-            decision = decideUpgrade(state, visible, viewScore);
+            if (ringTier == 0) {
+                decision = Decision.UPGRADE;
+            } else {
+                decision = decideUpgrade(state, visible, viewScore);
+            }
         } else if (ringTier > currentTier) {
             decision = decideDemotion(state, visible, viewScore, demotionIdle);
         }
