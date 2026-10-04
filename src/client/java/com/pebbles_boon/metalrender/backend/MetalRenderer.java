@@ -55,6 +55,11 @@ public final class MetalRenderer {
                     MetalRenderConfig.isMetalFXTemporalEnabled());
     }
 
+    public void invalidate() {
+        handle = 0;
+        available = false;
+    }
+
     private final float[] reusableMatrixArr = new float[16];
 
     public void setProjectionMatrix(Matrix4f proj) {
