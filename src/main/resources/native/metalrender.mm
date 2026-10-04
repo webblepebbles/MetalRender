@@ -2229,8 +2229,8 @@ static void ensure_offscreen() {
     return;
   int w = std::max(1, g_rtWidth);
   int h = std::max(1, g_rtHeight);
-  int lowW = std::max(1, (int)(w * g_scale));
-  int lowH = std::max(1, (int)(h * g_scale));
+  int lowW = std::max(1, (int)(w * g_scale + 0.5f));
+  int lowH = std::max(1, (int)(h * g_scale + 0.5f));
 
   bool recreate = (!g_tbColor[0]) || ((int)g_tbColor[0].width != w) ||
                   ((int)g_tbColor[0].height != h);
@@ -2536,6 +2536,18 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nInit(
   g_mfxTemporalEnabled = (bool)temporalMetalFX;
 #endif
   g_shuttingDown = false;
+  if (g_currentEncoder) {
+    [g_currentEncoder endEncoding];
+    [g_currentEncoder release];
+    g_currentEncoder = nil;
+  }
+  if (g_currentCmdBuffer) {
+    [g_currentCmdBuffer release];
+    g_currentCmdBuffer = nil;
+  }
+  if (!g_frameSemaphore) {
+    g_frameSemaphore = dispatch_semaphore_create(kTripleBufferCount - 1);
+  }
   load_shaders();
   ensure_offscreen();
   return (g_device != nil) ? (jlong)0x1 : (jlong)0;
@@ -2583,7 +2595,25 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nOnWorldLoaded(
 extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nOnWorldUnloaded(
     JNIEnv *, jclass, jlong handle) {
+  (void)handle;
+  if (g_shuttingDown) {
+    return;
+  }
   g_shuttingDown = true;
+  for (int i = 0; i < kTripleBufferCount; i++) {
+    if (g_tbCmdBuf[i]) {
+      [g_tbCmdBuf[i] waitUntilCompleted];
+    }
+  }
+  if (g_currentEncoder) {
+    [g_currentEncoder endEncoding];
+    [g_currentEncoder release];
+    g_currentEncoder = nil;
+  }
+  if (g_currentCmdBuffer) {
+    [g_currentCmdBuffer release];
+    g_currentCmdBuffer = nil;
+  }
   if (g_frameSemaphore) {
     dispatch_semaphore_signal(g_frameSemaphore);
   }
@@ -2591,7 +2621,25 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nOnWorldUnloaded(
 extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDestroy(
     JNIEnv *, jclass, jlong handle) {
+  (void)handle;
+  if (g_shuttingDown) {
+    return;
+  }
   g_shuttingDown = true;
+  for (int i = 0; i < kTripleBufferCount; i++) {
+    if (g_tbCmdBuf[i]) {
+      [g_tbCmdBuf[i] waitUntilCompleted];
+    }
+  }
+  if (g_currentEncoder) {
+    [g_currentEncoder endEncoding];
+    [g_currentEncoder release];
+    g_currentEncoder = nil;
+  }
+  if (g_currentCmdBuffer) {
+    [g_currentCmdBuffer release];
+    g_currentCmdBuffer = nil;
+  }
   if (g_frameSemaphore) {
     dispatch_semaphore_signal(g_frameSemaphore);
   }
@@ -5053,7 +5101,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nEndFrame(
         }
         if (g_mfxTemporalScaler) {
           bool temporalReset = g_mfxReset || !g_hasPreviousViewProjection;
-          if (!temporalReset) {
+          {
             MotionVectorParamsCPU motionParams = {};
             memcpy(motionParams.currentViewProjection, currentViewProjection,
                    sizeof(currentViewProjection));
@@ -6763,10 +6811,18 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nFlushFrames(
       }
     }
 
+    if (g_currentEncoder) {
+      [g_currentEncoder endEncoding];
+      [g_currentEncoder release];
+      g_currentEncoder = nil;
+    }
+    if (g_currentCmdBuffer) {
+      [g_currentCmdBuffer release];
+      g_currentCmdBuffer = nil;
+    }
     if (g_frameSemaphore) {
-      for (int i = 0; i < kTripleBufferCount; i++)
-        dispatch_semaphore_signal(g_frameSemaphore);
       dispatch_release(g_frameSemaphore);
+      g_frameSemaphore = nil;
     }
     g_frameSemaphore = dispatch_semaphore_create(kTripleBufferCount - 1);
     dbg("nFlushFrames: semaphore recreated (count=%d)\n",

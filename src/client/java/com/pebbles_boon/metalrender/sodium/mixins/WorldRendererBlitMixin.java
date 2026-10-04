@@ -32,6 +32,8 @@ public class WorldRendererBlitMixin {
     @Unique
     private boolean metalrender$frameActive;
     @Unique
+    private MetalWorldRenderer metalrender$activeRenderer;
+    @Unique
     private int metalrender$beginFrameCount;
     @Unique
     private int metalrender$endFrameCount;
@@ -44,6 +46,7 @@ public class WorldRendererBlitMixin {
             boolean renderEntityOutline, ChunkSectionsToRender sectionsToRender,
             CallbackInfo ci) {
         metalrender$frameActive = false;
+        metalrender$activeRenderer = null;
         if (!MetalRenderClient.isEnabled()) {
             return;
         }
@@ -90,6 +93,7 @@ public class WorldRendererBlitMixin {
                     metalrender$modelView, camPos.x, camPos.y, camPos.z);
             com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance().startRender();
             metalrender$frameActive = true;
+            metalrender$activeRenderer = worldRenderer;
             metalrender$beginFrameCount++;
             if (metalrender$beginFrameCount <= 3) {
                 MetalLogger.info("[blitmix] begin hook #%d",
@@ -111,7 +115,11 @@ public class WorldRendererBlitMixin {
             return;
         }
         metalrender$frameActive = false;
-        MetalWorldRenderer worldRenderer = MetalRenderClient.getWorldRenderer();
+        MetalWorldRenderer worldRenderer = metalrender$activeRenderer;
+        metalrender$activeRenderer = null;
+        if (worldRenderer == null) {
+            worldRenderer = MetalRenderClient.getWorldRenderer();
+        }
         if (worldRenderer == null) {
             return;
         }
