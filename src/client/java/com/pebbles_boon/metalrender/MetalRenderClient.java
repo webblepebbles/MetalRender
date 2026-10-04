@@ -28,6 +28,8 @@ public class MetalRenderClient implements ClientModInitializer {
     private static boolean levelRendererRefreshPending;
     private static boolean worldRendererRefreshPending;
     private static boolean debugEntryStatusSet;
+    private static final Object toggleLock = new Object();
+    private static volatile boolean syncing;
 
     @Override
     public void onInitializeClient() {
@@ -119,31 +121,64 @@ public class MetalRenderClient implements ClientModInitializer {
     }
 
     public static void syncCfg(Minecraft mc) {
+        if (mc == null || syncing) {
+            return;
+        }
+        synchronized (toggleLock) {
+            syncing = true;
+            try {
+                syncCfgLocked(mc);
+            } finally {
+                syncing = false;
+            }
+        }
+    }
+
+    private static void syncCfgLocked(Minecraft mc) {
         boolean cfgOn = config != null && config.enableMetalRendering;
-        if (cfgOn == cfgWasOn || mc == null) {
+        if (cfgOn == cfgWasOn && (cfgOn || renderer == null)) {
             return;
         }
         cfgWasOn = cfgOn;
 
         if (!cfgOn) {
-            if (worldRenderer != null) {
-                drainRenderer();
-                worldRenderer.onWorldUnload();
+            MetalWorldRenderer wr = worldRenderer;
+            if (wr != null) {
+                try {
+                    drainRenderer();
+                } catch (Throwable ignored) {
+                }
+                try {
+                    wr.onWorldUnload();
+                } catch (Throwable ignored) {
+                }
                 worldRenderer = null;
             }
             if (renderer != null) {
                 long handle = renderer.getHandle();
                 if (handle != 0 && NativeBridge.isLibLoaded()) {
                     try {
+                        NativeBridge.nFlushFrames();
+                        NativeBridge.nWaitForRender(handle);
                         NativeBridge.nFlushDeferredDeletions();
                         NativeBridge.nDestroy(handle);
                     } catch (Throwable t) {
                         MetalLogger.warn("wendewer destroy fail: %s", t.getMessage());
                     }
                 }
+                try {
+                    renderer.invalidate();
+                } catch (Throwable ignored) {
+                }
                 renderer = null;
             }
             metalUp = false;
+            try {
+                if (mc.levelRenderer != null) {
+                    mc.levelRenderer.allChanged();
+                }
+            } catch (Throwable ignored) {
+            }
             return;
         }
 
@@ -154,8 +189,18 @@ public class MetalRenderClient implements ClientModInitializer {
         }
 
         if (worldRenderer != null && mc.level != null) {
-            worldRenderer.onWorldLoad();
-            worldRenderer.onConfigScreenClosed();
+            try {
+                worldRenderer.onWorldLoad();
+                worldRenderer.onConfigScreenClosed();
+            } catch (Throwable t) {
+                MetalLogger.warn("we-enable fail: %s", t.getMessage());
+            }
+            try {
+                if (mc.levelRenderer != null) {
+                    mc.levelRenderer.allChanged();
+                }
+            } catch (Throwable ignored) {
+            }
         }
     }
 
@@ -199,35 +244,50 @@ public class MetalRenderClient implements ClientModInitializer {
     }
 
     private static void initMetal(Minecraft mc) {
-        try {
-            NativeBridge.loadLibrary();
-        } catch (UnsatisfiedLinkError e) {
-            MetalLogger.error("lib load fail.", e);
-            return;
-        }
-
-        try {
-            if (!MetalHardwareChecker.isMetalSupported()) {
-                MetalLogger.warn("no metal");
+        synchronized (toggleLock) {
+            if (renderer != null && renderer.isAvailable()) {
+                return;
+            }
+            try {
+                NativeBridge.loadLibrary();
+            } catch (UnsatisfiedLinkError e) {
+                MetalLogger.error("lib load fail.", e);
                 return;
             }
 
-            renderer = new MetalRenderer();
-            var win = mc.getWindow();
-            int w = win != null ? win.getWidth() : 0;
-            int h = win != null ? win.getHeight() : 0;
-            renderer.init(w, h);
-            metalUp = renderer.isAvailable();
-            if (!metalUp) {
-                return;
-            }
+            try {
+                if (!MetalHardwareChecker.isMetalSupported()) {
+                    MetalLogger.warn("no metal");
+                    return;
+                }
 
-            worldRenderer = new MetalWorldRenderer();
-            logStartDiag(mc);
-            MetalLogger.info("metal weady: " + MetalHardwareChecker.getDeviceName());
-        } catch (Exception e) {
-            MetalLogger.error("init fail", e);
-            metalUp = false;
+                renderer = new MetalRenderer();
+                var win = mc.getWindow();
+                int w = win != null ? win.getWidth() : 0;
+                int h = win != null ? win.getHeight() : 0;
+                renderer.init(w, h);
+                metalUp = renderer.isAvailable();
+                if (!metalUp) {
+                    renderer.invalidate();
+                    renderer = null;
+                    return;
+                }
+
+                worldRenderer = new MetalWorldRenderer();
+                logStartDiag(mc);
+                MetalLogger.info("metal weady: " + MetalHardwareChecker.getDeviceName());
+            } catch (Exception e) {
+                MetalLogger.error("init fail", e);
+                metalUp = false;
+                if (renderer != null) {
+                    try {
+                        renderer.invalidate();
+                    } catch (Throwable ignored) {
+                    }
+                    renderer = null;
+                }
+                worldRenderer = null;
+            }
         }
     }
 
