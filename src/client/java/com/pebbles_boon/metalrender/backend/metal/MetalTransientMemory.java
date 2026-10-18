@@ -8,7 +8,6 @@ import java.util.ArrayList;
 import java.util.List;
 import org.lwjgl.system.MemoryUtil;
 
-/** Per-frame scratch memory. Metal shared buffers are CPU- and GPU-visible, so every kind of allocation comes from one ring. */
 final class MetalTransientMemory implements TransientMemory {
     private static final int ALL_USAGE = GpuBuffer.USAGE_COPY_DST | GpuBuffer.USAGE_COPY_SRC
             | GpuBuffer.USAGE_VERTEX | GpuBuffer.USAGE_INDEX | GpuBuffer.USAGE_UNIFORM

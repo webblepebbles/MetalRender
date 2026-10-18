@@ -28,7 +28,6 @@ public final class MetalBuffer extends GpuBuffer {
         }
     }
 
-    /** Non-owning view over a block of the transient staging ring. */
     MetalBuffer(MetalDeviceBackend device, long handle, long contents, long size, int usage) {
         super(usage, size);
         this.device = device;
