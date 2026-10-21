@@ -1,5 +1,5 @@
 plugins {
-    id 'net.fabricmc.fabric-loom' version '1.19.1'
+    id 'net.fabricmc.fabric-loom' version '1.19.1' // git testing testing
     id 'maven-publish'
 }
 
