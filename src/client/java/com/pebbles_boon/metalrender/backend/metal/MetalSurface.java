@@ -13,7 +13,7 @@ final class MetalSurface {
     private int height;
     private boolean vsync;
     static final boolean UNCAPPED =
-            com.pebbles_boon.metalrender.config.MetalRenderConfig.getBool("metalrender.uncapped", true);
+            com.pebbles_boon.metalrender.config.MetalRenderConfig.getBool("metalrender.uncapped", false);
 
     MetalSurface(long window, boolean vsync) {
         vsync = vsync && !UNCAPPED;

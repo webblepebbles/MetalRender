@@ -162,7 +162,7 @@ public class MinecraftClientMixin {
 
     @org.spongepowered.asm.mixin.Unique
     private static final boolean UNCAPPED = com.pebbles_boon.metalrender.config.MetalRenderConfig
-            .getBool("metalrender.uncapped", true);
+            .getBool("metalrender.uncapped", false);
 
     @org.spongepowered.asm.mixin.Unique
     private static final boolean PRECISE_LIMITER = com.pebbles_boon.metalrender.config.MetalRenderConfig
