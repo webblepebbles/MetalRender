@@ -219,7 +219,7 @@ fragment float4 gui_fragment(VOut in [[stage_in]],
     float2 refractedUv = in.uv1 + normal * texel * rim * 0.8;
     float3 scene = tex0.sample(s0, refractedUv).rgb;
     if (pane) {
-      float3 body = mix(scene, float3(0.10, 0.13, 0.17), 0.14);
+      float3 body = mix(scene, float3(0.10, 0.13, 0.17), 0.22);
       body += rim * (0.12 + 0.25 * max(light, 0.0));
       body -= inner * max(-light, 0.0) * 0.05;
       return float4(body, coverage);

@@ -5,7 +5,7 @@ public enum UiTheme {
             "Liquid Glass",
             0x2E0A0E16, 0x2E141C2A,
             0x1E000000,
-            0x70303A46, 0x40FFFFFF, 0x48FFFFFF, 0x18FFFFFF,
+            0x98303A46, 0x40FFFFFF, 0x48FFFFFF, 0x18FFFFFF,
             0x0016161B, 0x001E1E26,
             0x201E242E, 0xB0FFFFFF, 0x243E5268,
             0x30303C49, 0x484A5A6B, 0x25FFFFFF,
