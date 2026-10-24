@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.pebbles_boon.metalrender"
-version = "v2.0.2.1"
+version = "v2.0.3"
 
 java {
     toolchain.languageVersion = JavaLanguageVersion.of(25)
