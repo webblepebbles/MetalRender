@@ -64,7 +64,7 @@ public class CustomChunkMesher {
     private static final int MAX_QUADS = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE * 6;
     private static final int VERTEX_BUF_SIZE = MAX_QUADS * 4 * VERTEX_STRIDE;
     private static final byte WATER_ALPHA = (byte) 168;
-    private static final float FLUID_EPSILON = 0.001f;
+    private static final float FLUID_EPSILON = 1.0f / 128.0f;
     private static final float GRASS_OVERLAY_OFFSET = 1.0f / 256.0f;
     private static final int UPLOAD_PARALLELISM = Math.min(6,
             Math.max(3, Runtime.getRuntime().availableProcessors() / 2));
@@ -3765,10 +3765,13 @@ public class CustomChunkMesher {
                 return;
             }
 
+            BlockState self = getPaddedBlockState(lx, ly, lz);
             BlockState above = getPaddedBlockState(lx, ly + 1, lz);
-            boolean upVisible = above == null || above.getFluidState().isEmpty();
+            boolean upVisible = above == null || !fluid.getType().isSame(above.getFluidState().getType());
             BlockState below = getPaddedBlockState(lx, ly - 1, lz);
-            boolean downVisible = below == null || below.getFluidState().isEmpty();
+            boolean downVisible = net.minecraft.client.renderer.block.FluidRenderer.shouldRenderFace(
+                    fluid, self, Direction.DOWN, below != null ? below.getFluidState()
+                            : net.minecraft.world.level.material.Fluids.EMPTY.defaultFluidState());
 
             float[] cornerHeights = this.cornerHeights;
             cornerHeights[0] = sampleFluidCornerHeight(lx, ly, lz, 0, 0, isLava);
@@ -3789,7 +3792,9 @@ public class CustomChunkMesher {
             byte b = (byte) (fluidColor & 0xFF);
             byte a = isLava ? (byte) 0xFF : WATER_ALPHA;
 
-            if (upVisible) {
+            float minHeight = Math.min(Math.min(cornerHeights[0], cornerHeights[1]),
+                    Math.min(cornerHeights[2], cornerHeights[3]));
+            if (upVisible && !fluidFaceOccluded(above, Direction.UP, minHeight)) {
                 float flowAngle = computeFluidFlowAngle(fluid, pos);
                 float h = cornerHeights[0];
                 if (arenaWater && MERGE_FLUID_TOPS && Float.isNaN(flowAngle) && h > 0.0f
@@ -3804,19 +3809,41 @@ public class CustomChunkMesher {
                 if (dir.getAxis() == Direction.Axis.Y)
                     continue;
                 BlockState neighbor = getPaddedBlockState(lx + dir.getStepX(), ly, lz + dir.getStepZ());
-                if (neighbor != null && !neighbor.getFluidState().isEmpty())
+                if (!net.minecraft.client.renderer.block.FluidRenderer.shouldRenderFace(fluid, self, dir,
+                        neighbor != null ? neighbor.getFluidState()
+                                : net.minecraft.world.level.material.Fluids.EMPTY.defaultFluidState()))
                     continue;
-                if (neighbor != null && neighbor.isSolidRender())
+                float sideHeight = switch (dir) {
+                    case NORTH -> Math.max(cornerHeights[0], cornerHeights[1]);
+                    case SOUTH -> Math.max(cornerHeights[3], cornerHeights[2]);
+                    case WEST -> Math.max(cornerHeights[0], cornerHeights[3]);
+                    default -> Math.max(cornerHeights[1], cornerHeights[2]);
+                };
+                if (fluidFaceOccluded(neighbor, dir, sideHeight))
                     continue;
                 renderFluidSide(lx, ly, lz, dir, cornerHeights, r, g, b, a, light, isLava);
             }
 
             if (downVisible && lodTier < 2) {
                 BlockState downState = getPaddedBlockState(lx, ly - 1, lz);
-                if (downState == null || !downState.isSolidRender()) {
+                if (!fluidFaceOccluded(downState, Direction.DOWN, fluid.getOwnHeight())) {
                     renderFluidBottom(lx, ly, lz, r, g, b, a, light, isLava);
                 }
             }
+        }
+
+        private boolean fluidFaceOccluded(BlockState state, Direction direction, float height) {
+            if (state == null) {
+                return false;
+            }
+            net.minecraft.world.phys.shapes.VoxelShape shape = state.getFaceOcclusionShape(
+                    direction.getOpposite());
+            if (shape.isEmpty()) {
+                return false;
+            }
+            return net.minecraft.world.phys.shapes.Shapes.blockOccludes(
+                    net.minecraft.world.phys.shapes.Shapes.box(0.0, 0.0, 0.0, 1.0, height, 1.0),
+                    shape, direction);
         }
 
         private void deferFluidTop(int lx, int ly, int lz, float h, int rgb, byte light, boolean lava) {
@@ -3872,7 +3899,7 @@ public class CustomChunkMesher {
                         short px1 = (short) ((x + w) * 256);
                         short pz0 = (short) (z * 256);
                         short pz1 = (short) ((z + d) * 256);
-                        short py = (short) (y * 256 + hq * 2);
+                        short py = (short) (y * 256 + hq * 2 - Math.round(FLUID_EPSILON * 256.0f));
                         TextureAtlasSprite sprite = lava ? context.lavaStillSprite : context.waterStillSprite;
                         short u0 = mapFluidU(sprite, 0.0f);
                         short u1 = mapFluidU(sprite, 1.0f);
@@ -3990,10 +4017,10 @@ public class CustomChunkMesher {
             if (minH <= 0.0f)
                 return;
 
-            float y0 = ly + h0;
-            float y1 = ly + h1;
-            float y2 = ly + h2;
-            float y3 = ly + h3;
+            float y0 = ly + h0 - FLUID_EPSILON;
+            float y1 = ly + h1 - FLUID_EPSILON;
+            float y2 = ly + h2 - FLUID_EPSILON;
+            float y3 = ly + h3 - FLUID_EPSILON;
 
             short px0 = (short) (lx * 256.0f);
             short pz0 = (short) (lz * 256.0f);
@@ -4080,7 +4107,7 @@ public class CustomChunkMesher {
                     x0 = (short) ((lx + FLUID_EPSILON) * 256.0f);
                     z0 = (short) (lz * 256.0f);
                     x1 = (short) ((lx + FLUID_EPSILON) * 256.0f);
-                    z1 = (short) ((lz + 1 - FLUID_EPSILON) * 256.0f);
+                    z1 = (short) ((lz + 1) * 256.0f);
                     break;
                 case EAST:
                     h0 = heights[1];
@@ -4088,7 +4115,7 @@ public class CustomChunkMesher {
                     x0 = (short) ((lx + 1 - FLUID_EPSILON) * 256.0f);
                     z0 = (short) (lz * 256.0f);
                     x1 = (short) ((lx + 1 - FLUID_EPSILON) * 256.0f);
-                    z1 = (short) ((lz + 1 - FLUID_EPSILON) * 256.0f);
+                    z1 = (short) ((lz + 1) * 256.0f);
                     break;
                 default:
                     return;
@@ -4118,7 +4145,7 @@ public class CustomChunkMesher {
             short pz0 = (short) (lz * 256.0f);
             short px1 = (short) ((lx + 1) * 256.0f);
             short pz1 = (short) ((lz + 1) * 256.0f);
-            short py = (short) (ly * 256.0f);
+            short py = (short) ((ly + FLUID_EPSILON) * 256.0f);
 
             TextureAtlasSprite bottomSprite = lava ? context.lavaStillSprite : context.waterStillSprite;
             short u0 = mapFluidU(bottomSprite, 0.0f);
@@ -4206,9 +4233,10 @@ public class CustomChunkMesher {
                 float u = Float.intBitsToFloat((int) (packedUV >> 32));
                 float v = Float.intBitsToFloat((int) packedUV);
 
-                short px = (short) (x * 256.0f);
-                short py = (short) (y * 256.0f);
-                short pz = (short) (z * 256.0f);
+                boolean fire = state.getBlock() instanceof net.minecraft.world.level.block.BaseFireBlock;
+                short px = fire ? packFireCoordinate(pos.x(), lx) : (short) (x * 256.0f);
+                short py = fire ? packFireCoordinate(pos.y(), ly) : (short) (y * 256.0f);
+                short pz = fire ? packFireCoordinate(pos.z(), lz) : (short) (z * 256.0f);
                 short su = (short) (u * 65535f);
                 short sv = (short) (v * 65535f);
 
@@ -4251,6 +4279,15 @@ public class CustomChunkMesher {
             } else {
                 opaqueQuadCount++;
             }
+        }
+
+        private short packFireCoordinate(float position, int blockOffset) {
+            int packed = Math.round(position * 256.0f);
+            int boundary = Math.round(position);
+            if (position != boundary && packed == boundary * 256) {
+                packed += position > boundary ? 1 : -1;
+            }
+            return (short) (blockOffset * 256 + packed);
         }
 
         private byte computeFaceLightFast(int lx, int ly, int lz, Direction face, int emission) {
