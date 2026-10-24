@@ -75,6 +75,22 @@ public class WorldRendererTerrainMixin {
         sections.renderGroup(group, pass, sampler, view, wireframe);
     }
 
+    @Redirect(method = {"prepareChunkRenders", "prepareChunkRendersIndirect"}, at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/LevelRenderer;extractSectionDrawGroups(ZLjava/util/List;Ljava/util/Map;)I"),
+            require = 0)
+    private int metalrender$skipSectionDrawGroups(net.minecraft.client.renderer.LevelRenderer self, boolean flag,
+            java.util.List infos, java.util.Map groups) {
+        if (metalrender$shouldSkipVanillaTerrain()) {
+            return 0;
+        }
+        return extractSectionDrawGroups(flag, infos, groups);
+    }
+
+    @org.spongepowered.asm.mixin.Shadow
+    private int extractSectionDrawGroups(boolean flag, java.util.List infos, java.util.Map groups) {
+        throw new AssertionError();
+    }
+
     @Inject(method = "lambda$addMainPass$0", at = @At("HEAD"), cancellable = true, require = 0)
     private void metalrender$terrainHookHeartbeat(CallbackInfo ci) {
         if (MetalRenderClient.isBackendMode() || !metalrender$shouldSkipVanillaTerrain()) {
