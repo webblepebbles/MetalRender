@@ -303,8 +303,7 @@ void mesh_terrain(
             pl = uint(v.packedLight);
         }
         float3 worldPos = localPos + chunkOrig;
-        float4 viewPos  = camera.modelView * float4(worldPos, 1.0);
-        out.position = camera.projection * viewPos;
+        out.position = camera.viewProjection * float4(worldPos, 1.0);
         out.texCoord = uv;
         out.color    = half4(col);
         out.lightUV  = half2((float((pl & 0xFu) * 16) + 8.0) / 256.0,

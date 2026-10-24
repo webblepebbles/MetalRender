@@ -1,5 +1,5 @@
 #include <metal_stdlib>
-#include "terrain_decode.h"
+#include "terrain_cull.h"
 using namespace metal;
 struct CameraUniforms {
     float4x4 viewProjection;
@@ -134,67 +134,6 @@ kernel void reset_cull_stats(
     atomic_store_explicit(&stats->totalProcessed, 0, memory_order_relaxed);
 }
 
-struct TerrainCullFrame {
-    int4   camBlock;
-    float4 camFrac;
-    float4 planes[4];
-    float  viewDist;
-    uint   sectionCount;
-    uint   listCapacity;
-    uint   pad;
-    float4x4 prevViewProj;
-    float4 prevOffset;
-    uint2  hizSize;
-    uint   hizMips;
-    uint   hizFlags;
-};
-
-inline bool terr_hiz_occluded(constant TerrainCullFrame& f, texture2d<float> hiz, float3 lo, float3 hi) {
-    if ((f.hizFlags & 1u) == 0u) {
-        return false;
-    }
-    bool rev = (f.hizFlags & 2u) != 0u;
-    float2 nmin = float2(1e9f);
-    float2 nmax = float2(-1e9f);
-    float nearest = rev ? 0.0f : 1.0f;
-    for (uint i = 0u; i < 8u; i++) {
-        float3 c = float3((i & 1u) ? hi.x : lo.x, (i & 2u) ? hi.y : lo.y, (i & 4u) ? hi.z : lo.z);
-        float4 clip = f.prevViewProj * float4(c + f.prevOffset.xyz, 1.0f);
-        if (clip.w <= 0.05f) {
-            return false;
-        }
-        float3 ndc = clip.xyz / clip.w;
-        nmin = min(nmin, ndc.xy);
-        nmax = max(nmax, ndc.xy);
-        nearest = rev ? max(nearest, ndc.z) : min(nearest, ndc.z);
-    }
-    nmin = max(nmin, float2(-1.0f));
-    nmax = min(nmax, float2(1.0f));
-    if (any(nmin > nmax)) {
-        return false;
-    }
-    float2 full = float2(f.hizSize);
-    float2 pmin = float2(nmin.x * 0.5f + 0.5f, 0.5f - nmax.y * 0.5f) * full;
-    float2 pmax = float2(nmax.x * 0.5f + 0.5f, 0.5f - nmin.y * 0.5f) * full;
-    float extent = max(max(pmax.x - pmin.x, pmax.y - pmin.y), 1.0f);
-    uint level = uint(max(ceil(log2(extent)) - 1.0f, 0.0f));
-    level = min(level, f.hizMips - 1u);
-    float scale = exp2(-(float(level) + 1.0f));
-    int2 lim = int2(int(hiz.get_width(level)) - 1, int(hiz.get_height(level)) - 1);
-    int2 a = clamp(int2(floor(pmin * scale)), int2(0), lim);
-    int2 b = clamp(int2(floor(pmax * scale)), int2(0), lim);
-    if (b.x - a.x > 1 || b.y - a.y > 1) {
-        return false;
-    }
-    float far0 = hiz.read(uint2(a), level).r;
-    float far1 = hiz.read(uint2(b.x, a.y), level).r;
-    float far2 = hiz.read(uint2(a.x, b.y), level).r;
-    float far3 = hiz.read(uint2(b), level).r;
-    if (rev) {
-        return nearest < min(min(far0, far1), min(far2, far3));
-    }
-    return nearest > max(max(far0, far1), max(far2, far3));
-}
 
 inline uint2 terr_hiz_span(uint d, uint dn, uint sn) {
     uint s0 = min(d * 2u, sn - 1u);
@@ -248,58 +187,15 @@ kernel void terrain_hiz_downsample(
     dst.write(float4(r), gid);
 }
 
-inline bool terr_box_visible(constant TerrainCullFrame& f, float3 lo, float3 hi) {
-    for (uint i = 0u; i < 4u; i++) {
-        float4 pl = f.planes[i];
-        float3 pv = float3(pl.x > 0.0f ? hi.x : lo.x, pl.y > 0.0f ? hi.y : lo.y, pl.z > 0.0f ? hi.z : lo.z);
-        if (dot(pl.xyz, pv) + pl.w < -0.5f) {
-            return false;
-        }
-    }
-    return true;
-}
-
-inline bool terr_unit_facing(UnitRecord unit, float3 cam, constant TerrainCullFrame& f) {
-    uint bucket = (unit.meta >> 5) & 7u;
-    if ((f.pad & 1u) != 0u && bucket < 6u) {
-        float plane = float(unit.plane) / 256.0f;
-        uint axis = bucket >> 1;
-        float c = axis == 0u ? cam.y : (axis == 1u ? cam.z : cam.x);
-        if ((bucket & 1u) != 0u) {
-            if (!(c > plane - 1.0f / 64.0f)) {
-                return false;
-            }
-        } else {
-            if (!(c < plane + 1.0f / 64.0f)) {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
-inline bool terr_unit_box_keep(UnitRecord unit, float3 rel, constant TerrainCullFrame& f,
-                               texture2d<float> hiz) {
-    uint b = unit.box;
-    float3 lo = float3(float(b & 31u), float((b >> 5) & 31u), float((b >> 10) & 31u)) - 8.0f;
-    float3 hi = float3(float((b >> 15) & 31u), float((b >> 20) & 31u), float((b >> 25) & 31u)) - 8.0f;
-    return terr_box_visible(f, rel + lo, rel + hi) && !terr_hiz_occluded(f, hiz, rel + lo, rel + hi);
-}
-
-inline bool terr_unit_keep(UnitRecord unit, float3 cam, float3 rel, constant TerrainCullFrame& f,
-                           texture2d<float> hiz) {
-    return terr_unit_facing(unit, cam, f) && terr_unit_box_keep(unit, rel, f, hiz);
-}
-
-constant uint kTerrClassVerts[4] = {24u, 48u, 96u, 192u};
-constant uint kTerrLists = 24u;
+constant uint kTerrClassVerts[6] = {12u, 24u, 48u, 72u, 120u, 192u};
+constant uint kTerrLists = 36u;
 
 inline uint terr_list_index(uint meta) {
     uint layer = (meta >> 10) & 3u;
     uint tiled = (meta >> 12) & 1u;
     uint n = (meta & 31u) + 1u;
-    uint cls = n <= 4u ? 0u : (n <= 8u ? 1u : (n <= 16u ? 2u : 3u));
-    return layer < 3u ? (tiled * 3u + layer) * 4u + cls : kTerrLists;
+    uint cls = n <= 2u ? 0u : (n <= 4u ? 1u : (n <= 8u ? 2u : (n <= 12u ? 3u : (n <= 20u ? 4u : 5u))));
+    return layer < 3u ? (tiled * 3u + layer) * 6u + cls : kTerrLists;
 }
 
 kernel void terrain_cull_reset(
@@ -311,7 +207,7 @@ kernel void terrain_cull_reset(
         return;
     }
     for (uint i = 0u; i < kTerrLists; i++) {
-        atomic_store_explicit(&args[i * 5u + 0u], kTerrClassVerts[i & 3u], memory_order_relaxed);
+        atomic_store_explicit(&args[i * 5u + 0u], kTerrClassVerts[i % 6u], memory_order_relaxed);
         atomic_store_explicit(&args[i * 5u + 1u], 0u, memory_order_relaxed);
         atomic_store_explicit(&args[i * 5u + 2u], 0u, memory_order_relaxed);
         atomic_store_explicit(&args[i * 5u + 3u], 0u, memory_order_relaxed);
@@ -389,10 +285,17 @@ kernel void terrain_cull(
                 }
             }
         }
-        uint present = simd_or(keep ? (1u << li) : 0u);
-        while (present != 0u) {
-            uint i = ctz(present);
-            present &= present - 1u;
+        uint presentLo = simd_or(keep && li < 32u ? (1u << li) : 0u);
+        uint presentHi = simd_or(keep && li >= 32u ? (1u << (li - 32u)) : 0u);
+        while ((presentLo | presentHi) != 0u) {
+            uint i;
+            if (presentLo != 0u) {
+                i = ctz(presentLo);
+                presentLo &= presentLo - 1u;
+            } else {
+                i = 32u + ctz(presentHi);
+                presentHi &= presentHi - 1u;
+            }
             bool mine = keep && li == i;
             uint total = simd_sum(mine ? 1u : 0u);
             uint prefix = simd_prefix_exclusive_sum(mine ? 1u : 0u);
@@ -402,7 +305,11 @@ kernel void terrain_cull(
             }
             b = simd_broadcast_first(b);
             if (mine && b + prefix < f.listCapacity) {
-                lists[i * f.listCapacity + b + prefix] = uint2(sec.firstUnit + u, section);
+                uint packed = (unit.meta & 31u) | (((unit.meta >> 8) & 3u) << 5)
+                              | ((uint((sec.x >> 4) - (f.camBlock.x >> 4)) & 255u) << 7)
+                              | ((uint((sec.y >> 4) - (f.camBlock.y >> 4)) & 255u) << 15)
+                              | ((uint((sec.z >> 4) - (f.camBlock.z >> 4)) & 255u) << 23);
+                lists[i * f.listCapacity + b + prefix] = uint2(unit.firstQuad, packed);
             }
         }
     }
@@ -431,11 +338,16 @@ kernel void terrain_cull(
 kernel void terrain_cull_finish(
     device atomic_uint* args [[buffer(0)]],
     constant TerrainCullFrame& f [[buffer(1)]],
+    device uint* meshArgs [[buffer(2)]],
     uint tid [[thread_position_in_grid]]
 ) {
     if (tid >= kTerrLists) {
         return;
     }
-    uint count = atomic_load_explicit(&args[tid * 5u + 1u], memory_order_relaxed);
-    atomic_store_explicit(&args[tid * 5u + 1u], min(count, f.listCapacity), memory_order_relaxed);
+    uint count = min(atomic_load_explicit(&args[tid * 5u + 1u], memory_order_relaxed), f.listCapacity);
+    atomic_store_explicit(&args[tid * 5u + 1u], count, memory_order_relaxed);
+    uint per = 32u / (kTerrClassVerts[tid % 6u] / 6u);
+    meshArgs[tid * 3u + 0u] = (count + per - 1u) / per;
+    meshArgs[tid * 3u + 1u] = 1u;
+    meshArgs[tid * 3u + 2u] = 1u;
 }
