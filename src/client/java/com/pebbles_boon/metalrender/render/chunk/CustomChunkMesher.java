@@ -3771,22 +3771,10 @@ public class CustomChunkMesher {
             boolean downVisible = below == null || below.getFluidState().isEmpty();
 
             float[] cornerHeights = this.cornerHeights;
-            float fluidHeight = sampleFluidHeight(lx, ly, lz, isLava);
-
-            if (lodTier >= 1 || fluidHeight >= 1.0f) {
-                if (fluidHeight <= 0.0f) {
-                    fluidHeight = fluid.getOwnHeight();
-                }
-                cornerHeights[0] = fluidHeight;
-                cornerHeights[1] = fluidHeight;
-                cornerHeights[2] = fluidHeight;
-                cornerHeights[3] = fluidHeight;
-            } else {
-                cornerHeights[0] = sampleFluidCornerHeight(lx, ly, lz, 0, 0, isLava);
-                cornerHeights[1] = sampleFluidCornerHeight(lx, ly, lz, 1, 0, isLava);
-                cornerHeights[2] = sampleFluidCornerHeight(lx, ly, lz, 1, 1, isLava);
-                cornerHeights[3] = sampleFluidCornerHeight(lx, ly, lz, 0, 1, isLava);
-            }
+            cornerHeights[0] = sampleFluidCornerHeight(lx, ly, lz, 0, 0, isLava);
+            cornerHeights[1] = sampleFluidCornerHeight(lx, ly, lz, 1, 0, isLava);
+            cornerHeights[2] = sampleFluidCornerHeight(lx, ly, lz, 1, 1, isLava);
+            cornerHeights[3] = sampleFluidCornerHeight(lx, ly, lz, 0, 1, isLava);
 
             if (arenaWater) {
                 for (int i = 0; i < 4; i++) {
