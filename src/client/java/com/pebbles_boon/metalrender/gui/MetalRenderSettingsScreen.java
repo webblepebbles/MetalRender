@@ -644,7 +644,7 @@ public class MetalRenderSettingsScreen extends Screen {
             maxTitleW = Math.max(40, pw - (tx - px) - 18 - dotsW);
         }
         String title = "MetalRender";
-        String version = "Settings  \u2022  v2.0.2.1"; //bro i forgot to change this for two whole versions :<
+        String version = "Settings  \u2022  v2.0.3"; 
         int titleW = font.width(title);
         int versionW = font.width(version);
         if (titleW + 6 + versionW > maxTitleW) {
