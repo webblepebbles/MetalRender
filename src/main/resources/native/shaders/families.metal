@@ -819,9 +819,6 @@ vertex WOut entity_vertex(VIn in [[stage_in]],
   WOut o = mr_wout();
   float3 p = mr_position(in);
   float4 viewPosition = mr_mat4(dt.ModelViewMat) * float4(p, 1.0);
-  if (VS_VARIANT == MR_VS_ENTITY_SHADOW) {
-    viewPosition.xyz *= 1.2;
-  }
   float4 glPosition = mr_mat4(proj.ProjMat) * viewPosition;
   o.position = mr_clip(glPosition);
   o.sphericalDistance = mr_fog_spherical(p);
