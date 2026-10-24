@@ -423,7 +423,7 @@ public class CustomChunkMesher {
             boolean gpuCull = MetalRenderConfig.getBool("metalrender.gpuCull", true);
             boolean oracle = MetalRenderConfig.getBool("metalrender.cullOracle", false);
             arenaReady = NativeBridge.nArenaConfigure(renderDistanceChunks, capMb, gpuCull, oracle);
-            NativeBridge.nSetArenaHizCull(MetalRenderConfig.getBool("metalrender.hizCull", false));
+            NativeBridge.nSetArenaHizCull(MetalRenderConfig.getBool("metalrender.hizCull", true));
             MetalLogger.info("terrain arena %s (cap %d MB, gpuCull=%s, oracle=%s)", arenaReady ? "ready" : "unavailable",
                     capMb, gpuCull, oracle);
         } catch (Throwable t) {
@@ -3572,6 +3572,16 @@ public class CustomChunkMesher {
                     Float.compare(sprite.getV1(), overlay.getV1()) == 0;
         }
 
+        private static boolean isFarDetail(BlockState state) {
+            net.minecraft.world.level.block.Block b = state.getBlock();
+            return b instanceof net.minecraft.world.level.block.SeagrassBlock
+                    || b instanceof net.minecraft.world.level.block.TallSeagrassBlock
+                    || b instanceof net.minecraft.world.level.block.FlowerBedBlock
+                    || b instanceof net.minecraft.world.level.block.LeafLitterBlock
+                    || b instanceof net.minecraft.world.level.block.MangrovePropaguleBlock
+                    || b instanceof net.minecraft.world.level.block.SeaPickleBlock;
+        }
+
         private boolean isCrossLike(BlockState state, BlockStateModel model, RandomSource random,
                 BlockPos pos) {
             if (state.isAir() || state.isSolidRender()) {
@@ -3651,7 +3661,10 @@ public class CustomChunkMesher {
                 blockEmitsLight = false;
             }
             boolean crossLike = isCrossLike(state, model, random, pos);
-            if (lodTier >= 2 && crossLike) {
+            if (lodTier >= 2 && (crossLike || isFarDetail(state))) {
+                return;
+            }
+            if (lodTier >= 1 && state.getBlock() instanceof net.minecraft.world.level.block.VineBlock) {
                 return;
             }
             try {
@@ -3683,7 +3696,7 @@ public class CustomChunkMesher {
                             continue;
                         for (BakedQuad quad : quads) {
                             if (quad != null) {
-                                emitBakedQuad(quad, lx, ly, lz, state, false, forceFlat, crossLike);
+                                emitBakedQuad(quad, lx, ly, lz, state, false, forceFlat, crossLike, false);
                             }
                         }
                     }
@@ -3692,7 +3705,7 @@ public class CustomChunkMesher {
                         if (noCull != null) {
                             for (BakedQuad quad : noCull) {
                                 if (quad != null) {
-                                    emitBakedQuad(quad, lx, ly, lz, state, false, true, crossLike);
+                                    emitBakedQuad(quad, lx, ly, lz, state, false, true, crossLike, !partAO);
                                 }
                             }
                         }
@@ -4134,16 +4147,18 @@ public class CustomChunkMesher {
         }
 
         private void emitBakedQuad(BakedQuad quad, int lx, int ly, int lz,
-                BlockState state, boolean water, boolean forceFlat, boolean crossLike) {
+                BlockState state, boolean water, boolean forceFlat, boolean crossLike, boolean ownLight) {
             boolean keepDetail = !water && !crossLike && !state.isSolidRender();
             detailOverride = keepDetail;
             GrowableStagingBuffer target = water ? waterBuffer : solidBuffer;
             Direction face = quad.direction();
             byte normalIndex = (byte) (face != null && state.isSolidRender()
                     ? face.get3DDataValue() : 6);
-            float shade = !crossLike && face != null
-                    && face.get3DDataValue() < context.faceShade.length
-                            ? context.faceShade[face.get3DDataValue()]
+            Direction shadeFace = quad.materialInfo().shadeDirectionOverride() != null
+                    ? quad.materialInfo().shadeDirectionOverride() : face;
+            float shade = !crossLike && shadeFace != null
+                    && shadeFace.get3DDataValue() < context.faceShade.length
+                            ? context.faceShade[shadeFace.get3DDataValue()]
                             : 1.0f;
 
             boolean isLeaves = state.getBlock() instanceof LeavesBlock;
@@ -4211,7 +4226,7 @@ public class CustomChunkMesher {
 
                 byte light;
                 float ao;
-                if (crossLike) {
+                if (crossLike || ownLight) {
                     light = getPaddedLight(lx, ly, lz);
                     int bl = Math.max(light & 0xF, Math.min(15, quad.materialInfo().lightEmission()));
                     light = (byte) ((light & 0xF0) | bl);
