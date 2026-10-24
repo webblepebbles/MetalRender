@@ -49,6 +49,23 @@ public class EntityRenderMixin {
     @Unique
     private final Matrix4f metalrender$reusableModelMatrix = new Matrix4f();
 
+    @Unique
+    private static final it.unimi.dsi.fastutil.objects.ObjectArrayList<?> metalrender$noSections =
+            new it.unimi.dsi.fastutil.objects.ObjectArrayList<>();
+
+    @org.spongepowered.asm.mixin.injection.Redirect(method = "extract", at = @At(value = "INVOKE",
+            target = "Lnet/minecraft/client/renderer/LevelRenderer;visibleSections()Lit/unimi/dsi/fastutil/objects/ObjectArrayList;"),
+            require = 0)
+    private it.unimi.dsi.fastutil.objects.ObjectArrayList metalrender$skipSectionUpdates(
+            net.minecraft.client.renderer.LevelRenderer levelRenderer) {
+        MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
+        if (MetalRenderClient.isEnabled() && wr != null && wr.metalActive()
+                && MetalRenderConfig.getBool("metalrender.cancelVanillaCompile", true)) {
+            return metalrender$noSections;
+        }
+        return levelRenderer.visibleSections();
+    }
+
     @Inject(method = "extractVisibleEntities", at = @At("TAIL"), require = 0)
     private void metalrender$captureEntities(Camera camera, Frustum frustum,
             DeltaTracker deltaTracker,
