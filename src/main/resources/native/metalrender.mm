@@ -7542,6 +7542,7 @@ struct ArenaFrameBufs {
   uint32_t listCap = 0;
   int32_t camBlock[4] = {0, 0, 0, 0};
   float camFrac[4] = {0, 0, 0, 0};
+  bool meshPath = false;
   bool valid = false;
 };
 
@@ -7561,7 +7562,7 @@ static id<MTLBuffer> g_arenaArgs[2] = {nil, nil};
 static id<MTLBuffer> g_arenaQuadIdx = nil;
 static id<MTLBuffer> g_arenaStats[2] = {nil, nil};
 static uint32_t g_arenaListCap = 0;
-static const int kArenaLists = 24;
+static const int kArenaLists = 36;
 static ArenaRangeAlloc g_arenaKiB;
 static ArenaRangeAlloc g_arenaUnits;
 static std::vector<uint32_t> g_arenaSlotFree;
@@ -7584,6 +7585,10 @@ static id<MTLRenderPipelineState> g_pipelineArena = nil;
 static id<MTLRenderPipelineState> g_pipelineArenaSolid = nil;
 static id<MTLRenderPipelineState> g_pipelineArenaSlim[3] = {nil, nil, nil};
 static id<MTLRenderPipelineState> g_pipelineArenaWater = nil;
+static id<MTLRenderPipelineState> g_pipelineArenaMesh[4] = {nil, nil, nil, nil};
+static id<MTLBuffer> g_arenaMeshArgs[2] = {nil, nil};
+static id<MTLBuffer> g_arenaSecSnap[2] = {nil, nil};
+static bool g_arenaMeshEnabled = true;
 static int g_arenaWaterSlot = -1;
 static id<MTLComputePipelineState> g_arenaCullReset = nil;
 static id<MTLComputePipelineState> g_arenaCullMain = nil;
@@ -7615,12 +7620,13 @@ static bool mr_arena_alloc_buffers_locked() {
                                         options:MTLResourceStorageModeShared];
   g_arenaUnitBuf = [g_device newBufferWithLength:(NSUInteger)unitCap * sizeof(ArenaUnitRecord)
                                          options:MTLResourceStorageModeShared];
-  g_arenaListCap = std::min<uint32_t>(unitCap, 262144u);
+  g_arenaListCap = std::min<uint32_t>(unitCap, 174080u);
   for (int i = 0; i < 2; i++) {
     g_arenaLists[i] = [g_device newBufferWithLength:(NSUInteger)g_arenaListCap * 8 * kArenaLists
                                             options:MTLResourceStorageModeShared];
-    g_arenaArgs[i] = [g_device newBufferWithLength:512 options:MTLResourceStorageModeShared];
+    g_arenaArgs[i] = [g_device newBufferWithLength:1024 options:MTLResourceStorageModeShared];
     g_arenaStats[i] = [g_device newBufferWithLength:32 options:MTLResourceStorageModeShared];
+    g_arenaMeshArgs[i] = [g_device newBufferWithLength:kArenaLists * 12 options:MTLResourceStorageModePrivate];
   }
   if (!g_arenaBuf || !g_arenaSecBuf || !g_arenaUnitBuf || !g_arenaLists[0] || !g_arenaLists[1] || !g_arenaArgs[0] ||
       !g_arenaArgs[1] || !g_arenaStats[0] || !g_arenaStats[1])
@@ -7920,6 +7926,35 @@ static bool mr_arena_ensure_pipelines() {
     fbd.storageMode = MTLStorageModePrivate;
     g_arenaHizFallback = [g_device newTextureWithDescriptor:fbd];
   }
+  if (@available(macOS 13.0, *)) {
+    if ([g_device supportsFamily:MTLGPUFamilyApple7] || [g_device supportsFamily:MTLGPUFamilyMac2]) {
+      id<MTLFunction> mfull = [g_shaderLibrary newFunctionWithName:@"terrain_mesh_full"];
+      id<MTLFunction> mslim = [g_shaderLibrary newFunctionWithName:@"terrain_mesh_slim"];
+      NSString *meshFs[4] = {@"fragment_arena_solid_slim", @"fragment_arena_cutout_slim", @"fragment_arena_solid",
+                             @"fragment_arena_cutout"};
+      for (int v = 0; v < 4 && mfull && mslim; v++) {
+        id<MTLFunction> mfs = [g_shaderLibrary newFunctionWithName:meshFs[v]];
+        if (!mfs)
+          continue;
+        MTLMeshRenderPipelineDescriptor *md = [[MTLMeshRenderPipelineDescriptor alloc] init];
+        md.meshFunction = v < 2 ? mslim : mfull;
+        md.fragmentFunction = mfs;
+        md.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
+        md.colorAttachments[0].blendingEnabled = NO;
+        md.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
+        md.maxTotalThreadsPerMeshThreadgroup = 128;
+        md.label = @"ArenaMesh";
+        NSError *merr = nil;
+        g_pipelineArenaMesh[v] = mr_mesh_pipeline(md, &merr);
+        if (!g_pipelineArenaMesh[v])
+          dbg("arena: mesh pipeline %d failed: %s\n", v, merr ? [[merr localizedDescription] UTF8String] : "unknown");
+        [md release];
+        [mfs release];
+      }
+      [mfull release];
+      [mslim release];
+    }
+  }
   NSString *names[3] = {@"terrain_cull_reset", @"terrain_cull", @"terrain_cull_finish"};
   id<MTLComputePipelineState> *targets[3] = {&g_arenaCullReset, &g_arenaCullMain, &g_arenaCullFinish};
   for (int i = 0; i < 3; i++) {
@@ -8111,6 +8146,15 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nArenaStats(JNIEnv 
   return 11;
 }
 
+static bool mr_arena_mesh_ready() {
+  bool indirect = false;
+  if (@available(macOS 14.0, *))
+    indirect = [g_device supportsFamily:MTLGPUFamilyApple9];
+  return indirect && g_arenaMeshEnabled && g_arenaGpuCull && !g_arenaOracle && g_pipelineArenaMesh[0] &&
+         g_pipelineArenaMesh[1] && g_pipelineArenaMesh[2] && g_pipelineArenaMesh[3] && g_arenaMeshArgs[0] &&
+         g_arenaMeshArgs[1];
+}
+
 static void mr_arena_fill_cull_frame(ArenaCullFrame &f, uint32_t sectionCount, uint32_t listCap) {
   float vp[16];
   for (int c = 0; c < 4; c++) {
@@ -8136,7 +8180,7 @@ static void mr_arena_fill_cull_frame(ArenaCullFrame &f, uint32_t sectionCount, u
   f.viewDist = (float)g_configuredRenderDistBlocks;
   f.sectionCount = sectionCount;
   f.listCapacity = listCap;
-  f.pad = g_cameraFacingCullingEnabled.load(std::memory_order_relaxed) ? 1u : 0u;
+  f.pad = (g_cameraFacingCullingEnabled.load(std::memory_order_relaxed) ? 1u : 0u);
   memset(f.prevViewProj, 0, sizeof(f.prevViewProj));
   memset(f.prevOffset, 0, sizeof(f.prevOffset));
   f.hizSize[0] = f.hizSize[1] = 0;
@@ -8324,8 +8368,8 @@ static void mr_arena_cpu_cull(const ArenaCullFrame &f, const ArenaSectionRecord 
       if (!mr_arena_unit_keep(unit, cam, rel, f))
         continue;
       uint32_t n = (unit.meta & 31u) + 1u;
-      uint32_t cls = n <= 4 ? 0 : (n <= 8 ? 1 : (n <= 16 ? 2 : 3));
-      uint32_t li = (((unit.meta >> 12) & 1u) * 3 + layer) * 4 + cls;
+      uint32_t cls = n <= 2 ? 0 : (n <= 4 ? 1 : (n <= 8 ? 2 : (n <= 12 ? 3 : (n <= 20 ? 4 : 5))));
+      uint32_t li = (((unit.meta >> 12) & 1u) * 3 + layer) * 6 + cls;
       uint32_t k = counts[li]++;
       quads += (unit.meta & 31u) + 1u;
       uint32_t tier = (unit.meta >> 8) & 3u;
@@ -8334,15 +8378,18 @@ static void mr_arena_cpu_cull(const ArenaCullFrame &f, const ArenaSectionRecord 
       kept++;
       if (lists && k < f.listCapacity) {
         uint32_t *dst = lists + ((size_t)li * f.listCapacity + k) * 2;
-        dst[0] = sec.firstUnit + u;
-        dst[1] = s;
+        dst[0] = unit.firstQuad;
+        dst[1] = (unit.meta & 31u) | (((unit.meta >> 8) & 3u) << 5) |
+                 (((uint32_t)((sec.x >> 4) - (f.camBlock[0] >> 4)) & 255u) << 7) |
+                 (((uint32_t)((sec.y >> 4) - (f.camBlock[1] >> 4)) & 255u) << 15) |
+                 (((uint32_t)((sec.z >> 4) - (f.camBlock[2] >> 4)) & 255u) << 23);
       }
     }
   }
   if (args) {
-    static const uint32_t classVerts[4] = {24, 48, 96, 192};
+    static const uint32_t classVerts[6] = {12, 24, 48, 72, 120, 192};
     for (int li = 0; li < kArenaLists; li++) {
-      args[li * 5 + 0] = classVerts[li & 3];
+      args[li * 5 + 0] = classVerts[li % 6];
       args[li * 5 + 1] = std::min(counts[li], f.listCapacity);
       args[li * 5 + 2] = 0;
       args[li * 5 + 3] = 0;
@@ -8374,7 +8421,19 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nTerrainPrepare(JNI
     [fb.sprites release];
     [fb.lists release];
     fb.arena = [g_arenaBuf retain];
-    fb.sections = [g_arenaSecBuf retain];
+    size_t snapBytes = (size_t)std::max<uint32_t>(g_arenaSlotHigh, 1u) * sizeof(ArenaSectionRecord);
+    if (!g_arenaSecSnap[slot] || g_arenaSecSnap[slot].length < snapBytes) {
+      [g_arenaSecSnap[slot] release];
+      g_arenaSecSnap[slot] = [g_device newBufferWithLength:snapBytes + snapBytes / 2
+                                                   options:MTLResourceStorageModeShared |
+                                                           MTLResourceCPUCacheModeWriteCombined];
+    }
+    if (g_arenaSecSnap[slot]) {
+      memcpy([g_arenaSecSnap[slot] contents], [g_arenaSecBuf contents], (size_t)g_arenaSlotHigh * sizeof(ArenaSectionRecord));
+      fb.sections = [g_arenaSecSnap[slot] retain];
+    } else {
+      fb.sections = [g_arenaSecBuf retain];
+    }
     fb.units = [g_arenaUnitBuf retain];
     fb.sprites = [g_arenaSprites retain];
     fb.lists = [g_arenaLists[slot] retain];
@@ -8383,6 +8442,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nTerrainPrepare(JNI
     g_arenaDrawSlot = slot;
     ArenaCullFrame frame;
     mr_arena_fill_cull_frame(frame, g_arenaSlotHigh, g_arenaListCap);
+    fb.meshPath = mr_arena_mesh_ready();
     memcpy(fb.camBlock, frame.camBlock, sizeof(fb.camBlock));
     memcpy(fb.camFrac, frame.camFrac, sizeof(fb.camFrac));
     ArenaSectionRecord *secs = (ArenaSectionRecord *)[g_arenaSecBuf contents];
@@ -8413,7 +8473,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nTerrainPrepare(JNI
       [ce dispatchThreads:MTLSizeMake(1, 1, 1) threadsPerThreadgroup:MTLSizeMake(1, 1, 1)];
       [ce setComputePipelineState:g_arenaCullMain];
       [ce setBytes:&frame length:sizeof(frame) atIndex:0];
-      [ce setBuffer:g_arenaSecBuf offset:0 atIndex:1];
+      [ce setBuffer:fb.sections offset:0 atIndex:1];
       [ce setBuffer:g_arenaUnitBuf offset:0 atIndex:2];
       [ce setBuffer:argsBuf offset:0 atIndex:3];
       [ce setBuffer:fb.lists offset:0 atIndex:4];
@@ -8422,6 +8482,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nTerrainPrepare(JNI
       [ce dispatchThreadgroups:MTLSizeMake(frame.sectionCount, 1, 1) threadsPerThreadgroup:MTLSizeMake(32, 1, 1)];
       [ce setComputePipelineState:g_arenaCullFinish];
       [ce setBuffer:argsBuf offset:0 atIndex:0];
+      [ce setBuffer:g_arenaMeshArgs[slot] offset:0 atIndex:2];
       [ce setBytes:&frame length:sizeof(frame) atIndex:1];
       [ce dispatchThreads:MTLSizeMake(kArenaLists, 1, 1) threadsPerThreadgroup:MTLSizeMake(kArenaLists, 1, 1)];
       [ce endEncoding];
@@ -8456,9 +8517,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nTerrainPrepare(JNI
       [cb commit];
     } else if (g_arenaGpuCull) {
       uint32_t *a = (uint32_t *)[argsBuf contents];
-      static const uint32_t classVerts[4] = {24, 48, 96, 192};
+      static const uint32_t classVerts[6] = {12, 24, 48, 72, 120, 192};
       for (int li = 0; li < kArenaLists; li++) {
-        a[li * 5 + 0] = classVerts[li & 3];
+        a[li * 5 + 0] = classVerts[li % 6];
         a[li * 5 + 1] = 0;
         a[li * 5 + 2] = 0;
         a[li * 5 + 3] = 0;
@@ -8558,13 +8619,42 @@ static void mr_arena_encode(id<MTLRenderCommandEncoder> enc) {
   [enc setFragmentBuffer:fb.arena offset:0 atIndex:5];
   [enc setFragmentBuffer:fb.sprites offset:0 atIndex:8];
   int slot = (int)(&fb - g_arenaFrame);
-  static const int kDrawOrder[16] = {0, 1, 2, 3, 12, 13, 14, 15, 4, 5, 6, 7, 16, 17, 18, 19};
-  for (int oi = 0; oi < 16; oi++) {
-    int li = kDrawOrder[oi];
-    bool tiled = li >= 12;
-    int local = tiled ? li - 12 : li;
-    id<MTLRenderPipelineState> full = local < 4 ? g_pipelineArenaSolid : g_pipelineArena;
-    id<MTLRenderPipelineState> slim = g_pipelineArenaSlim[local < 4 ? 0 : 1];
+  if (fb.meshPath) {
+    if (@available(macOS 14.0, *)) {
+      [enc setMeshBytes:g_projMatrix length:64 atIndex:1];
+      [enc setMeshBytes:g_mvMatrix length:64 atIndex:2];
+      [enc setMeshBytes:&tf length:sizeof(tf) atIndex:4];
+      [enc setMeshBuffer:fb.arena offset:0 atIndex:5];
+      [enc setMeshBuffer:fb.sprites offset:0 atIndex:8];
+      [enc setMeshBuffer:g_arenaArgs[slot] offset:0 atIndex:10];
+      static const int kMeshGroups[4] = {0, 3, 1, 4};
+      static const uint32_t kMeshClassQuads[6] = {2, 4, 8, 12, 20, 32};
+      for (int oi = 0; oi < 24; oi++) {
+        int group = kMeshGroups[oi / 6];
+        int li = group * 6 + oi % 6;
+        bool solid = group % 3 == 0;
+        bool tiled = group >= 3;
+        [enc setRenderPipelineState:mr_ext_pso(g_pipelineArenaMesh[(tiled ? 2 : 0) + (solid ? 0 : 1)])];
+        [enc setMeshBuffer:fb.lists offset:(NSUInteger)li * fb.listCap * 8 atIndex:0];
+        uint32_t mp[2] = {kMeshClassQuads[oi % 6], (uint32_t)li};
+        [enc setMeshBytes:mp length:8 atIndex:9];
+        [enc drawMeshThreadgroupsWithIndirectBuffer:g_arenaMeshArgs[slot]
+                               indirectBufferOffset:(NSUInteger)li * 12
+                        threadsPerObjectThreadgroup:MTLSizeMake(1, 1, 1)
+                          threadsPerMeshThreadgroup:MTLSizeMake(128, 1, 1)];
+        g_drawCallCount++;
+      }
+      return;
+    }
+  }
+  static const int kDrawGroups[4] = {0, 3, 1, 4};
+  for (int oi = 0; oi < 24; oi++) {
+    int group = kDrawGroups[oi / 6];
+    int li = group * 6 + oi % 6;
+    bool tiled = group >= 3;
+    bool solid = group % 3 == 0;
+    id<MTLRenderPipelineState> full = solid ? g_pipelineArenaSolid : g_pipelineArena;
+    id<MTLRenderPipelineState> slim = g_pipelineArenaSlim[solid ? 0 : 1];
     [enc setRenderPipelineState:mr_ext_pso(!tiled && slim ? slim : full)];
     [enc setVertexBuffer:fb.lists offset:(NSUInteger)li * fb.listCap * 8 atIndex:0];
     [enc drawIndexedPrimitives:MTLPrimitiveTypeTriangle
@@ -8610,10 +8700,10 @@ static void mr_arena_encode_water(id<MTLRenderCommandEncoder> enc) {
   [enc setFragmentBytes:&recon length:sizeof(recon) atIndex:7];
   [enc setFragmentBuffer:fb.arena offset:0 atIndex:5];
   [enc setFragmentBuffer:fb.sprites offset:0 atIndex:8];
-  for (int li = 8; li < kArenaLists; li++) {
-    if (li >= 12 && li < 20)
+  for (int li = 12; li < kArenaLists; li++) {
+    if (li >= 18 && li < 30)
       continue;
-    id<MTLRenderPipelineState> waterPso = li < 12 && g_pipelineArenaSlim[2] ? g_pipelineArenaSlim[2] : g_pipelineArenaWater;
+    id<MTLRenderPipelineState> waterPso = li < 18 && g_pipelineArenaSlim[2] ? g_pipelineArenaSlim[2] : g_pipelineArenaWater;
     [enc setRenderPipelineState:mr_ext_pso(waterPso)];
     [enc setVertexBuffer:fb.lists offset:(NSUInteger)li * fb.listCap * 8 atIndex:0];
     [enc drawIndexedPrimitives:MTLPrimitiveTypeTriangle
