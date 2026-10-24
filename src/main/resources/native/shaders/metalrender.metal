@@ -37,72 +37,6 @@ float2 decodePackedTexCoord(uint tex) {
     return float2(u, v);
 }
 
-constant half2 kLightmapLut[256] = {
-    half2(0.031250h, 0.031250h), half2(0.093750h, 0.031250h), half2(0.156250h, 0.031250h), half2(0.218750h, 0.031250h),
-    half2(0.281250h, 0.031250h), half2(0.343750h, 0.031250h), half2(0.406250h, 0.031250h), half2(0.468750h, 0.031250h),
-    half2(0.531250h, 0.031250h), half2(0.593750h, 0.031250h), half2(0.656250h, 0.031250h), half2(0.718750h, 0.031250h),
-    half2(0.781250h, 0.031250h), half2(0.843750h, 0.031250h), half2(0.906250h, 0.031250h), half2(0.968750h, 0.031250h),
-    half2(0.031250h, 0.093750h), half2(0.093750h, 0.093750h), half2(0.156250h, 0.093750h), half2(0.218750h, 0.093750h),
-    half2(0.281250h, 0.093750h), half2(0.343750h, 0.093750h), half2(0.406250h, 0.093750h), half2(0.468750h, 0.093750h),
-    half2(0.531250h, 0.093750h), half2(0.593750h, 0.093750h), half2(0.656250h, 0.093750h), half2(0.718750h, 0.093750h),
-    half2(0.781250h, 0.093750h), half2(0.843750h, 0.093750h), half2(0.906250h, 0.093750h), half2(0.968750h, 0.093750h),
-    half2(0.031250h, 0.156250h), half2(0.093750h, 0.156250h), half2(0.156250h, 0.156250h), half2(0.218750h, 0.156250h),
-    half2(0.281250h, 0.156250h), half2(0.343750h, 0.156250h), half2(0.406250h, 0.156250h), half2(0.468750h, 0.156250h),
-    half2(0.531250h, 0.156250h), half2(0.593750h, 0.156250h), half2(0.656250h, 0.156250h), half2(0.718750h, 0.156250h),
-    half2(0.781250h, 0.156250h), half2(0.843750h, 0.156250h), half2(0.906250h, 0.156250h), half2(0.968750h, 0.156250h),
-    half2(0.031250h, 0.218750h), half2(0.093750h, 0.218750h), half2(0.156250h, 0.218750h), half2(0.218750h, 0.218750h),
-    half2(0.281250h, 0.218750h), half2(0.343750h, 0.218750h), half2(0.406250h, 0.218750h), half2(0.468750h, 0.218750h),
-    half2(0.531250h, 0.218750h), half2(0.593750h, 0.218750h), half2(0.656250h, 0.218750h), half2(0.718750h, 0.218750h),
-    half2(0.781250h, 0.218750h), half2(0.843750h, 0.218750h), half2(0.906250h, 0.218750h), half2(0.968750h, 0.218750h),
-    half2(0.031250h, 0.281250h), half2(0.093750h, 0.281250h), half2(0.156250h, 0.281250h), half2(0.218750h, 0.281250h),
-    half2(0.281250h, 0.281250h), half2(0.343750h, 0.281250h), half2(0.406250h, 0.281250h), half2(0.468750h, 0.281250h),
-    half2(0.531250h, 0.281250h), half2(0.593750h, 0.281250h), half2(0.656250h, 0.281250h), half2(0.718750h, 0.281250h),
-    half2(0.781250h, 0.281250h), half2(0.843750h, 0.281250h), half2(0.906250h, 0.281250h), half2(0.968750h, 0.281250h),
-    half2(0.031250h, 0.343750h), half2(0.093750h, 0.343750h), half2(0.156250h, 0.343750h), half2(0.218750h, 0.343750h),
-    half2(0.281250h, 0.343750h), half2(0.343750h, 0.343750h), half2(0.406250h, 0.343750h), half2(0.468750h, 0.343750h),
-    half2(0.531250h, 0.343750h), half2(0.593750h, 0.343750h), half2(0.656250h, 0.343750h), half2(0.718750h, 0.343750h),
-    half2(0.781250h, 0.343750h), half2(0.843750h, 0.343750h), half2(0.906250h, 0.343750h), half2(0.968750h, 0.343750h),
-    half2(0.031250h, 0.406250h), half2(0.093750h, 0.406250h), half2(0.156250h, 0.406250h), half2(0.218750h, 0.406250h),
-    half2(0.281250h, 0.406250h), half2(0.343750h, 0.406250h), half2(0.406250h, 0.406250h), half2(0.468750h, 0.406250h),
-    half2(0.531250h, 0.406250h), half2(0.593750h, 0.406250h), half2(0.656250h, 0.406250h), half2(0.718750h, 0.406250h),
-    half2(0.781250h, 0.406250h), half2(0.843750h, 0.406250h), half2(0.906250h, 0.406250h), half2(0.968750h, 0.406250h),
-    half2(0.031250h, 0.468750h), half2(0.093750h, 0.468750h), half2(0.156250h, 0.468750h), half2(0.218750h, 0.468750h),
-    half2(0.281250h, 0.468750h), half2(0.343750h, 0.468750h), half2(0.406250h, 0.468750h), half2(0.468750h, 0.468750h),
-    half2(0.531250h, 0.468750h), half2(0.593750h, 0.468750h), half2(0.656250h, 0.468750h), half2(0.718750h, 0.468750h),
-    half2(0.781250h, 0.468750h), half2(0.843750h, 0.468750h), half2(0.906250h, 0.468750h), half2(0.968750h, 0.468750h),
-    half2(0.031250h, 0.531250h), half2(0.093750h, 0.531250h), half2(0.156250h, 0.531250h), half2(0.218750h, 0.531250h),
-    half2(0.281250h, 0.531250h), half2(0.343750h, 0.531250h), half2(0.406250h, 0.531250h), half2(0.468750h, 0.531250h),
-    half2(0.531250h, 0.531250h), half2(0.593750h, 0.531250h), half2(0.656250h, 0.531250h), half2(0.718750h, 0.531250h),
-    half2(0.781250h, 0.531250h), half2(0.843750h, 0.531250h), half2(0.906250h, 0.531250h), half2(0.968750h, 0.531250h),
-    half2(0.031250h, 0.593750h), half2(0.093750h, 0.593750h), half2(0.156250h, 0.593750h), half2(0.218750h, 0.593750h),
-    half2(0.281250h, 0.593750h), half2(0.343750h, 0.593750h), half2(0.406250h, 0.593750h), half2(0.468750h, 0.593750h),
-    half2(0.531250h, 0.593750h), half2(0.593750h, 0.593750h), half2(0.656250h, 0.593750h), half2(0.718750h, 0.593750h),
-    half2(0.781250h, 0.593750h), half2(0.843750h, 0.593750h), half2(0.906250h, 0.593750h), half2(0.968750h, 0.593750h),
-    half2(0.031250h, 0.656250h), half2(0.093750h, 0.656250h), half2(0.156250h, 0.656250h), half2(0.218750h, 0.656250h),
-    half2(0.281250h, 0.656250h), half2(0.343750h, 0.656250h), half2(0.406250h, 0.656250h), half2(0.468750h, 0.656250h),
-    half2(0.531250h, 0.656250h), half2(0.593750h, 0.656250h), half2(0.656250h, 0.656250h), half2(0.718750h, 0.656250h),
-    half2(0.781250h, 0.656250h), half2(0.843750h, 0.656250h), half2(0.906250h, 0.656250h), half2(0.968750h, 0.656250h),
-    half2(0.031250h, 0.718750h), half2(0.093750h, 0.718750h), half2(0.156250h, 0.718750h), half2(0.218750h, 0.718750h),
-    half2(0.281250h, 0.718750h), half2(0.343750h, 0.718750h), half2(0.406250h, 0.718750h), half2(0.468750h, 0.718750h),
-    half2(0.531250h, 0.718750h), half2(0.593750h, 0.718750h), half2(0.656250h, 0.718750h), half2(0.718750h, 0.718750h),
-    half2(0.781250h, 0.718750h), half2(0.843750h, 0.718750h), half2(0.906250h, 0.718750h), half2(0.968750h, 0.718750h),
-    half2(0.031250h, 0.781250h), half2(0.093750h, 0.781250h), half2(0.156250h, 0.781250h), half2(0.218750h, 0.781250h),
-    half2(0.281250h, 0.781250h), half2(0.343750h, 0.781250h), half2(0.406250h, 0.781250h), half2(0.468750h, 0.781250h),
-    half2(0.531250h, 0.781250h), half2(0.593750h, 0.781250h), half2(0.656250h, 0.781250h), half2(0.718750h, 0.781250h),
-    half2(0.781250h, 0.781250h), half2(0.843750h, 0.781250h), half2(0.906250h, 0.781250h), half2(0.968750h, 0.781250h),
-    half2(0.031250h, 0.843750h), half2(0.093750h, 0.843750h), half2(0.156250h, 0.843750h), half2(0.218750h, 0.843750h),
-    half2(0.281250h, 0.843750h), half2(0.343750h, 0.843750h), half2(0.406250h, 0.843750h), half2(0.468750h, 0.843750h),
-    half2(0.531250h, 0.843750h), half2(0.593750h, 0.843750h), half2(0.656250h, 0.843750h), half2(0.718750h, 0.843750h),
-    half2(0.781250h, 0.843750h), half2(0.843750h, 0.843750h), half2(0.906250h, 0.843750h), half2(0.968750h, 0.843750h),
-    half2(0.031250h, 0.906250h), half2(0.093750h, 0.906250h), half2(0.156250h, 0.906250h), half2(0.218750h, 0.906250h),
-    half2(0.281250h, 0.906250h), half2(0.343750h, 0.906250h), half2(0.406250h, 0.906250h), half2(0.468750h, 0.906250h),
-    half2(0.531250h, 0.906250h), half2(0.593750h, 0.906250h), half2(0.656250h, 0.906250h), half2(0.718750h, 0.906250h),
-    half2(0.781250h, 0.906250h), half2(0.843750h, 0.906250h), half2(0.906250h, 0.906250h), half2(0.968750h, 0.906250h),
-    half2(0.031250h, 0.968750h), half2(0.093750h, 0.968750h), half2(0.156250h, 0.968750h), half2(0.218750h, 0.968750h),
-    half2(0.281250h, 0.968750h), half2(0.343750h, 0.968750h), half2(0.406250h, 0.968750h), half2(0.468750h, 0.968750h),
-    half2(0.531250h, 0.968750h), half2(0.593750h, 0.968750h), half2(0.656250h, 0.968750h), half2(0.718750h, 0.968750h),
-    half2(0.781250h, 0.968750h), half2(0.843750h, 0.968750h), half2(0.906250h, 0.968750h), half2(0.968750h, 0.968750h),
-};
 
 float2 decodePackedLight(uint lightData) {
     return float2(kLightmapLut[lightData & 0xFFu]);
@@ -316,20 +250,6 @@ inline float2 terrain_fog_dist(float4 pos, constant TerrainFogRecon& r) {
     return float2(length(world), max(length(world.xz), abs(world.y)));
 }
 
-struct TerrainVOut {
-    float4 position [[position]];
-    half4  color;
-    half2  lightUV;
-    float2 tile;
-    uint   quadAddr [[flat]];
-};
-
-struct TerrainVOutSlim {
-    float4 position [[position]];
-    float2 texCoord;
-    half4  color;
-    half2  lightUV;
-};
 
 inline float4 terrain_tile_rect(device const uint* arena, device const uint2* sprites, uint addr) {
     device const uint* w = arena + addr;
@@ -379,19 +299,18 @@ vertex TerrainVOut terrain_vs(
     uint quad = vid >> 2;
     uint corner = vid & 3u;
     uint2 entry = list[iid];
-    UnitRecord unit = units[entry.x];
-    if (quad > (unit.meta & 31u)) {
+    if (quad > (entry.y & 31u)) {
         return out;
     }
-    SectionRecord section = sections[entry.y];
-    uint tier = (unit.meta >> 8) & 3u;
-    TerrainCorner c = terr_decode(arena, sprites, tier, unit.firstQuad, quad, corner);
-    float3 rel = float3(float(section.x - frame.camBlock.x), float(section.y - frame.camBlock.y),
-                        float(section.z - frame.camBlock.z)) - frame.camFrac.xyz;
+    uint tier = (entry.y >> 5) & 3u;
+    TerrainCorner c = terr_decode(arena, sprites, tier, entry.x, quad, corner);
+    int3 secOff = int3(int(entry.y << 17) >> 24, int(entry.y << 9) >> 24, int(entry.y << 1) >> 24);
+    int3 secPos = ((frame.camBlock.xyz >> 4) + secOff) << 4;
+    float3 rel = float3(secPos - frame.camBlock.xyz) - frame.camFrac.xyz;
     float3 worldPos = c.pos + rel;
     out.position = projectionMatrix * (modelViewMatrix * float4(worldPos, 1.0));
     out.tile     = c.tile;
-    out.quadAddr = (unit.firstQuad + quad * 2u) * 4u;
+    out.quadAddr = (entry.x + quad * 2u) * 4u;
     out.color    = half4(half3(c.rgb), half(c.alpha));
     out.lightUV  = half2(kLightmapLut[c.light & 0xFFu]);
     return out;
@@ -417,15 +336,14 @@ vertex TerrainVOutSlim terrain_vs_slim(
     uint quad = vid >> 2;
     uint corner = vid & 3u;
     uint2 entry = list[iid];
-    UnitRecord unit = units[entry.x];
-    if (quad > (unit.meta & 31u)) {
+    if (quad > (entry.y & 31u)) {
         return out;
     }
-    SectionRecord section = sections[entry.y];
-    uint tier = (unit.meta >> 8) & 3u;
-    TerrainCorner c = terr_decode(arena, sprites, tier, unit.firstQuad, quad, corner);
-    float3 rel = float3(float(section.x - frame.camBlock.x), float(section.y - frame.camBlock.y),
-                        float(section.z - frame.camBlock.z)) - frame.camFrac.xyz;
+    uint tier = (entry.y >> 5) & 3u;
+    TerrainCorner c = terr_decode(arena, sprites, tier, entry.x, quad, corner);
+    int3 secOff = int3(int(entry.y << 17) >> 24, int(entry.y << 9) >> 24, int(entry.y << 1) >> 24);
+    int3 secPos = ((frame.camBlock.xyz >> 4) + secOff) << 4;
+    float3 rel = float3(secPos - frame.camBlock.xyz) - frame.camFrac.xyz;
     float3 worldPos = c.pos + rel;
     out.position = projectionMatrix * (modelViewMatrix * float4(worldPos, 1.0));
     out.texCoord = c.uv;
