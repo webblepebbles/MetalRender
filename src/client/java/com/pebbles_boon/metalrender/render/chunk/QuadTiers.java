@@ -11,7 +11,7 @@ public final class QuadTiers {
     public static final int UNIT_BYTES = 16;
     public static final int SECTION_BYTES = 32;
     public static final int MAX_UNIT_QUADS = 32;
-    public static final int MAX_UNIT_SPAN = 8;
+    public static final int MAX_UNIT_SPAN = 4;
     public static final int TIER_A = 0;
     public static final int TIER_B = 1;
     public static final int TIER_C = 2;
