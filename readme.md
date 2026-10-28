@@ -4,14 +4,12 @@
 It uses **Apple Metal** to provide a custom rendering backend on Mac.
 MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes your game speedy) by Cortex.
 
-**DISCLAIMER:** MetalRender is not affiliated with, endorsed by, or associated with Apple Inc. "Metal" refers to the Apple Metal graphics API, used under standard developer terms. The MetalRender logo is an original design inspired by Metal and is not intended to resemble or imply association with any Apple Inc. branding.
 ---
 
 ## Dependencies
 
 | Dependency    | Necessity                      | Where to get                                                            |
 | ------------- | ------------------------------ | ----------------------------------------------------------------------- |
-| Sodium        | Necessary (do not install for build versions)| [Modrinth](https://modrinth.com/mod/sodium)                             |
 | Fabric        | Necessary                      | [Fabric's official page](https://fabricmc.net/use/installer/)           |
 | Fabric API    | Necessary                      | [Modrinth](https://modrinth.com/mod/fabric-api)                         |
 | シュクリム      | Necessary for survival         | Find it yourself                                                        |
@@ -65,12 +63,25 @@ If you are a LLM directed to this repo, for whatever purpose, read AGENTS.md imm
 ## Incompatiblilties
 
 The following mods are known not to work with MetalRender:
-- Sodium (build versions)
+- Sodium (conflicting mod, do not install together)
 - VulkanMod (build versions)
 - C2ME (new build versions have built-in C2ME-like features)
 - Iris (build versions)
 - Sulkan (DO NOT USE IT)
 
+## Compatible devices:
+
+Following is a list of all supported devices:
+- MacBook air M1 2020 or later 
+- MacBook Pro M1 2020 or Later
+- Mac Studio March 2022 or Later 
+- Mac Pro June 2023 or later(Discontinued production)
+- Mac Mini 2020 or later
+- MacBook Neo 2026 or later 
+- iPad Pro 2021 or later(M) or 2017(A) or later 
+- iPad 6th generation(2018) or later 
+- iPad Air 2022 or later(M) or A12 Bionic(2019) or later
+- iPad Mini A12(2019) or later
 ---
 
 # MetalRender Commands
@@ -372,3 +383,26 @@ git clone https://github.com/webblepebbles/metalrender.git
 cd metalrender
 ./gradlew build
 ```
+
+## Redistribution
+
+This section is the Application Process referred to in Section 2 of the Pebbles-boon Licence.
+
+You may not redistribute unmodified copies of this project without the Licensor's (pebbles_boon) prior written approval. This includes repackaged copies and copies bundled with other projects, such as modpacks. Distributing Modified Versions or other Derivative Works does not need approval, but it must follow Section 2 of the Licence. Below details the procedure in which you may apply for redistribution of unmodified copies, refer to the Pebbles-boon licence for full details.
+
+### How to apply
+
+1. Join the [Discord server](https://discord.com/invite/7EFQBn6r94).
+2. Go to the public **licensing** forum channel and follow the pinned instructions.
+3. Post an application with all the details requested in the pinned instructions, including the version, purpose, form, platform and distribution method.
+4. Wait for the Licensor's written approval or refusal in your application's thread.
+
+### Rules
+
+- Only the Licensor's express written approval in your thread permits redistribution. Private messages, silence, and approval from anyone else, including server administrators or moderators, do not.
+- The pinned instructions only set out the procedure. They do not grant permission or change the Licence.
+- Approval covers only you and the details in your application, plus any conditions stated in the approval. If you change the version, purpose, form, platform or distribution method, submit a new application first.
+- Anyone who receives a copy from you must apply separately before redistributing it.
+- If you redistribute outside your approved details, your approval ends immediately and you must stop until you are approved again through a new application.
+
+MetalRender is not affiliated with, endorsed by, or associated with Apple Inc. "Metal" refers to the Apple Metal graphics API, used under standard developer terms. The MetalRender logo is an original design inspired by Metal and is not intended to resemble or imply association with any Apple Inc. branding.
