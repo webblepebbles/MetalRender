@@ -3090,8 +3090,13 @@ public class MetalWorldRenderer {
             }
             if (chunkMesher.shouldRebuildForLight(chunkX, chunkY, chunkZ, skyLayer,
                     incomingHash, hasData)) {
+                boolean urgent = chunkMesher.hasPendingBlockUpdate(chunkX, chunkY, chunkZ);
                 chunkMesher.contentChanged(chunkX, chunkY, chunkZ, "light");
-                enqueueSectionBuild(chunkX, chunkY, chunkZ);
+                if (urgent) {
+                    queueUrgentEdit(chunkX, chunkY, chunkZ);
+                } else {
+                    enqueueSectionBuild(chunkX, chunkY, chunkZ);
+                }
             }
         } catch (Exception ignored) {
         }

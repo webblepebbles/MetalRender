@@ -1284,6 +1284,13 @@ public class CustomChunkMesher {
         }
     }
 
+    public boolean hasPendingBlockUpdate(int cx, int cy, int cz) {
+        long key = packChunkKey(cx, cy, cz);
+        synchronized (pendingBlockUpdateNanos) {
+            return pendingBlockUpdateNanos.containsKey(key);
+        }
+    }
+
     public double getAverageVisibleSectionLatencyMs() {
         int samples = visibleSectionLatencySamples.get();
         return samples > 0 ? (visibleSectionLatencyAccNs.get() / 1e6) / samples : 0.0;
