@@ -163,58 +163,6 @@ Fully restarts the MetalRender system by disabling and re-enabling it.
 
 ---
 
-### LOD (Level of Detail) Commands
-
-#### `/metalrender lod reset`
-
-Resets all LOD settings to their default values:
-
-- Near threshold: 8 chunks
-- Far threshold: 16 chunks
-- Distant scale: 0.20
-
-**Example:**
-
-```
-/metalrender lod reset
-```
-
-#### `/metalrender lod enable`
-
-Enables the LOD system for better performance when looking at blocks far away.
-
-**Example:**
-
-```
-/metalrender lod enable
-```
-
-#### `/metalrender lod disable`
-
-Disables the LOD system, rendering all chunks at full detail.
-
-**Example:**
-
-```
-/metalrender lod disable
-```
-
-#### `/metalrender lod threshold <distance>`
-
-Sets the LOD near threshold distance in chunks (5-100).
-
-**Arguments:**
-
-- `distance` - Distance in chunks (integer, 5-100)
-
-**Example:**
-
-```
-/metalrender lod threshold 20
-```
-
----
-
 ### Configuration Commands
 
 #### `/metalrender config save`
