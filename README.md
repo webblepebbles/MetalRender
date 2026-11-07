@@ -190,79 +190,6 @@ Fully restarts the MetalRender system by disabling and re-enabling it.
 
 ---
 
-### LOD (Level of Detail) Commands
-
-#### `/metalrender lod reset`
-
-Resets all LOD settings to their default values:
-
-- Near threshold: 8 chunks
-- Far threshold: 16 chunks
-- Distant scale: 0.20
-
-**Example:**
-
-```
-/metalrender lod reset
-```
-
-#### `/metalrender lod enable`
-
-Enables the LOD system for better performance when looking at blocks far away.
-
-**Example:**
-
-```
-/metalrender lod enable
-```
-
-#### `/metalrender lod disable`
-
-Disables the LOD system, rendering all chunks at full detail.
-
-**Example:**
-
-```
-/metalrender lod disable
-```
-
-#### `/metalrender lod threshold <distance>`
-
-Sets the LOD near threshold distance in chunks (5-100).
-
-**Arguments:**
-
-- `distance` - Distance in chunks (integer, 5-100)
-
-**Example:**
-
-```
-/metalrender lod threshold 20
-```
-
----
-
-### Configuration Commands
-
-#### `/metalrender config save`
-
-Saves the current runtime configuration to disk.
-
-**Example:**
-
-```
-/metalrender config save
-```
-
-#### `/metalrender config reload`
-
-Reloads the configuration from disk, discarding any unsaved changes.
-
-**Example:**
-
-```
-/metalrender config reload
-```
 
 #### `/metalrender config reset`
 
@@ -414,6 +341,27 @@ cd metalrender
 ./gradlew runclient
 ```
 
+## Redistribution
+
+This section is the Application Process referred to in Section 2 of the Pebbles-boon Licence.
+
+You may not redistribute unmodified copies of this project without the Licensor's (pebbles_boon) prior written approval. This includes repackaged copies and copies bundled with other projects, such as modpacks. Distributing Modified Versions or other Derivative Works does not need approval, but it must follow Section 2 of the Licence. Below details the procedure in which you may apply for redistribution of unmodified copies, refer to the Pebbles-boon licence for full details.
+
+### How to apply
+
+1. Join the [Discord server](https://discord.com/invite/7EFQBn6r94).
+2. Go to the public **licensing** forum channel and follow the pinned instructions.
+3. Post an application with all the details requested in the pinned instructions, including the version, purpose, form, platform and distribution method.
+4. Wait for the Licensor's written approval or refusal in your application's thread.
+
+### Rules
+
+- Only the Licensor's express written approval in your thread permits redistribution. Private messages, silence, and approval from anyone else, including server administrators or moderators, do not.
+- The pinned instructions only set out the procedure. They do not grant permission or change the Licence.
+- Approval covers only you and the details in your application, plus any conditions stated in the approval. If you change the version, purpose, form, platform or distribution method, submit a new application first.
+- Anyone who receives a copy from you must apply separately before redistributing it.
+- If you redistribute outside your approved details, your approval ends immediately and you must stop until you are approved again through a new application.
+  
 # Test Results 
 
 M2 Air 2022 16Gbs of ram, Minecraft 26.2, only Fabric with MetalRender, 2GB GPU ram permited and 2GB minecraft RAM, MESH ENABLED(rest is defult):
