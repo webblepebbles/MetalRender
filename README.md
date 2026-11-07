@@ -29,7 +29,6 @@ Please Note, All of these devices have to be on AT LEAST macOS 27
 - MacBook Air M1 2020 or later
 - MacBook Pro M1 2020 or Later
 - Mac Studio March 2022 or Later
-- Mac Pro June 2023 or later(Discontinued production)
 - Mac Mini 2020 or later
 - MacBook Neo 2026 or later
   
@@ -61,8 +60,8 @@ If you are a LLM directed to this repo, for whatever purpose, read AGENTS.md imm
 - Will still load on other GPUs but won't offer any additional benefits or changes
 - Shaders are not yet supported. they will not be supported in the future, MetalShader is under work tho
 - This should be compatible with most other mods(Not rendering mods eg Distant Horizons or Voxy), if it isn't please add a Issue. See non-compatible mods below
-- This is incompatible with other rendering mod for obvious reasons(very obvious I believe)
-- Please use macOS 27 when using V2+, metalrender V2+ uses Metal 4.1
+- This is incompatible with other rendering mod
+- Please use macOS 27 when using V2+, metalrender V2+ uses Metal 3/4
 
 ---
 
