@@ -190,6 +190,27 @@ Fully restarts the MetalRender system by disabling and re-enabling it.
 
 ---
 
+### Configuration Commands
+
+#### `/metalrender config save`
+
+Saves the current runtime configuration to disk.
+
+**Example:**
+
+```
+/metalrender config save
+```
+
+#### `/metalrender config reload`
+
+Reloads the configuration from disk, discarding any unsaved changes.
+
+**Example:**
+
+```
+/metalrender config reload
+```
 
 #### `/metalrender config reset`
 
@@ -361,25 +382,3 @@ You may not redistribute unmodified copies of this project without the Licensor'
 - Approval covers only you and the details in your application, plus any conditions stated in the approval. If you change the version, purpose, form, platform or distribution method, submit a new application first.
 - Anyone who receives a copy from you must apply separately before redistributing it.
 - If you redistribute outside your approved details, your approval ends immediately and you must stop until you are approved again through a new application.
-  
-# Test Results 
-
-M2 Air 2022 16Gbs of ram, Minecraft 26.2, only Fabric with MetalRender, 2GB GPU ram permited and 2GB minecraft RAM, MESH ENABLED(rest is defult):
-
-Seed:5180085092509090221
-
-2 Chunks and 5 Simulation: Low ~250 FPS, High ~650 FPS, Average ~400-450 FPS 
-
-5 Chunks and 5 Simulation:Low ~130FPS, High ~400FPS, Average: ~130-150FPS 
-
-10 Chunks and Simulation: Low: ~110, High: ~250/360(Spike)FPS, Average: ~150-180
-
-20 Chunks and 20 Simulation: Low~108 FPS, High ~130FPS(can spike to ~200FPS), Average ~110-120FPS 
-
-32 Chunks and simulation: Low ~68FPS, High ~153 FPS, Average ~120FPS 
-
-(Test may vary since this one was conducted in a Ice Spike and Plains biome)
-
-adding M3 test result for v2.0.1 26.2:
-- 349 FPS median for 32 RD vs 96 on Vanilla, 118 on Sodium
-- 99th percentile frame time on 32 RD is 17.97ms

@@ -8217,6 +8217,13 @@ bool mr_arena_hiz_enabled() { return g_arenaHizEnabled && g_arenaHizFromDepth &&
 void mr_arena_hiz_build(id<MTLCommandBuffer> cmd, id<MTLTexture> depth) {
   if (!cmd || !depth || !g_arenaHizEnabled || !g_arenaHizFromDepth || !g_arenaHizDown || !g_device)
     return;
+  static const uint32_t kHizMinSections = 1500;
+  if (g_arenaSlotHigh < kHizMinSections) {
+    std::lock_guard<std::mutex> hl(g_arenaHizMutex);
+    g_arenaHizPending.valid = false;
+    g_arenaHizBuilt.valid = false;
+    return;
+  }
   ArenaHizSnap snap;
   {
     std::lock_guard<std::mutex> hl(g_arenaHizMutex);
