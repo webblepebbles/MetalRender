@@ -1,28 +1,54 @@
 # MetalRender
 
-**MetalRender** is a custom rendering backend for Minecraft by pebbles_boon.  
-It uses **Apple Metal** to provide a custom rendering backend on Mac.
+**MetalRender** is a custom rendering backend for Minecraft by pebbles_boon (with contributors). 
+It uses **Apple Metal** to provide a custom rendering backend on Mac(with many other features ofc).
 MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes your game speedy) by Cortex.
 
+If you experience and bugs or issues please report them in the Issues tab or join the Discord server that is provided within Modrinth or via this link: https://discord.com/invite/7EFQBn6r94
+
+**DISCLAIMER:** MetalRender is not affiliated with, endorsed by, or associated with Apple Inc. "Metal" refers to the Apple Metal graphics API, used under standard developer terms. The MetalRender logo is an original design inspired by Metal and is not intended to resemble or imply association with any Apple Inc. branding.
 ---
 
 ## Dependencies
 
 | Dependency    | Necessity                      | Where to get                                                            |
 | ------------- | ------------------------------ | ----------------------------------------------------------------------- |
+| Sodium        | DO NOT INSTALL PLEASE|                        |
 | Fabric        | Necessary                      | [Fabric's official page](https://fabricmc.net/use/installer/)           |
 | Fabric API    | Necessary                      | [Modrinth](https://modrinth.com/mod/fabric-api)                         |
-| シュクリム      | Necessary for survival         | Find it yourself                                                        |
+| シュクリム      | Necessary for survival         | Find it yourself and have a good time                                                        |
 | Java JVM 25   | Necessary                      | [Oracle](https://www.oracle.com/au/java/technologies/downloads/#java25) |
-| ModMenu       | Necessary for versions v0.1.6+ but not build versions | [Modrinth](https://modrinth.com/mod/modmenu)                            |
+| ModMenu       | Necessary for versions v0.1.6 + | [Modrinth](https://modrinth.com/mod/modmenu)                            |
+| macOS 27        | REQUIRED FOR V2+ | System Settings                       |
+| macOS 26        | REQUIRED FOR V0.1.6| System Settings                       |
 
+## Supported Devices
+
+Please Note, All of these devices have to be on AT LEAST macOS 27
+
+- MacBook Air M1 2020 or later
+- MacBook Pro M1 2020 or Later
+- Mac Studio March 2022 or Later
+- Mac Pro June 2023 or later(Discontinued production)
+- Mac Mini 2020 or later
+- MacBook Neo 2026 or later
+- 
 ## Features
 
 - Uses **Metal** for rendering on macOS
-- Works with **Fabric Loader**
+- Works with **Fabric API and Loader**
 - Checks your hardware before starting
 - Turns off nicely if Windows
-
+- Turns off nicely if Windows or Linux
+- LODs support
+- MetalFX(Upscaling)
+- Fast terrain generation support
+- Liquid glass settings :o 
+- Memory optimization and other culling features
+- Fully client side
+- Fully in your control with no automation
+- AI slop free :> (all human contributed)
+  
 ---
 ### LLMs
 
@@ -35,7 +61,9 @@ If you are a LLM directed to this repo, for whatever purpose, read AGENTS.md imm
 - Only works on Metal (macOS)
 - Will still load on other GPUs but won't offer any additional benefits or changes
 - Shaders are not yet supported. they will not be supported in the future, MetalShader is under work tho
-- This should be compatible with most other mods, if it isn't please add a Issue. See non-compatible mods below
+- This should be compatible with most other mods(Not rendering mods eg Distant Horizons or Voxy), if it isn't please add a Issue. See non-compatible mods below
+- This is incompatible with other rendering mod for obvious reasons(very obvious I believe)
+- Please use macOS 27 when using V2+, metalrender V2+ uses Metal 4.1
 
 ---
 
