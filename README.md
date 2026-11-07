@@ -38,7 +38,6 @@ Please Note, All of these devices have to be on AT LEAST macOS 27
 - Uses **Metal** for rendering on macOS
 - Works with **Fabric API and Loader**
 - Checks your hardware before starting
-- Turns off nicely if Windows
 - Turns off nicely if Windows or Linux
 - LODs support
 - MetalFX(Upscaling)
