@@ -32,7 +32,7 @@ Please Note, All of these devices have to be on AT LEAST macOS 27
 - Mac Pro June 2023 or later(Discontinued production)
 - Mac Mini 2020 or later
 - MacBook Neo 2026 or later
-- 
+  
 ## Features
 
 - Uses **Metal** for rendering on macOS
@@ -75,11 +75,11 @@ If you are a LLM directed to this repo, for whatever purpose, read AGENTS.md imm
   every stable release and major bug clearance (a group of bugs that I fixed) or a new feature etc etc. I cannot flood the Modrinth page with 20 new releases every 5
   days or so.
 
-- When will Forge/Neoforge be added?
+-- When will other mod loaders(e.g. Forge, NeoForge, etc) be added?
 
   I probably won't make support for other loaders in the future but for now, only Fabric is supported because its the most lightweight and popular.
 
-- Can I run MetalRender on non-Apple Silicon hardware?
+- Can I run MetalRender on non-Apple Silicon hardware or firmware that has no Metal 4 support?
  
    no. what did you think this is a metal mod.
 
@@ -87,30 +87,33 @@ If you are a LLM directed to this repo, for whatever purpose, read AGENTS.md imm
 
   There is a Suggestion tag on the Issues tab now! Please share your suggestions for MetalRender, I'm open to all suggestions and thanks for your help making
   MetalRender better for everyone!
+  
+- It crashes, but I dont have any conflicting mods in the pack!
+
+  Reach out in the Discord server or Issues tab, we are glad to assist you!
 
 ## Incompatiblilties
 
 The following mods are known not to work with MetalRender:
 - Sodium (conflicting mod, do not install together)
-- VulkanMod (build versions)
-- C2ME (new build versions have built-in C2ME-like features)
-- Iris (build versions)
-- Sulkan (DO NOT USE IT)
+- VulkanMod (ALL VERSIONS)
+- C2ME (new build versions have built-in C2ME-like features) (Will Not Provide any benifits)
+- Iris (ALL VERSIONS)
+- Distant Horizons (ALL VERSIONS)
+- Voxy (ALL VERSIONS)
+- Other rendering mods eg LOD mods 
+- Sulkan (DO NOT USE IT) (ALL VERSIONS)
+- Any World Based rendering mod
+- Minecraft 1.21.11
 
-## Compatible devices:
 
-Following is a list of all supported devices:
-- MacBook air M1 2020 or later 
-- MacBook Pro M1 2020 or Later
-- Mac Studio March 2022 or Later 
-- Mac Pro June 2023 or later(Discontinued production)
-- Mac Mini 2020 or later
-- MacBook Neo 2026 or later 
-- iPad Pro 2021 or later(M) or 2017(A) or later 
-- iPad 6th generation(2018) or later 
-- iPad Air 2022 or later(M) or A12 Bionic(2019) or later
-- iPad Mini A12(2019) or later
----
+# Customizations
+
+You can configure the settings via the /metalrender command (guide coming right up) or you can go into video settings and configure it from there
+
+There are custom themes if you are using Metalrender V2 if you go into video settings, there are presets such as Glass. 
+
+NOTE: If You Are Using V2, You Will NOT See A Done Button Like In 0.1.X within the video settings menu, Just Press Ecs To Return To The Previous Page
 
 # MetalRender Commands
 
@@ -118,7 +121,7 @@ MetalRender commands allow you to configure MetalRender settings, check status a
 
 ## start here
 
-All commands start with `/metalrender` (or `/mr` for short if configured).
+All commands start with `/metalrender`
 
 ```
 /metalrender help
@@ -362,7 +365,7 @@ Enable LOD and adjust the threshold for your needs.
 3. **Clear Cache After Changes**: Some settings benefit from a cache clear to take full effect.
 4. **Reset if Stuck**: Use `/metalrender config reset` if you're unsure about your settings.
 5. **LOD for FPS**: Enable LOD and adjust thresholds to balance quality vs. performance.
-6. You can use the config menu too but you like can't see when using that.
+6. You can use the config menu in video settings that has liquid glass :o
 
 ---
 
@@ -380,7 +383,7 @@ Try:
 2. `/metalrender reload`
 3. `/metalrender restart`
 4. Contact Apple support
-5. If Mac/Macbook is flaming, call emergency services immediately and discontinue use. Contact your Certified Apple Repair store.
+5. If Mac/Macbook is flaming, contact your Certified Apple Repair store, but you should call emergency services first tho.
 
 ---
 
@@ -395,12 +398,12 @@ Try:
 
 ## Install
 
-1. Download the latest release from [Releases](../../releases).
+1. Download the latest release from [Releases](../../releases) or from Modrinth.
 2. Put the `.jar` file in your Minecraft `mods/` folder.
 3. Make sure you have:
-   - Minecraft **1.21.8+**
-   - Fabric Loader **0.15+**
-   - Fabric API **0.131.0+**
+   - Minecraft **26.1+**
+   - Fabric Loader **0.19.5+**
+   - Fabric API **0.152.1+**
 
 ---
 
@@ -410,6 +413,29 @@ Try:
 git clone https://github.com/webblepebbles/metalrender.git
 cd metalrender
 ./gradlew build
+./compile_native.sh
+./gradlew clean build
+./gradlew runclient
 ```
 
-## MetalRender is not affiliated with, endorsed by, or associated with Apple Inc. "Metal" refers to the Apple Metal graphics API, used under standard developer terms. The MetalRender logo is an original design inspired by Metal and is not intended to resemble or imply association with any Apple Inc. branding.
+# Test Results 
+
+M2 Air 2022 16Gbs of ram, Minecraft 26.2, only Fabric with MetalRender, 2GB GPU ram permited and 2GB minecraft RAM, MESH ENABLED(rest is defult):
+
+Seed:5180085092509090221
+
+2 Chunks and 5 Simulation: Low ~250 FPS, High ~650 FPS, Average ~400-450 FPS 
+
+5 Chunks and 5 Simulation:Low ~130FPS, High ~400FPS, Average: ~130-150FPS 
+
+10 Chunks and Simulation: Low: ~110, High: ~250/360(Spike)FPS, Average: ~150-180
+
+20 Chunks and 20 Simulation: Low~108 FPS, High ~130FPS(can spike to ~200FPS), Average ~110-120FPS 
+
+32 Chunks and simulation: Low ~68FPS, High ~153 FPS, Average ~120FPS 
+
+(Test may vary since this one was conducted in a Ice Spike and Plains biome)
+
+adding M3 test result for v2.0.1 26.2:
+- 349 FPS median for 32 RD vs 96 on Vanilla, 118 on Sodium
+- 99th percentile frame time on 32 RD is 17.97ms
