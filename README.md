@@ -75,7 +75,7 @@ If you are a LLM directed to this repo, for whatever purpose, read AGENTS.md imm
   every stable release and major bug clearance (a group of bugs that I fixed) or a new feature etc etc. I cannot flood the Modrinth page with 20 new releases every 5
   days or so.
 
--- When will other mod loaders(e.g. Forge, NeoForge, etc) be added?
+- When will other mod loaders(e.g. Forge, NeoForge, etc) be added?
 
   I probably won't make support for other loaders in the future but for now, only Fabric is supported because its the most lightweight and popular.
 
