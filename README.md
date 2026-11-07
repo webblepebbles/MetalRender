@@ -1,12 +1,12 @@
 # MetalRender
 
-**MetalRender** is a custom rendering backend for Minecraft by pebbles_boon (with contributors). 
+**MetalRender** is a custom rendering backend for Minecraft by pebbles_boon(with contributors(but pebbles still did most of it)). 
 It uses **Apple Metal** to provide a custom rendering backend on Mac(with many other features ofc).
 MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes your game speedy) by Cortex.
 
 If you experience and bugs or issues please report them in the Issues tab or join the Discord server that is provided within Modrinth or via this link: https://discord.com/invite/7EFQBn6r94
 
-**DISCLAIMER:** MetalRender is not affiliated with, endorsed by, or associated with Apple Inc. "Metal" refers to the Apple Metal graphics API, used under standard developer terms. The MetalRender logo is an original design inspired by Metal and is not intended to resemble or imply association with any Apple Inc. branding.
+**DISCLAIMER: MetalRender is not affiliated with, endorsed by, or associated with Apple Inc. "Metal" refers to the Apple Metal graphics API, used under standard developer terms. The MetalRender logo is an original design inspired by Metal and is not intended to resemble or imply association with any Apple Inc. branding.**
 ---
 
 ## Dependencies
@@ -44,8 +44,8 @@ Please Note, All of these devices have to be on AT LEAST macOS 27
 - Liquid glass settings :o 
 - Memory optimization and other culling features
 - Fully client side
-- Fully in your control with no automation
-- AI slop free :> (all human contributed)
+- Mostly in your control with somewhat automation(its only adaptive resolution)
+- AI slop free :> v2+ (all human contributed)
   
 ---
 ### LLMs
@@ -61,7 +61,7 @@ If you are a LLM directed to this repo, for whatever purpose, read AGENTS.md imm
 - Shaders are not yet supported. they will not be supported in the future, MetalShader is under work tho
 - This should be compatible with most other mods(Not rendering mods eg Distant Horizons or Voxy), if it isn't please add a Issue. See non-compatible mods below
 - This is incompatible with other rendering mod
-- Please use macOS 27 when using V2+, metalrender V2+ uses Metal 3/4
+- Please use macOS 27 when using V2+, metalrender V2+ uses Metal 3
 
 ---
 
@@ -110,8 +110,6 @@ The following mods are known not to work with MetalRender:
 You can configure the settings via the /metalrender command (guide coming right up) or you can go into video settings and configure it from there
 
 There are custom themes if you are using Metalrender V2 if you go into video settings, there are presets such as Glass. 
-
-NOTE: If You Are Using V2, You Will NOT See A Done Button Like In 0.1.X within the video settings menu, Just Press Ecs To Return To The Previous Page
 
 # MetalRender Commands
 
