@@ -18,4 +18,19 @@ public final class MetalBackendStats {
             return null;
         }
     }
+
+    public static String presentationReport() {
+        try {
+            return MetalNative.nPresentationReport();
+        } catch (UnsatisfiedLinkError e) {
+            return null;
+        }
+    }
+
+    public static void setPresentationDiagnostics(boolean enabled) {
+        try {
+            MetalNative.nSetPresentationDiagnostics(enabled);
+        } catch (UnsatisfiedLinkError e) {
+        }
+    }
 }

@@ -72,7 +72,7 @@ public final class AdaptiveResolutionController {
     private void applyScale(double scale) {
         MetalRenderConfig.setResolutionScale((float) scale);
         lastChangeMs = System.currentTimeMillis();
-        MetalLogger.info(
+        MetalLogger.deepInfo(
                 "adaptive resolution: scale %.2fx (gpu %.1fms, budget %.1fms)",
                 scale, emaGpuMs, frameBudgetMs);
     }

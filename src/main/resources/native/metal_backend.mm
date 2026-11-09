@@ -62,8 +62,14 @@ std::atomic<float> g_backendGpuMs{0.0f};
 std::atomic<int> g_backendEncoders{0};
 std::atomic<uint64_t> g_backendPresents{0};
 std::atomic<uint64_t> g_backendSkippedPresents{0};
-static std::atomic<bool> g_pacedAllowed{true};
+static std::atomic<bool> g_pacedAllowed{false};
 static std::atomic<bool> g_vsyncOn{false};
+static std::atomic<bool> g_presentationDiagnostics{false};
+static std::mutex g_presentStatsMutex;
+static double g_lastPresentedTime = 0.0;
+static double g_presentIntervals[8192];
+static size_t g_presentIntervalCount = 0;
+static uint64_t g_presentCallbacks = 0, g_presentUnavailable = 0, g_presentOutOfOrder = 0, g_presentOverflow = 0;
 static std::atomic<uint64_t> g_nextRefreshNs{0};
 static std::atomic<uint64_t> g_refreshPeriodNs{0};
 static std::atomic<uint64_t> g_linkTick{0};
@@ -533,12 +539,61 @@ extern "C" JNIEXPORT void JNICALL MR_JNI(nSetPacedPresent)(JNIEnv *, jclass, jbo
   g_pacedAllowed.store(enabled ? true : false);
 }
 
+extern "C" JNIEXPORT void JNICALL MR_JNI(nSetPresentationDiagnostics)(JNIEnv *, jclass, jboolean enabled) {
+  g_presentationDiagnostics.store(enabled == JNI_TRUE);
+}
+
 extern "C" JNIEXPORT jlongArray JNICALL MR_JNI(nBackendStats)(JNIEnv *env, jclass) {
   jlong values[3] = {(jlong)g_backendEncoders.load(), (jlong)g_backendPresents.load(),
                      (jlong)g_backendSkippedPresents.load()};
   jlongArray out = env->NewLongArray(3);
   env->SetLongArrayRegion(out, 0, 3, values);
   return out;
+}
+
+extern "C" JNIEXPORT jstring JNICALL MR_JNI(nPresentationReport)(JNIEnv *env, jclass) {
+  static uint64_t previousNs = 0, previousSubmitted = 0, previousSkipped = 0;
+  uint64_t now = mr_now_ns();
+  uint64_t submitted = g_backendPresents.load(), skipped = g_backendSkippedPresents.load();
+  std::vector<double> intervals;
+  uint64_t callbacks, unavailable, outOfOrder, overflow;
+  {
+    std::lock_guard<std::mutex> lock(g_presentStatsMutex);
+    intervals.assign(g_presentIntervals, g_presentIntervals + g_presentIntervalCount);
+    g_presentIntervalCount = 0;
+    callbacks = g_presentCallbacks; g_presentCallbacks = 0;
+    unavailable = g_presentUnavailable; g_presentUnavailable = 0;
+    outOfOrder = g_presentOutOfOrder; g_presentOutOfOrder = 0;
+    overflow = g_presentOverflow; g_presentOverflow = 0;
+  }
+  double seconds = previousNs ? (now - previousNs) / 1e9 : 0.0;
+  char window[32];
+  if (previousNs)
+    snprintf(window, sizeof(window), "%.2fs", seconds);
+  else
+    snprintf(window, sizeof(window), "initial");
+  uint64_t submittedDelta = submitted - previousSubmitted, skippedDelta = skipped - previousSkipped;
+  previousNs = now; previousSubmitted = submitted; previousSkipped = skipped;
+  std::sort(intervals.begin(), intervals.end());
+  char report[512];
+  if (intervals.empty()) {
+    snprintf(report, sizeof(report), "window=%s submitted=%llu skipped=%llu callbacks=%llu unavailable=%llu out_of_order=%llu overflow=%llu intervals=0 vsync=%s paced=%s",
+             window, (unsigned long long)submittedDelta, (unsigned long long)skippedDelta,
+             (unsigned long long)callbacks, (unsigned long long)unavailable, (unsigned long long)outOfOrder,
+             (unsigned long long)overflow,
+             g_vsyncOn.load() ? "on" : "off", g_pacedAllowed.load() ? "on" : "off");
+  } else {
+    double sum = 0;
+    for (double interval : intervals) sum += interval;
+    size_t p95 = (intervals.size() * 95 + 99) / 100 - 1;
+    size_t p99 = (intervals.size() * 99 + 99) / 100 - 1;
+    snprintf(report, sizeof(report), "window=%s submitted=%llu skipped=%llu callbacks=%llu unavailable=%llu out_of_order=%llu overflow=%llu intervals=%zu interval_ms(avg=%.2f p95=%.2f p99=%.2f max=%.2f) vsync=%s paced=%s",
+             window, (unsigned long long)submittedDelta, (unsigned long long)skippedDelta,
+             (unsigned long long)callbacks, (unsigned long long)unavailable, (unsigned long long)outOfOrder,
+             (unsigned long long)overflow, intervals.size(), sum / intervals.size(), intervals[p95], intervals[p99], intervals.back(),
+             g_vsyncOn.load() ? "on" : "off", g_pacedAllowed.load() ? "on" : "off");
+  }
+  return env->NewStringUTF(report);
 }
 
 extern "C" JNIEXPORT jlong JNICALL
@@ -1250,6 +1305,24 @@ extern "C" JNIEXPORT jboolean JNICALL MR_JNI(nCtxPresent)(JNIEnv *, jclass, jlon
     [enc setFragmentTexture:source atIndex:0];
     [enc drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:3];
     [enc endEncoding];
+    if (g_presentationDiagnostics.load()) [drawable addPresentedHandler:^(id<MTLDrawable> presented) {
+      double timestamp = presented.presentedTime;
+      std::lock_guard<std::mutex> lock(g_presentStatsMutex);
+      g_presentCallbacks++;
+      if (timestamp <= 0.0) {
+        g_presentUnavailable++;
+      } else if (g_lastPresentedTime > 0.0 && timestamp <= g_lastPresentedTime) {
+        g_presentOutOfOrder++;
+      } else {
+        if (g_lastPresentedTime > 0.0) {
+          if (g_presentIntervalCount < 8192)
+            g_presentIntervals[g_presentIntervalCount++] = (timestamp - g_lastPresentedTime) * 1000.0;
+          else
+            g_presentOverflow++;
+        }
+        g_lastPresentedTime = timestamp;
+      }
+    }];
     [cmd presentDrawable:drawable];
     if (prefetched)
       mr_prefetch_drawable(layer);

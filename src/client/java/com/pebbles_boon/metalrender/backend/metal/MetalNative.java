@@ -143,7 +143,11 @@ final class MetalNative {
 
     static native void nSetPacedPresent(boolean enabled);
 
+    static native void nSetPresentationDiagnostics(boolean enabled);
+
     static native long[] nBackendStats();
+
+    static native String nPresentationReport();
 
     static native long nCtxSubmit(long ctx, boolean frameEnd);
 

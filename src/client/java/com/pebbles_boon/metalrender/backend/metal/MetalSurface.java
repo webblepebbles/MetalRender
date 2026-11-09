@@ -32,7 +32,9 @@ final class MetalSurface {
             throw new IllegalStateException("CAMetalLayer creation failed: " + MetalNative.nLastError());
         }
         MetalNative.nSetPacedPresent(
-                com.pebbles_boon.metalrender.config.MetalRenderConfig.getBool("metalrender.pacedPresent", true));
+                com.pebbles_boon.metalrender.config.MetalRenderConfig.getBool("metalrender.pacedPresent", false));
+        MetalNative.nSetPresentationDiagnostics(
+                com.pebbles_boon.metalrender.config.MetalRenderConfig.isDeepDebugActive());
     }
 
     private static int[] pixelSize(long window) {

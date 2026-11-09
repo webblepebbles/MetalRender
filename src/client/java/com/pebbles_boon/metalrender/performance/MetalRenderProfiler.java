@@ -365,7 +365,8 @@ public final class MetalRenderProfiler {
                     meshesBuilt, uploadsDone, chunksScanned, chunksDrawn);
         }
 
-        if (nowMs - lastLogTimeMs >= LOG_INTERVAL_MS) {
+        if (com.pebbles_boon.metalrender.config.MetalRenderConfig.isDeepDebugActive()
+                && nowMs - lastLogTimeMs >= LOG_INTERVAL_MS) {
             lastLogTimeMs = nowMs;
             logPeriodic(frameMs, cpuMs, renderMs,
                     meshMs, uploadMs, cullMs, gpuMs,
@@ -894,18 +895,11 @@ public final class MetalRenderProfiler {
     private void logPeriodic(double frameMs, double cpuMs, double renderMs,
             double meshMs, double uploadMs, double cullMs, double gpuMs,
             int meshesBuilt, int uploadsDone, int chunksScanned, int chunksDrawn) {
-        double totalTracked = meshMs + uploadMs + cullMs + gpuMs;
-        double otherMs = Math.max(0.0, frameMs - totalTracked);
-        double totalBase = Math.max(frameMs, totalTracked);
-
         StringBuilder sb = new StringBuilder();
-        sb.append("[profiler] ");
-        sb.append(String.format(Locale.ROOT, "frame=%.2fms cpu=%.2fms render=%.2fms | ", frameMs, cpuMs, renderMs));
-        sb.append(String.format(Locale.ROOT, "mesh=%.2fms(%.1f%%) ", meshMs, pct(meshMs, totalBase)));
-        sb.append(String.format(Locale.ROOT, "upload=%.2fms(%.1f%%) ", uploadMs, pct(uploadMs, totalBase)));
-        sb.append(String.format(Locale.ROOT, "cull=%.2fms(%.1f%%) ", cullMs, pct(cullMs, totalBase)));
-        sb.append(String.format(Locale.ROOT, "gpu=%.2fms(%.1f%%) ", gpuMs, pct(gpuMs, totalBase)));
-        sb.append(String.format(Locale.ROOT, "other=%.2fms(%.1f%%) | ", otherMs, pct(otherMs, totalBase)));
+        sb.append("[profiler] sampled_frame ");
+        sb.append(String.format(Locale.ROOT, "frame=%.2fms cpu=%.2fms render=%.2fms ", frameMs, cpuMs, renderMs));
+        sb.append(String.format(Locale.ROOT, "mesh=%.2fms upload=%.2fms cull=%.2fms gpu=%.2fms | ",
+                meshMs, uploadMs, cullMs, gpuMs));
         sb.append(String.format(Locale.ROOT, "meshes_built=%d uploads=%d scanned=%d drawn=%d",
                 meshesBuilt, uploadsDone, chunksScanned, chunksDrawn));
         MetalLogger.info(sb.toString());

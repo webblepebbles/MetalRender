@@ -273,7 +273,7 @@ public class MetalEntityRenderer {
         }
 
         if (!blockEntityStates.isEmpty() && frameCount % 300 == 0) {
-            MetalLogger.info("[blockentity] states=%d verts=%d", blockEntityStates.size(),
+            MetalLogger.debug("[blockentity] states=%d verts=%d", blockEntityStates.size(),
                     metalVertexConsumer.getVertexCount() - beStart);
         }
 

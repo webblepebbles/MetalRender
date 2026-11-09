@@ -51,6 +51,8 @@ public class MetalRenderClient implements ClientModInitializer {
         }
         MetalLogger.info("metalrender weady");
         config = MetalRenderConfig.load();
+        com.pebbles_boon.metalrender.backend.metal.MetalBackendStats.setPresentationDiagnostics(
+                MetalRenderConfig.isDeepDebugActive());
         cfgWasOn = config != null && config.enableMetalRendering;
         MetalDebugEntry.register();
         MetalRenderProfilerOverlay.register();

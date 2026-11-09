@@ -99,7 +99,7 @@ public class WorldRendererTerrainMixin {
         metalrender$skippedTerrainGroups++;
         if (metalrender$skippedTerrainGroups <= 3 ||
                 metalrender$skippedTerrainGroups % 1000 == 0) {
-            MetalLogger.info(
+            MetalLogger.debug(
                     "[terrainmix] cancelled pass #%d (section iteration skipped)",
                     metalrender$skippedTerrainGroups);
         }

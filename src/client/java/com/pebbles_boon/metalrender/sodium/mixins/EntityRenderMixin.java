@@ -172,7 +172,7 @@ public class EntityRenderMixin {
             }
         }
         if (metalrender$blockEntityFrames % 300 == 1) {
-            MetalLogger.info("[blockentity] collected=%d", levelRenderState.blockEntityRenderStates.size());
+            MetalLogger.debug("[blockentity] collected=%d", levelRenderState.blockEntityRenderStates.size());
         }
     }
 }

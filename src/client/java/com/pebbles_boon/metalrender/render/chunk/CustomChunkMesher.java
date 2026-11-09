@@ -728,7 +728,7 @@ public class CustomChunkMesher {
                 if (!snapshot.valid) {
                     int v = DIAG_INVALID.incrementAndGet();
                     if (v % 2000 == 1) {
-                        MetalLogger.info("builddiag: invalid_snapshot=%d empty=%d built=%d",
+                        MetalLogger.debug("builddiag: invalid_snapshot=%d empty=%d built=%d",
                                 DIAG_INVALID.get(), DIAG_EMPTY.get(), DIAG_BUILT.get());
                     }
                     return;
@@ -749,7 +749,7 @@ public class CustomChunkMesher {
                 long acc = BUILD_WALL_ACC.getAndAdd(taskWall);
                 int cnt = BUILD_WALL_CNT.incrementAndGet();
                 if (cnt % 1000 == 0) {
-                    MetalLogger.info(
+                    MetalLogger.debug(
                             "builddiag: avg_wall=%.2fms over %d tasks sub=%d cancel=%d new=%d repl=%d inv=%d empty=%d mdirty=%d cchanged=%d",
                             (double) acc / cnt / 1e6, cnt, DIAG_SUBMIT.get(), DIAG_CANCEL.get(), DIAG_NEW.get(),
                             DIAG_REPLACE.get(), DIAG_INVALID.get(), DIAG_EMPTY.get(), DIAG_MARKDIRTY.get(),
