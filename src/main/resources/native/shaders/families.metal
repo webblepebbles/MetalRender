@@ -22,6 +22,9 @@ constant bool HAS_NORMAL [[function_constant(MR_FC_HAS_NORMAL)]];
 constant bool HAS_LINE_WIDTH [[function_constant(MR_FC_HAS_LINE_WIDTH)]];
 constant bool HAS_PROJECTION [[function_constant(MR_FC_HAS_PROJECTION)]];
 constant bool HAS_DYNAMIC_TRANSFORMS [[function_constant(MR_FC_HAS_DYNAMIC_TRANSFORMS)]];
+constant bool GLINT [[function_constant(MR_FC_GLINT)]];
+constant bool GLINT_SPECIAL [[function_constant(MR_FC_GLINT_SPECIAL)]];
+constant bool HAS_UV3 [[function_constant(MR_FC_HAS_UV3)]];
 
 constant bool GUI_TEX2D = FS_VARIANT == MR_FS_POSITION_TEX_COLOR || FS_VARIANT == MR_FS_GLASS;
 constant bool GUI_CUBE = FS_VARIANT == MR_FS_PANORAMA;
@@ -66,6 +69,7 @@ struct VIn {
   short2 uv2 [[attribute(4), function_constant(HAS_UV2)]];
   float3 normal [[attribute(5), function_constant(HAS_NORMAL)]];
   float lineWidth [[attribute(6), function_constant(HAS_LINE_WIDTH)]];
+  float2 uv3 [[attribute(7), function_constant(HAS_UV3)]];
 };
 
 struct VOut {
@@ -635,7 +639,7 @@ constant bool TERRAIN_VS_LIGHTMAP = VS_VARIANT == MR_VS_TERRAIN || VS_VARIANT ==
 constant bool ENTITY_VS_LIGHTING = (VS_VARIANT == MR_VS_ENTITY && !NO_CARDINAL_LIGHTING) || VS_VARIANT == MR_VS_ITEM;
 constant bool ENTITY_VS_LIGHTMAP = (VS_VARIANT == MR_VS_ENTITY && !EMISSIVE) || VS_VARIANT == MR_VS_ITEM ||
                                    VS_VARIANT == MR_VS_LEASH;
-constant bool ENTITY_VS_OVERLAY = VS_VARIANT == MR_VS_ENTITY && !NO_OVERLAY;
+constant bool ENTITY_VS_OVERLAY = (VS_VARIANT == MR_VS_ENTITY && !NO_OVERLAY) || VS_VARIANT == MR_VS_ITEM;
 constant bool ENTITY_FS_FOG = FS_VARIANT == MR_FS_ENTITY || FS_VARIANT == MR_FS_ITEM || FS_VARIANT == MR_FS_GLINT ||
                               FS_VARIANT == MR_FS_POSITION || FS_VARIANT == MR_FS_BEACON_BEAM ||
                               FS_VARIANT == MR_FS_END_PORTAL || FS_VARIANT == MR_FS_ENTITY_SHADOW ||
@@ -646,7 +650,9 @@ constant bool ENTITY_FS_TEX0 = FS_VARIANT == MR_FS_ENTITY || FS_VARIANT == MR_FS
                                FS_VARIANT == MR_FS_ENTITY_SHADOW || FS_VARIANT == MR_FS_OUTLINE;
 constant bool ENTITY_FS_PORTAL = FS_VARIANT == MR_FS_END_PORTAL;
 constant bool ENTITY_FS_DISSOLVE = FS_VARIANT == MR_FS_ENTITY && DISSOLVE;
-constant bool ENTITY_FS_GLOBALS = FS_VARIANT == MR_FS_GLINT || FS_VARIANT == MR_FS_END_PORTAL;
+constant bool ENTITY_FS_GLOBALS = FS_VARIANT == MR_FS_GLINT || FS_VARIANT == MR_FS_END_PORTAL ||
+                                  (GLINT && (FS_VARIANT == MR_FS_ITEM || FS_VARIANT == MR_FS_ENTITY));
+constant bool ENTITY_FS_GLINT = GLINT && (FS_VARIANT == MR_FS_ITEM || FS_VARIANT == MR_FS_ENTITY);
 constant bool ENTITY_FS_PROJECTION = FS_VARIANT == MR_FS_BEACON_BEAM;
 
 constant bool WORLD_VS_CLOUDS = VS_VARIANT == MR_VS_CLOUDS;
@@ -663,6 +669,7 @@ struct WOut {
   float4 texProj;
   float4 flatColor [[flat]];
   float2 uv0;
+  float2 uvGlint;
   float sphericalDistance;
   float cylindricalDistance;
 };
@@ -677,6 +684,7 @@ static inline WOut mr_wout() {
   o.texProj = float4(0.0);
   o.flatColor = float4(1.0);
   o.uv0 = float2(0.0);
+  o.uvGlint = float2(0.0);
   o.sphericalDistance = 0.0;
   o.cylindricalDistance = 0.0;
   return o;
@@ -857,8 +865,13 @@ vertex WOut entity_vertex(VIn in [[stage_in]],
     o.color = mr_mix_light_separate(mr_compute_light(lighting, mr_normal(in)), color);
     if (ENTITY_VS_LIGHTMAP) {
       if (HAS_UV2) {
-        o.color *= mr_lightmap(lightmap, lightmapSampler, in.uv2);
+        o.lightColor = mr_lightmap(lightmap, lightmapSampler, in.uv2);
       }
+    }
+    if (HAS_UV1) {
+      uint2 size = uint2(overlayTex.get_width(), overlayTex.get_height());
+      uint2 texel = uint2(clamp(int2(in.uv1), int2(0), int2(size) - 1));
+      o.overlay = overlayTex.read(texel, 0);
     }
   } else if (VS_VARIANT == MR_VS_GLINT || VS_VARIANT == MR_VS_WORLD_BORDER) {
     o.uv0 = (mr_mat4(dt.TextureMat) * float4(o.uv0, 0.0, 1.0)).xy;
@@ -877,6 +890,11 @@ vertex WOut entity_vertex(VIn in [[stage_in]],
     o.flatColor = color * mr_vec4(dt.ColorModulator) * lm;
   } else {
     o.color = color;
+  }
+  if (GLINT && (VS_VARIANT == MR_VS_ITEM || VS_VARIANT == MR_VS_ENTITY)) {
+    float2 uv = mr_uv0(in);
+    if (VS_VARIANT == MR_VS_ITEM && GLINT_SPECIAL && HAS_UV3) uv = in.uv3;
+    o.uvGlint = (mr_mat4(dt.TextureMat) * float4(uv, 0.0, 1.0)).xy;
   }
   return o;
 }
@@ -906,7 +924,9 @@ fragment float4 entity_fragment(WOut in [[stage_in]], bool frontFacing [[front_f
                                 texture2d<float> tex1 [[texture(1), function_constant(ENTITY_FS_PORTAL)]],
                                 sampler s1 [[sampler(1), function_constant(ENTITY_FS_PORTAL)]],
                                 texture2d<float> dissolve [[texture(3), function_constant(ENTITY_FS_DISSOLVE)]],
-                                sampler dissolveSampler [[sampler(3), function_constant(ENTITY_FS_DISSOLVE)]]) {
+                                sampler dissolveSampler [[sampler(3), function_constant(ENTITY_FS_DISSOLVE)]],
+                                texture2d<float> glintTex [[texture(4), function_constant(ENTITY_FS_GLINT)]],
+                                sampler glintSampler [[sampler(4), function_constant(ENTITY_FS_GLINT)]]) {
   float sph = in.sphericalDistance;
   float cyl = in.cylindricalDistance;
   if (FS_VARIANT == MR_FS_ENTITY) {
@@ -927,11 +947,16 @@ fragment float4 entity_fragment(WOut in [[stage_in]], bool frontFacing [[front_f
       face.a = 1.0;
     }
     color *= face * mr_vec4(dt.ColorModulator);
+    if (ENTITY_FS_GLINT) color.a = max(color.a, globals.GlintAlpha);
     if (!NO_OVERLAY) {
       color.rgb = mix(in.overlay.rgb, color.rgb, in.overlay.a);
     }
     if (!EMISSIVE) {
       color *= in.lightColor;
+    }
+    if (ENTITY_FS_GLINT) {
+      float3 glint = globals.GlintAlpha * glintTex.sample(glintSampler, in.uvGlint).rgb;
+      color.rgb += glint * glint;
     }
     return mr_fog(fog, color, sph, cyl);
   }
@@ -943,6 +968,13 @@ fragment float4 entity_fragment(WOut in [[stage_in]], bool frontFacing [[front_f
       }
     }
     color *= in.color * mr_vec4(dt.ColorModulator);
+    if (ENTITY_FS_GLINT) color.a = max(color.a, globals.GlintAlpha);
+    color.rgb = mix(in.overlay.rgb, color.rgb, in.overlay.a);
+    color *= in.lightColor;
+    if (ENTITY_FS_GLINT) {
+      float3 glint = globals.GlintAlpha * glintTex.sample(glintSampler, in.uvGlint).rgb;
+      color.rgb += glint * glint;
+    }
     return mr_fog(fog, color, sph, cyl);
   }
   if (FS_VARIANT == MR_FS_GLINT) {

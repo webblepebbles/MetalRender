@@ -39,6 +39,7 @@ final class MetalBindings {
         TEXTURES.put("Sampler1", 1);
         TEXTURES.put("Sampler2", 2);
         TEXTURES.put("DissolveMaskSampler", 3);
+        TEXTURES.put("GlintSampler", 4);
         TEXTURES.put("InSampler", 0);
         TEXTURES.put("BlurSampler", 1);
         TEXTURES.put("Sprite", 0);

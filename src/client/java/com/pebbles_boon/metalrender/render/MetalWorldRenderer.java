@@ -537,6 +537,7 @@ public class MetalWorldRenderer {
         loggedWorldLoadWithoutRenderer = false;
         delayedBlockRebuildFrames.clear();
         urgentEditSet.clear();
+        lightUpdates.clear();
         frameCount = 0;
         lastDrawnChunkCount = 0;
         if (meshShaderBackend != null) {
@@ -1246,6 +1247,7 @@ public class MetalWorldRenderer {
     private final it.unimi.dsi.fastutil.longs.LongOpenHashSet pendingBuildSet = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
     private final it.unimi.dsi.fastutil.longs.LongArrayList sortedBuildList = new it.unimi.dsi.fastutil.longs.LongArrayList();
     private final it.unimi.dsi.fastutil.longs.LongOpenHashSet urgentEditSet = new it.unimi.dsi.fastutil.longs.LongOpenHashSet();
+    private final java.util.Set<Long> lightUpdates = java.util.concurrent.ConcurrentHashMap.newKeySet();
     private static final int URGENT_EDIT_MAX_PER_FRAME = 32;
     private long[] sortKeyScratch = new long[1024];
     private final it.unimi.dsi.fastutil.longs.LongArrayList sortReorderScratch = new it.unimi.dsi.fastutil.longs.LongArrayList();
@@ -1484,7 +1486,8 @@ public class MetalWorldRenderer {
             lastScanMs = scanNs / 1_000_000.0;
             MetalRenderProfiler.getInstance().recordScanTime(scanNs);
         }
-        if (mc.player != null && chunkMesher.getMeshCount() < maxMeshes) {
+        if (mc.player != null) {
+            drainLightSectionRebuilds();
             int playerChunkX = mc.player.chunkPosition().x();
             int playerChunkZ = mc.player.chunkPosition().z();
             int playerSectionY = mc.player.getBlockY() >> 4;
@@ -2860,6 +2863,7 @@ public class MetalWorldRenderer {
         pendingBuildSet.clear();
         sortedBuildList.clear();
         urgentEditSet.clear();
+        lightUpdates.clear();
         sortedListDirty = true;
         scanFrameCounter = 0;
         scanFrontierRing = 0;
@@ -3071,6 +3075,20 @@ public class MetalWorldRenderer {
         onLightDataApplied(chunkX, chunkY, chunkZ, false, false, 0L);
     }
 
+    public void queueLightSectionRebuild(int chunkX, int chunkY, int chunkZ) {
+        lightUpdates.add(packChunkKey(chunkX, chunkY, chunkZ));
+    }
+
+    private void drainLightSectionRebuilds() {
+        for (long key : lightUpdates) {
+            if (!lightUpdates.remove(key)) continue;
+            int cx = unpackChunkX(key), cy = unpackChunkY(key), cz = unpackChunkZ(key);
+            if (!chunkMesher.hasMeshIgnoreDirty(cx, cy, cz) && !chunkMesher.isBuildPending(cx, cy, cz)) continue;
+            chunkMesher.contentChanged(cx, cy, cz, "light_update");
+            queueUrgentEdit(cx, cy, cz);
+        }
+    }
+
     public void onLightDataApplied(int chunkX, int chunkY, int chunkZ,
             boolean skyLayer, boolean hasData, long incomingHash) {
         if (!worldLoaded || !renderingActive) {
@@ -3224,9 +3242,6 @@ public class MetalWorldRenderer {
         if (urgentEditSet.isEmpty()) {
             return 0;
         }
-        if (chunkMesher.getMeshCount() >= maxMeshes) {
-            return 0;
-        }
         long[] keys = urgentEditSet.toLongArray();
         int submitted = 0;
         for (long key : keys) {
@@ -3238,10 +3253,6 @@ public class MetalWorldRenderer {
             int cz = unpackChunkZ(key);
             boolean ok = chunkMesher.buildMeshFromWorldInteractive(cx, cy, cz);
             if (!ok) {
-                if (pendingBuildSet.add(key)) {
-                    sortedListDirty = true;
-                }
-                urgentEditSet.remove(key);
                 continue;
             }
             urgentEditSet.remove(key);

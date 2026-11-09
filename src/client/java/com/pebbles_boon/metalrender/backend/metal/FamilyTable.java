@@ -228,6 +228,22 @@ public final class FamilyTable {
     static synchronized RenderPipeline findOrSynthesize(
             com.mojang.renderpearl.backend.api.BackendRenderPipeline.CreateInfo info) {
         RenderPipeline found = find(info.name());
+        boolean glint = info.uniforms().stream().anyMatch(u -> "GlintSampler".equals(u.name()));
+        if (glint || (found != null && found.getShaderDefines().flags().contains("GLINT"))) {
+            for (java.lang.reflect.Field field : RenderPipelines.class.getFields()) {
+                if (field.getType() != RenderPipeline.class) continue;
+                try {
+                    RenderPipeline candidate = (RenderPipeline) field.get(null);
+                    if (candidate == null || !candidate.getLocation().toString().equals(info.name())
+                            || candidate.getShaderDefines().flags().contains("GLINT") != glint) continue;
+                    var formats = candidate.getVertexFormatBindings();
+                    if (!info.vertexBuffers().isEmpty() && !formats.isEmpty()
+                            && formats.get(0).getVertexSize() != info.vertexBuffers().get(0).stride()) continue;
+                    return candidate;
+                } catch (IllegalAccessException ignored) {
+                }
+            }
+        }
         if (found != null || info.shaders().size() < 2) {
             return found;
         }

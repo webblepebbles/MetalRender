@@ -43,6 +43,9 @@ public final class MetalCompiledPipeline implements BackendRenderPipeline {
     private static final int FC_HAS_POSITION = 17;
     private static final int FC_HAS_PROJECTION = 18;
     private static final int FC_HAS_DYNAMIC_TRANSFORMS = 19;
+    private static final int FC_GLINT = 20;
+    private static final int FC_GLINT_SPECIAL = 21;
+    private static final int FC_HAS_UV3 = 22;
 
     private final MetalDeviceBackend device;
     private final RenderPipeline info;
@@ -330,6 +333,7 @@ public final class MetalCompiledPipeline implements BackendRenderPipeline {
             case "UV2" -> 4;
             case "Normal" -> 5;
             case "LineWidth" -> 6;
+            case "UV3" -> 7;
             default -> -1;
         };
     }
@@ -454,6 +458,9 @@ public final class MetalCompiledPipeline implements BackendRenderPipeline {
         addBool(c, FC_NO_CARDINAL_LIGHTING, defines.flags().contains("NO_CARDINAL_LIGHTING"));
         addBool(c, FC_APPLY_TEXTURE_MATRIX, defines.flags().contains("APPLY_TEXTURE_MATRIX"));
         addBool(c, FC_DISSOLVE, defines.flags().contains("DISSOLVE"));
+        addBool(c, FC_GLINT, defines.flags().contains("GLINT"));
+        addBool(c, FC_GLINT_SPECIAL, defines.flags().contains("GLINT_SPECIAL"));
+        addBool(c, FC_HAS_UV3, format != null && format.contains("UV3"));
         String cutout = defines.values().get("ALPHA_CUTOUT");
         if (cutout != null) {
             try {

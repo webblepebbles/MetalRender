@@ -862,22 +862,19 @@ public class CustomChunkMesher {
         DIAG_MARKDIRTY.incrementAndGet();
         long key = packChunkKey(cx, cy, cz);
         boolean newlyDirty;
-        synchronized (dirtyKeys) {
-            newlyDirty = dirtyKeys.add(key);
+        synchronized (dirtyGeneration) {
+            synchronized (dirtyKeys) {
+                newlyDirty = dirtyKeys.add(key);
+            }
+            dirtyGeneration.put(key, dirtyGeneration.get(key) + 1L);
         }
-        if (!newlyDirty) {
-            return;
-        }
-        connectivityDirtyGeneration.incrementAndGet();
+        if (newlyDirty) connectivityDirtyGeneration.incrementAndGet();
         noteRebuild(reason);
         synchronized (emptyKeys) {
             emptyKeys.remove(key);
         }
         synchronized (pendingKeys) {
             pendingKeys.remove(key);
-        }
-        synchronized (dirtyGeneration) {
-            dirtyGeneration.put(key, dirtyGeneration.get(key) + 1L);
         }
     }
 
@@ -1538,8 +1535,12 @@ public class CustomChunkMesher {
         synchronized (emptyKeys) {
             emptyKeys.add(key);
         }
-        synchronized (dirtyKeys) {
-            dirtyKeys.remove(key);
+        synchronized (dirtyGeneration) {
+            if (dirtyGeneration.get(key) == generation) {
+                synchronized (dirtyKeys) {
+                    dirtyKeys.remove(key);
+                }
+            }
         }
         meshUpdateGeneration.incrementAndGet();
         recordVisibleLatency(key);
@@ -2784,8 +2785,12 @@ public class CustomChunkMesher {
             recordBuiltLightHashes(key, snapshot);
             recordVisibleLatency(key);
             MetalRenderProfiler.getInstance().incrementMeshesBuilt(1);
-            synchronized (dirtyKeys) {
-                if (dirtyKeys.remove(key)) connectivityDirtyGeneration.incrementAndGet();
+            synchronized (dirtyGeneration) {
+                if (dirtyGeneration.get(key) == generation) {
+                    synchronized (dirtyKeys) {
+                        if (dirtyKeys.remove(key)) connectivityDirtyGeneration.incrementAndGet();
+                    }
+                }
             }
         } catch (Exception e) {
             java.io.StringWriter sw = new java.io.StringWriter();
