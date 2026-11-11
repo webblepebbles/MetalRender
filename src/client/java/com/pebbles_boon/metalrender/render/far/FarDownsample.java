@@ -6,7 +6,8 @@ public final class FarDownsample {
     private FarDownsample() {
     }
 
-    public static int[] merge(int[] a, int[] b, int[] c, int[] d) {
+    public static int[] merge(int[] a, int[] b, int[] c, int[] d, int shift) {
+        int sub = 1 << shift;
         int[][] s = SCRATCH.get();
         int[] cellState = s[0];
         int[] cellLo = s[1];
@@ -19,7 +20,7 @@ public final class FarDownsample {
         for (int[] k : kids) {
             for (int i = 0; i < k.length; i += 3) {
                 int top = FarTileData.y0(k[i]) + FarTileData.len(k[i]);
-                maxCell = Math.max(maxCell, (top + 1) >> 1);
+                maxCell = Math.max(maxCell, (top + sub - 1) >> shift);
             }
         }
         if (maxCell == 0) {
@@ -35,12 +36,12 @@ public final class FarDownsample {
                 int lo = k[i];
                 int y0 = FarTileData.y0(lo);
                 int top = y0 + FarTileData.len(lo);
-                int p0 = y0 >> 1;
-                int p1 = Math.min(maxCell, (top + 1) >> 1);
+                int p0 = y0 >> shift;
+                int p1 = Math.min(maxCell, (top + sub - 1) >> shift);
                 boolean leaf = FarStateIds.isLeaf(k[i + 1]);
                 boolean water = k[i + 1] == FarStateIds.WATER;
                 for (int p = p0; p < p1; p++) {
-                    int overlap = Math.min(top, p * 2 + 2) - Math.max(y0, p * 2);
+                    int overlap = Math.min(top, (p + 1) * sub) - Math.max(y0, p * sub);
                     cellCov[p] += overlap;
                     if (leaf) {
                         cellLeaf[p] += overlap;
@@ -58,7 +59,7 @@ public final class FarDownsample {
             if (cellState[q] < 0 || cellState[q] == FarStateIds.WATER) {
                 continue;
             }
-            if (FarStateIds.isLeaf(cellState[q]) ? cellLeaf[q] < 3 : cellCov[q] < 4) {
+            if (FarStateIds.isLeaf(cellState[q]) ? cellLeaf[q] < (3 * sub + 1) / 2 : cellCov[q] < 2 * sub) {
                 cellState[q] = -1;
             }
         }

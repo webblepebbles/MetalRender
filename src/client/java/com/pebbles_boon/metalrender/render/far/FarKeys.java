@@ -3,6 +3,7 @@ package com.pebbles_boon.metalrender.render.far;
 public final class FarKeys {
     public static final int TILE = 32;
     public static final int MAX_LEVEL = 6;
+    public static final int VCAP = 2;
 
     private FarKeys() {
     }
@@ -21,6 +22,14 @@ public final class FarKeys {
 
     public static int tz(long key) {
         return (int) ((key & 0xFFFFFFFL) << 4) >> 4;
+    }
+
+    public static int vshift(int level) {
+        return Math.min(level, VCAP);
+    }
+
+    public static int vunit(int level) {
+        return 1 << vshift(level);
     }
 
     public static int size(int level) {

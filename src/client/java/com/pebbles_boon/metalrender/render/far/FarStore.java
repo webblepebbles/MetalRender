@@ -24,7 +24,8 @@ import java.util.zip.InflaterInputStream;
 
 public final class FarStore {
     private static final int MAGIC = 0x46415232;
-    private static final int FORMAT = 3;
+    private static final int FORMAT = 4;
+    private static final int LEGACY_FORMAT = 3;
     private static final int REGION = 8;
 
     private final Path dir;
@@ -258,7 +259,9 @@ public final class FarStore {
         try (InputStream fis = Files.newInputStream(path);
                 DataInputStream in = new DataInputStream(
                         new InflaterInputStream(new BufferedInputStream(fis), new java.util.zip.Inflater(), 65536))) {
-            if (in.readInt() != MAGIC || in.readInt() != FORMAT || in.readLong() != registryPrint) {
+            int magic = in.readInt();
+            int format = in.readInt();
+            if (magic != MAGIC || (format != FORMAT && format != LEGACY_FORMAT) || in.readLong() != registryPrint) {
                 Files.deleteIfExists(path);
                 return null;
             }
@@ -283,6 +286,13 @@ public final class FarStore {
                     if (t.state[c] == FarTileData.SEED && !seedOk) {
                         t.state[c] = FarTileData.MISSING;
                         col = FarTileData.EMPTY;
+                    } else if (format == LEGACY_FORMAT && t.level > FarKeys.VCAP) {
+                        int factor = 1 << (t.level - FarKeys.VCAP);
+                        for (int k = 0; k < col.length; k += 3) {
+                            int old = col[k];
+                            col[k] = FarTileData.lo(FarTileData.y0(old) * factor, FarTileData.len(old) * factor,
+                                    FarTileData.sky(old), FarTileData.block(old));
+                        }
                     }
                     t.cols[c] = spans == 0 ? FarTileData.EMPTY : col;
                 }

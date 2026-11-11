@@ -81,7 +81,7 @@ public final class FarTileBuilder {
         java.util.HashMap<Integer, Integer> paletteIndex = new java.util.HashMap<>();
         int cursor = 0;
         int bound = 0;
-        int unit = 1 << level;
+        int unit = FarKeys.vunit(level);
         int yLo = Integer.MAX_VALUE;
         int yHi = Integer.MIN_VALUE;
         int[] lookCache = new int[64];

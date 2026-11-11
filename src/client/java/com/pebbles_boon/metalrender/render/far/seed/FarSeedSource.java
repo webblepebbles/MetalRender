@@ -29,7 +29,7 @@ import net.minecraft.world.level.levelgen.densityfunction.op.RangeChoiceFunction
 import net.minecraft.world.level.levelgen.synth.NormalNoise;
 
 public final class FarSeedSource {
-    public static final int ALGORITHM = 8;
+    public static final int ALGORITHM = 9;
 
     public final RandomState random;
     public final BiomeSource biomes;

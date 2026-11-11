@@ -11,6 +11,7 @@ constant uint kFarLists = 6u;
 constant uint kFarLookWords = 26u;
 constant uint kFarNoSprite = 0x1FFFu;
 constant uint kFarMaxRuns = 4u;
+constant uint kFarVCap = 2u;
 
 struct FarTileRec {
     int  ox;
@@ -646,11 +647,12 @@ vertex FarVOut far_vs(
     uint header = far_look_header(looks, look);
     uint shape = far_shape(header);
     float s = float(1u << rec.level);
-    float3 lo = float3(float(qx), float(qy), float(qz)) * s;
+    float sv = float(1u << min(rec.level, kFarVCap));
+    float3 lo = float3(float(qx) * s, float(qy) * sv, float(qz) * s);
     float3 hi;
     bool alongZ = dir == 4u || dir == 5u;
     float spanW = float(width) * s;
-    float spanH = (dir <= 1u ? 1.0f : float(height)) * s;
+    float spanH = (dir <= 1u ? 1.0f : float(height)) * sv;
     float depth = dir <= 1u ? float(height) * s : s;
     hi = lo + float3(alongZ ? s : spanW, spanH, alongZ ? spanW : depth);
     if (rec.level == 0u) {

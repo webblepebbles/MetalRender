@@ -65,7 +65,15 @@ public final class FarTerrainManager {
     private long pendingSince;
     private volatile int generation;
     private ThreadPoolExecutor pool;
-    private FarStore store;
+    private volatile FarStore store;
+    private final java.util.concurrent.atomic.AtomicBoolean flushing = new java.util.concurrent.atomic.AtomicBoolean();
+    private final java.util.concurrent.ExecutorService flusher = java.util.concurrent.Executors
+            .newSingleThreadExecutor(r -> {
+                Thread t = new Thread(r, "metalrender-far-flush");
+                t.setDaemon(true);
+                t.setPriority(Thread.MIN_PRIORITY);
+                return t;
+            });
     private FarSeedSource seed;
     private FarLooks looks;
     private ClientLevel level;
@@ -82,6 +90,7 @@ public final class FarTerrainManager {
     private int selRd;
     private final LongOpenHashSet scaffold = new LongOpenHashSet();
     private LongOpenHashSet rootKeys = new LongOpenHashSet();
+    private final Long2LongOpenHashMap uncoveredSince = new Long2LongOpenHashMap();
     private final LongOpenHashSet desiredAnc = new LongOpenHashSet();
     private float farRadius;
     private float radiusScale = 1.0f;
@@ -125,12 +134,22 @@ public final class FarTerrainManager {
     private float viewX;
     private float viewZ = 1.0f;
     private float viewCos = -1.0f;
+    private float viewSin;
     private float lastViewX;
     private float lastViewZ;
     private float coverage;
     private final long[] stats = new long[12];
 
     private FarTerrainManager() {
+        Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+            FarStore s = store;
+            if (s != null) {
+                try {
+                    s.flush();
+                } catch (RuntimeException ignored) {
+                }
+            }
+        }, "metalrender-far-shutdown"));
     }
 
     public boolean active() {
@@ -505,7 +524,8 @@ public final class FarTerrainManager {
                     }
                     int pix = gx - FarKeys.tx(pk) * 32;
                     int piz = gz - FarKeys.tz(pk) * 32;
-                    pt.set(piz * 32 + pix, FarDownsample.merge(kids[0], kids[1], kids[2], kids[3]),
+                    pt.set(piz * 32 + pix, FarDownsample.merge(kids[0], kids[1], kids[2], kids[3],
+                            FarKeys.vshift(lv) - FarKeys.vshift(lv - 1)),
                             anyReal ? FarTileData.REAL : FarTileData.SEED);
                     st.markDirty(pt);
                     noteChanged(pk, pix == 0, pix == 31, piz == 0, piz == 31);
@@ -554,6 +574,7 @@ public final class FarTerrainManager {
         if (m00 > 0.0f) {
             double half = Math.min(Math.PI, Math.atan(1.0 / m00) * 1.25 + 0.03);
             viewCos = half >= Math.PI ? -1.0f : (float) Math.cos(half);
+            viewSin = (float) Math.sqrt(Math.max(0.0, 1.0 - (double) viewCos * viewCos));
         }
     }
 
@@ -682,15 +703,17 @@ public final class FarTerrainManager {
             diagnose(camX, camZ);
         }
         long now = System.currentTimeMillis();
-        if (now - lastFlush > 8000) {
+        if (now - lastFlush > 15000) {
             lastFlush = now;
             FarStore st = store;
-            ThreadPoolExecutor p = pool;
-            if (st != null && p != null) {
-                p.execute(new Job(1e18) {
-                    @Override
-                    public void run() {
+            if (st != null && flushing.compareAndSet(false, true)) {
+                flusher.execute(() -> {
+                    try {
                         st.flush();
+                    } catch (RuntimeException e) {
+                        MetalLogger.warn("far flush failed: %s", e.toString());
+                    } finally {
+                        flushing.set(false);
                     }
                 });
             }
@@ -714,6 +737,10 @@ public final class FarTerrainManager {
                 }
             }
         }
+        int stuckBuilt = 0;
+        int stuckUploaded = 0;
+        int stuckInflight = 0;
+        int stuckNone = 0;
         double wantedArea = 0.0;
         double coveredArea = 0.0;
         double wantedReach = 0.0;
@@ -728,6 +755,14 @@ public final class FarTerrainManager {
             if (live.contains(k) || liveAnc.contains(k) || liveAncestor(k)) {
                 shown[lv]++;
                 coveredArea += area;
+            } else if (built.contains(k)) {
+                stuckBuilt++;
+            } else if (uploaded.contains(k)) {
+                stuckUploaded++;
+            } else if (inflight.contains(k)) {
+                stuckInflight++;
+            } else {
+                stuckNone++;
             }
         }
         StringBuilder sb = new StringBuilder();
@@ -737,9 +772,9 @@ public final class FarTerrainManager {
             }
         }
         String text = String.format(
-                "far coverage: radius %.0f (scale %.2f), %.1f%% of wanted area shown, nearest edge of farthest wanted tile %.0f, farthest shown corner %.0f,%s",
+                "far coverage: radius %.0f (scale %.2f), %.1f%% of wanted area shown, nearest edge of farthest wanted tile %.0f, farthest shown corner %.0f, missing: built %d uploaded %d inflight %d idle %d,%s",
                 farRadius, radiusScale, wantedArea > 0.0 ? coveredArea * 100.0 / wantedArea : 100.0, wantedReach,
-                reach, sb);
+                reach, stuckBuilt, stuckUploaded, stuckInflight, stuckNone, sb);
         if (!text.equals(lastDiag)) {
             lastDiag = text;
             MetalLogger.info("%s", text);
@@ -813,6 +848,7 @@ public final class FarTerrainManager {
             }
         }
         scaffold.removeIf(k -> !desiredAnc.contains(k));
+        uncoveredSince.keySet().removeIf(k -> !desired.contains(k));
         long[] keys = next.toLongArray();
         long[] order = new long[keys.length];
         for (int i = 0; i < keys.length; i++) {
@@ -854,10 +890,7 @@ public final class FarTerrainManager {
         double mz = FarKeys.originZ(key) + sz * 0.5 - cz;
         double ml = Math.sqrt(mx * mx + mz * mz);
         if (ml > sz) {
-            double rad = Math.atan2(sz * 0.75, ml);
-            double cos = (mx * viewX + mz * viewZ) / ml;
-            double ang = Math.acos(Math.max(-1.0, Math.min(1.0, cos))) - rad;
-            if (ang <= Math.acos(Math.max(-1.0f, viewCos))) {
+            if (aimed(mx, mz, ml, sz)) {
                 d = zoomedView ? d * 0.02 : d * 0.5;
             } else {
                 d = d * 3.0 + 256.0;
@@ -874,10 +907,18 @@ public final class FarTerrainManager {
         if (ml <= sz) {
             return true;
         }
-        double rad = Math.atan2(sz * 0.75, ml);
-        double cos = (mx * viewX + mz * viewZ) / ml;
-        double ang = Math.acos(Math.max(-1.0, Math.min(1.0, cos))) - rad;
-        return ang <= Math.acos(Math.max(-1.0f, viewCos));
+        return aimed(mx, mz, ml, sz);
+    }
+
+    private boolean aimed(double mx, double mz, double ml, int sz) {
+        double reach = sz * 0.75;
+        double hyp = Math.sqrt(ml * ml + reach * reach);
+        double cr = ml / hyp;
+        double sr = reach / hyp;
+        if (viewCos <= -cr) {
+            return true;
+        }
+        return (mx * viewX + mz * viewZ) / ml >= viewCos * cr - viewSin * sr;
     }
 
     private void markRefined(LongOpenHashSet set) {
@@ -1117,6 +1158,31 @@ public final class FarTerrainManager {
             show.add(b);
             handled.add(b);
         }
+        long nowMs = System.currentTimeMillis();
+        var cit = desired.iterator();
+        while (cit.hasNext()) {
+            long k = cit.nextLong();
+            if (live.contains(k) || liveUnder.containsKey(k) || liveAncestor(k) || handled.contains(k)) {
+                uncoveredSince.remove(k);
+                continue;
+            }
+            long since = uncoveredSince.get(k);
+            if (since == 0L) {
+                uncoveredSince.put(k, nowMs);
+                continue;
+            }
+            long age = nowMs - since;
+            if (built.contains(k)) {
+                if (age > 2500L) {
+                    show.add(k);
+                    handled.add(k);
+                }
+            } else if (age > 12000L && (inflight.remove(k) | uploaded.remove(k))) {
+                uncoveredSince.put(k, nowMs);
+            } else if (age > 5000L && inflight.size() < 48 && !inflight.contains(k) && !uploaded.contains(k)) {
+                submitBuild(k, 0.0);
+            }
+        }
         if (show.isEmpty() && hide.isEmpty()) {
             return;
         }
@@ -1197,6 +1263,9 @@ public final class FarTerrainManager {
                     refreshing++;
                 }
             }
+        }
+        if (inflight.size() >= cap) {
+            return;
         }
         LongArrayList sc = new LongArrayList();
         LongArrayList rc = new LongArrayList();

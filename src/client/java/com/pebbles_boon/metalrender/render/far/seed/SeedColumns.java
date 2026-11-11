@@ -552,7 +552,7 @@ public final class SeedColumns {
 
     private static int[] quantize(Spans sp, int level, FarLooks looks, FarTintView view, BlockPos.MutableBlockPos pos,
             int bx, int bz, int minY, Holder<Biome> biome) {
-        int u = 1 << level;
+        int u = FarKeys.vunit(level);
         int maxCell = 0;
         for (int i = 0; i < sp.n; i++) {
             maxCell = Math.max(maxCell, (sp.y0[i] + sp.len[i] + u - 1) / u);
