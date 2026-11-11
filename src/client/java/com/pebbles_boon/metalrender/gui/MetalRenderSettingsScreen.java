@@ -1647,7 +1647,7 @@ public class MetalRenderSettingsScreen extends Screen {
                 v -> config.farGpuBudgetMb = (int) (float) v);
         sld("Far RAM Cache (MB)", 64, 1024, 32, config.farMemoryMb,
                 v -> config.farMemoryMb = (int) (float) v);
-        sld("Far Disk Cache (MB)", 64, 4096, 64, config.farDiskMb,
+        sld("Far Disk Cache (MB)", 256, 16384, 256, config.farDiskMb,
                 v -> config.farDiskMb = (int) (float) v);
         sld("Far Worker Threads (0 = auto)", 0, 8, 1, config.farThreads,
                 v -> config.farThreads = (int) (float) v);

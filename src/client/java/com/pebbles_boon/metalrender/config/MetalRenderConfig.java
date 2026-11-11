@@ -50,7 +50,7 @@ public final class MetalRenderConfig {
     public int farThreads = 0;
     public int farGpuBudgetMb = 512;
     public int farMemoryMb = 192;
-    public int farDiskMb = 512;
+    public int farDiskMb = 4096;
     public boolean farSeedGen = true;
     public String farSeed = "";
     public boolean farFlatColor = true;
@@ -179,6 +179,8 @@ public final class MetalRenderConfig {
                     cfg.farMemoryMb = Math.max(16, Math.min(1024, obj.get("farRamMb").getAsInt()));
                 if (obj.has("farDiskMb"))
                     cfg.farDiskMb = Math.max(32, Math.min(16384, obj.get("farDiskMb").getAsInt()));
+                if (cfg.farDiskMb == 512)
+                    cfg.farDiskMb = 4096;
                 if (obj.has("farSeedGen"))
                     cfg.farSeedGen = obj.get("farSeedGen").getAsBoolean();
                 if (obj.has("farSeed"))

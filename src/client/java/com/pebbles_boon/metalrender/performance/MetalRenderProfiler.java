@@ -177,7 +177,8 @@ public final class MetalRenderProfiler {
     }
 
     public synchronized void startDevelopmentRunCsv() {
-        if (csvEnabled || !FabricLoader.getInstance().isDevelopmentEnvironment()) {
+        if (csvEnabled || !Boolean.getBoolean("metalrender.csv")
+                || !FabricLoader.getInstance().isDevelopmentEnvironment()) {
             return;
         }
         Path file = FabricLoader.getInstance().getGameDir()
