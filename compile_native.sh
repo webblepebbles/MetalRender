@@ -15,6 +15,7 @@ clang++ -O3 -std=c++17 -dynamiclib \
     src/main/resources/native/metalrender.mm \
     src/main/resources/native/meshshader.mm \
     src/main/resources/native/metal_backend.mm \
+    src/main/resources/native/far_terrain.mm \
     -o src/main/resources/libmetalrender_debug_v2.dylib
 
 rm -f src/main/resources/libmetalrender.dylib

@@ -28,6 +28,7 @@
 #include <unordered_set>
 #include <utility>
 #include <vector>
+#include "far_terrain.h"
 #ifdef __aarch64__
 #include <arm_neon.h>
 #endif
@@ -8218,7 +8219,7 @@ void mr_arena_hiz_build(id<MTLCommandBuffer> cmd, id<MTLTexture> depth) {
   if (!cmd || !depth || !g_arenaHizEnabled || !g_arenaHizFromDepth || !g_arenaHizDown || !g_device)
     return;
   static const uint32_t kHizMinSections = 1500;
-  if (g_arenaSlotHigh < kHizMinSections) {
+  if (g_arenaSlotHigh < kHizMinSections && !mr_far_active()) {
     std::lock_guard<std::mutex> hl(g_arenaHizMutex);
     g_arenaHizPending.valid = false;
     g_arenaHizBuilt.valid = false;
@@ -8539,6 +8540,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nTerrainPrepare(JNI
       g_arenaFaceCullRemoved.store(0, std::memory_order_relaxed);
     }
   }
+  mr_far_prepare();
 }
 
 struct ArenaFogRecon {
@@ -8724,6 +8726,45 @@ static void mr_arena_encode_water(id<MTLRenderCommandEncoder> enc) {
   g_currentPipeline = nil;
 }
 
+id<MTLDevice> mr_host_device() { return g_device; }
+id<MTLCommandQueue> mr_host_queue() { return g_queue; }
+id<MTLLibrary> mr_host_library() { return g_shaderLibrary; }
+id<MTLRenderPipelineState> mr_host_make_pipeline(MTLRenderPipelineDescriptor *desc, NSError **err) {
+  return makePipeline(desc, err);
+}
+id<MTLRenderPipelineState> mr_host_ext_pso(id<MTLRenderPipelineState> pso) { return mr_ext_pso(pso); }
+MTLWinding mr_host_ext_winding() { return mr_ext_winding(); }
+id<MTLDepthStencilState> mr_host_depth_state(bool write) { return write ? g_depthState : g_depthStateNoWrite; }
+id<MTLBuffer> mr_host_sprites() { return g_arenaSprites; }
+id<MTLTexture> mr_host_atlas() { return g_blockAtlas; }
+id<MTLBuffer> mr_host_quad_index() { return g_arenaQuadIdx; }
+id<MTLTexture> mr_host_hiz(bool valid) { return valid && g_arenaHizTex ? g_arenaHizTex : g_arenaHizFallback; }
+void mr_host_fill_cull_frame(void *out, size_t size) {
+  ArenaCullFrame f;
+  mr_arena_fill_cull_frame(f, 0, 0);
+  memcpy(out, &f, std::min(size, sizeof(f)));
+}
+void mr_host_fill_fog_recon(void *out, size_t size) {
+  ArenaFogRecon r;
+  mr_arena_fill_fog_recon(r);
+  memcpy(out, &r, std::min(size, sizeof(r)));
+}
+const void *mr_host_fog_uniforms(size_t *size) {
+  *size = sizeof(g_fogUniforms);
+  return &g_fogUniforms;
+}
+const float *mr_host_proj() { return g_projMatrix; }
+const float *mr_host_mv() { return g_mvMatrix; }
+void mr_host_cam(double *out) {
+  out[0] = g_camX;
+  out[1] = g_camY;
+  out[2] = g_camZ;
+}
+bool mr_host_reverse_z() { return g_reverseZ; }
+uint64_t mr_host_frame_in_progress() { return g_backendFrameInProgress.load(std::memory_order_acquire); }
+uint64_t mr_host_frame_completed() { return g_backendCompletedFrame.load(std::memory_order_acquire); }
+void mr_host_count_draw() { g_drawCallCount++; }
+
 static void mr_apply_external_state(id<MTLRenderCommandEncoder> enc, int width, int height) {
   g_externalMode = true;
   g_extTargetW = width;
@@ -8785,6 +8826,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nTerrainExternalDra
   @autoreleasepool {
     mr_apply_external_state(enc, width, height);
     mr_arena_encode(enc);
+    mr_far_encode(enc);
     {
       std::lock_guard<std::mutex> hl(g_arenaHizMutex);
       memcpy(g_arenaHizPending.proj, g_projMatrix, sizeof(g_arenaHizPending.proj));
@@ -8811,6 +8853,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nWaterExternalDraw(
     return;
   @autoreleasepool {
     mr_apply_external_state(enc, width, height);
+    mr_far_encode_water(enc);
     mr_arena_encode_water(enc);
     Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawDeferredWaterPass(env, cls, 1);
     mr_release_external_encoder();
