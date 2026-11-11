@@ -55,8 +55,12 @@ loom {
             vmArg "-Xmx8g"
             vmArg "-Xms3g"
             vmArg "-XX:+AlwaysPreTouch"
-            if (!project.hasProperty('nojfr')) {
+            if (project.hasProperty('jfr')) {
+                file("${projectDir}/run/logs").mkdirs()
                 vmArg "-XX:StartFlightRecording=filename=${projectDir}/run/logs/metalrender.jfr,settings=profile,dumponexit=true"
+            }
+            if (project.hasProperty('csv')) {
+                vmArg "-Dmetalrender.csv=true"
             }
             
             if (project.hasProperty('gl2metal')) {
