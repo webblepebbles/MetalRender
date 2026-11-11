@@ -18,6 +18,7 @@ xcrun -sdk macosx metal -c $SHADER_DIR/families.metal -o $SHADER_DIR/families.ai
 echo "compelling shaders"
 xcrun -sdk macosx metal -std=metal3.0 -c $SHADER_DIR/mesh_terrain.metal -o $SHADER_DIR/mesh_terrain.air
 xcrun -sdk macosx metal -std=metal3.0 -c $SHADER_DIR/terrain_mesh.metal -o $SHADER_DIR/terrain_mesh.air
+xcrun -sdk macosx metal -std=metal3.0 -c $SHADER_DIR/far_terrain.metal -o $SHADER_DIR/far_terrain.air
 
 xcrun -sdk macosx metallib \
     $SHADER_DIR/metalrender.air \
@@ -32,5 +33,6 @@ xcrun -sdk macosx metallib \
     $SHADER_DIR/mesh_terrain.air \
     $SHADER_DIR/terrain_mesh.air \
     $SHADER_DIR/families.air \
+    $SHADER_DIR/far_terrain.air \
     -o src/main/resources/shaders.metallib
 echo "Shaders compiled to src/main/resources/shaders.metallib"
