@@ -362,6 +362,8 @@ cd metalrender
 ./gradlew runclient
 ```
 
+Profiling is off by default. Add `-Pjfr` to record a Java Flight Recorder file at `run/logs/metalrender.jfr`, and `-Pcsv` to write per-second frame stats to `run/logs/metalrender_load.csv`.
+
 ## Redistribution
 
 This section is the Application Process referred to in Section 2 of the Pebbles-boon Licence.
