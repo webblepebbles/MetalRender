@@ -1154,6 +1154,7 @@ public class CustomChunkMesher {
                 old = meshCache.remove(key);
             }
         }
+        com.pebbles_boon.metalrender.render.far.FarTerrainManager.get().nearMask().invalidate(cx, cz);
         if (old != null) {
             NativeBridge.nUnregisterChunkMesh(cx, cy, cz);
             if (old.bufferHandle != 0) {
@@ -1174,6 +1175,7 @@ public class CustomChunkMesher {
     }
 
     public void clearAllMeshes() {
+        com.pebbles_boon.metalrender.render.far.FarTerrainManager.get().nearMask().invalidateAll();
         invalidateThreadLocalCaches();
         destroyAllStashedVariants();
         synchronized (variantLock) {

@@ -479,6 +479,7 @@ public class MetalWorldRenderer {
     }
 
     public void onWorldUnload() {
+        com.pebbles_boon.metalrender.render.far.FarTerrainManager.get().onWorldUnload();
         stopCaveWorker();
         worldLoaded = false;
         renderingActive = false;
@@ -858,6 +859,17 @@ public class MetalWorldRenderer {
             }
         }
         NativeBridge.nSetReuseTerrainFrame(false);
+        try {
+            net.minecraft.client.Minecraft fmc = net.minecraft.client.Minecraft.getInstance();
+            net.minecraft.world.entity.Entity fce = fmc.getCameraEntity();
+            net.minecraft.world.phys.Vec3 look = fce != null ? fce.getViewVector(1.0f) : null;
+            com.pebbles_boon.metalrender.render.far.FarTerrainManager.get().setView(projectionMatrix.m11(),
+                    projectionMatrix.m00(), fmc.getWindow().getHeight(), look != null ? (float) look.x : 0.0f,
+                    look != null ? (float) look.z : 1.0f);
+            com.pebbles_boon.metalrender.render.far.FarTerrainManager.get().frame(cameraX, cameraY, cameraZ);
+        } catch (Throwable t) {
+            MetalLogger.warn("far terrain frame failed: %s", t.toString());
+        }
         externalIndexBuffer = 0;
         long frameCtx = external ? 1L : renderer.frameCtx();
         if (frameCtx != 0) {
@@ -2886,6 +2898,7 @@ public class MetalWorldRenderer {
     }
 
     public void onChunkLoaded(int chunkX, int chunkZ, LevelChunk chunk) {
+        com.pebbles_boon.metalrender.render.far.FarTerrainManager.get().onChunkLoaded(chunk);
         if (!worldLoaded || !renderingActive) {
             if (!loggedChunkLoadDropNotReady) {
                 loggedChunkLoadDropNotReady = true;
@@ -3185,6 +3198,7 @@ public class MetalWorldRenderer {
     }
 
     public void scheduleSectionRebuild(int blockX, int blockY, int blockZ) {
+        com.pebbles_boon.metalrender.render.far.FarTerrainManager.get().onBlockChanged(blockX, blockZ);
         if (!worldLoaded || !renderingActive) {
             if (!loggedBlockUpdateDropNotReady) {
                 loggedBlockUpdateDropNotReady = true;

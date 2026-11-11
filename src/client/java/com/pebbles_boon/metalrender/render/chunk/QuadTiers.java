@@ -157,6 +157,14 @@ public final class QuadTiers {
             return out;
         }
 
+        public int indexOf(net.minecraft.client.renderer.texture.TextureAtlasSprite sprite) {
+            if (sprite == null) {
+                return -1;
+            }
+            return findWhole(quant(sprite.getU0()), quant(sprite.getV0()), quant(sprite.getU1()),
+                    quant(sprite.getV1()));
+        }
+
         int findWhole(int uMin, int vMin, int uMax, int vMax) {
             for (int du : NEIGHBORS) {
                 for (int dv : NEIGHBORS) {

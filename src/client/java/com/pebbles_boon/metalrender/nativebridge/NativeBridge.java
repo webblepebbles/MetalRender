@@ -236,6 +236,30 @@ public final class NativeBridge {
 
     public static native void nArenaClear();
 
+    public static native boolean nFarConfigure(int budgetMb, int buildsPerFrame);
+
+    public static native boolean nFarReady();
+
+    public static native void nFarSetLooks(java.nio.ByteBuffer data, int count);
+
+    public static native int nFarUploadTile(long key, int level, int ox, int oz, int minY, int yLo, int yHi,
+            java.nio.ByteBuffer blob, int blobUints, java.nio.ByteBuffer tints, int tintCount, int quadBound,
+            int flags, int lookPal, int plane);
+
+    public static native void nFarSetOptions(int bits);
+
+    public static native int nFarPollBuilt(long[] out);
+
+    public static native void nFarCommit(long[] show, int nShow, long[] hide, int nHide);
+
+    public static native void nFarSetNearColumns(int[] packed, int count);
+
+    public static native void nFarSetView(float farRadius, int minCx, int minCz, int maxCx, int maxCz);
+
+    public static native void nFarClear();
+
+    public static native int nFarStats(long[] out);
+
     public static native int nArenaStats(long[] out);
 
     public static native int nArenaSeenAge(int cx, int cy, int cz);
