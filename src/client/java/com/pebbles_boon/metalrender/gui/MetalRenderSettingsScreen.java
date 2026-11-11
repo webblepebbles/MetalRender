@@ -210,10 +210,10 @@ public class MetalRenderSettingsScreen extends Screen {
     private static final int FPS_LIMIT_UNLIMITED = 241;
 
     private static final String[] TABS = {
-            "Video", "MetalRender", "Quality", "Performance", "Advanced", "Themes"
+            "Video", "MetalRender", "Quality", "Performance", "Advanced", "Themes", "Far Terrain"
     };
     private static final String[] TAB_ICONS = {
-            "\u25A3", "\u2605", "\u2736", "\u26A1", "\u2699", "\u2630"
+            "\u25A3", "\u2605", "\u2736", "\u26A1", "\u2699", "\u2630", "\u25B2"
     };
     private static UiTheme activeTheme = UiTheme.LIQUID_GLASS;
     private static String customHexBg = "141C2A";
@@ -644,7 +644,7 @@ public class MetalRenderSettingsScreen extends Screen {
             maxTitleW = Math.max(40, pw - (tx - px) - 18 - dotsW);
         }
         String title = "MetalRender";
-        String version = "Settings  \u2022  v2.0.3"; 
+        String version = "Settings  \u2022  v2.1"; 
         int titleW = font.width(title);
         int versionW = font.width(version);
         if (titleW + 6 + versionW > maxTitleW) {
@@ -728,7 +728,7 @@ public class MetalRenderSettingsScreen extends Screen {
             if (sel)
                 ctx.text(font, Component.literal("\u203A"), bx + bw - 12, by + (btnH - 9) / 2, C_TAB_TEXT_ACTIVE,
                         false);
-            if (i == TABS.length - 2) {
+            if (i == 4) {
                 int divY = by + btnH + gap / 2;
                 int div = activeTheme.isLight ? 0x14000000 : 0x14FFFFFF;
                 ctx.fill(sx + 12, divY, sx + sw - 12, divY + 1, div);
@@ -1320,6 +1320,7 @@ public class MetalRenderSettingsScreen extends Screen {
             case 3 -> buildPerformance();
             case 4 -> buildAdvanced();
             case 5 -> buildThemes();
+            case 6 -> buildFarTerrain();
         }
         computeLayout();
         for (Row r : rows)
@@ -1633,6 +1634,28 @@ public class MetalRenderSettingsScreen extends Screen {
             }
         };
         rows.add(r);
+    }
+
+    private void buildFarTerrain() {
+        sec("Far Terrain");
+        sld("Far Distance (extra chunks)", 0, 512, 8, config.farDistanceChunks,
+                v -> config.farDistanceChunks = (int) (float) v);
+        sld("Far Full-Detail Range (chunks)", 8, 512, 8, config.farQuality / 16,
+                v -> config.farQuality = (int) (float) v * 16);
+        tog("Generate From Seed", config.farSeedGen, v -> config.farSeedGen = v);
+        sld("Far GPU Budget (MB)", 64, 2048, 64, config.farGpuBudgetMb,
+                v -> config.farGpuBudgetMb = (int) (float) v);
+        sld("Far RAM Cache (MB)", 64, 1024, 32, config.farMemoryMb,
+                v -> config.farMemoryMb = (int) (float) v);
+        sld("Far Disk Cache (MB)", 64, 4096, 64, config.farDiskMb,
+                v -> config.farDiskMb = (int) (float) v);
+        sld("Far Worker Threads (0 = auto)", 0, 8, 1, config.farThreads,
+                v -> config.farThreads = (int) (float) v);
+        tog("Far Flat Distant Colour", config.farFlatColor, v -> config.farFlatColor = v);
+        tog("Far Terrain-Aware Detail", config.farRoughLod, v -> config.farRoughLod = v);
+        tog("Far Ocean Water Plane", config.farWaterPlane, v -> config.farWaterPlane = v);
+        tog("Far Compact Geometry", config.farCompactQuads, v -> config.farCompactQuads = v);
+        tog("Far Hidden Tile Culling", config.farHiZ, v -> config.farHiZ = v);
     }
 
     private void sec(String label) {

@@ -44,6 +44,20 @@ public final class MetalRenderConfig {
     public String customHexPanel = "1E242E";
     public String customHexAccent = "5AC8FF";
     public String customHexText = "E8F0FF";
+
+    public int farDistanceChunks = 0;
+    public int farQuality = 768;
+    public int farThreads = 0;
+    public int farGpuBudgetMb = 512;
+    public int farMemoryMb = 192;
+    public int farDiskMb = 512;
+    public boolean farSeedGen = true;
+    public String farSeed = "";
+    public boolean farFlatColor = true;
+    public boolean farRoughLod = true;
+    public boolean farWaterPlane = true;
+    public boolean farCompactQuads = true;
+    public boolean farHiZ = true;
     private static volatile float resolutionScale = 1.0f;
     private static volatile boolean adaptiveResolutionEnabled = false;
     private static volatile boolean metalFXTemporalEnabled = false;
@@ -153,6 +167,32 @@ public final class MetalRenderConfig {
                     cfg.enableGreedyFar = obj.get("enableGreedyFar").getAsBoolean();
                 if (obj.has("uiTheme"))
                     cfg.uiTheme = obj.get("uiTheme").getAsString();
+                if (obj.has("farDistanceChunks"))
+                    cfg.farDistanceChunks = Math.max(0, Math.min(512, obj.get("farDistanceChunks").getAsInt()));
+                if (obj.has("farDetail"))
+                    cfg.farQuality = Math.max(128, Math.min(8192, obj.get("farDetail").getAsInt()));
+                if (obj.has("farThreads"))
+                    cfg.farThreads = Math.max(0, Math.min(16, obj.get("farThreads").getAsInt()));
+                if (obj.has("farGpuMb"))
+                    cfg.farGpuBudgetMb = Math.max(64, Math.min(2048, obj.get("farGpuMb").getAsInt()));
+                if (obj.has("farRamMb"))
+                    cfg.farMemoryMb = Math.max(16, Math.min(1024, obj.get("farRamMb").getAsInt()));
+                if (obj.has("farDiskMb"))
+                    cfg.farDiskMb = Math.max(32, Math.min(16384, obj.get("farDiskMb").getAsInt()));
+                if (obj.has("farSeedGen"))
+                    cfg.farSeedGen = obj.get("farSeedGen").getAsBoolean();
+                if (obj.has("farSeed"))
+                    cfg.farSeed = obj.get("farSeed").getAsString();
+                if (obj.has("farFlatColor"))
+                    cfg.farFlatColor = obj.get("farFlatColor").getAsBoolean();
+                if (obj.has("farRoughLod"))
+                    cfg.farRoughLod = obj.get("farRoughLod").getAsBoolean();
+                if (obj.has("farWaterPlane"))
+                    cfg.farWaterPlane = obj.get("farWaterPlane").getAsBoolean();
+                if (obj.has("farCompactQuads"))
+                    cfg.farCompactQuads = obj.get("farCompactQuads").getAsBoolean();
+                if (obj.has("farHiZ"))
+                    cfg.farHiZ = obj.get("farHiZ").getAsBoolean();
                 if (obj.has("customHexBg"))
                     cfg.customHexBg = obj.get("customHexBg").getAsString();
                 if (obj.has("customHexPanel"))
@@ -230,6 +270,19 @@ public final class MetalRenderConfig {
             obj.addProperty("enableGreedyMid", enableGreedyMid);
             obj.addProperty("enableGreedyFar", enableGreedyFar);
             obj.addProperty("uiTheme", uiTheme);
+            obj.addProperty("farDistanceChunks", farDistanceChunks);
+            obj.addProperty("farDetail", farQuality);
+            obj.addProperty("farThreads", farThreads);
+            obj.addProperty("farGpuMb", farGpuBudgetMb);
+            obj.addProperty("farRamMb", farMemoryMb);
+            obj.addProperty("farDiskMb", farDiskMb);
+            obj.addProperty("farSeedGen", farSeedGen);
+            obj.addProperty("farSeed", farSeed);
+            obj.addProperty("farFlatColor", farFlatColor);
+            obj.addProperty("farRoughLod", farRoughLod);
+            obj.addProperty("farWaterPlane", farWaterPlane);
+            obj.addProperty("farCompactQuads", farCompactQuads);
+            obj.addProperty("farHiZ", farHiZ);
             obj.addProperty("customHexBg", customHexBg);
             obj.addProperty("customHexPanel", customHexPanel);
             obj.addProperty("customHexAccent", customHexAccent);

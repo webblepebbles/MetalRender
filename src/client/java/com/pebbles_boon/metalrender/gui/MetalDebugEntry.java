@@ -70,7 +70,23 @@ public final class MetalDebugEntry implements DebugScreenEntry {
     public void display(DebugScreenDisplayer dsp, @Nullable Level lvl,
             @Nullable LevelChunk chunk,
             @Nullable LevelChunk otherChunk) {
-        dsp.addToGroup(DBG_GRP, line());
+        var far = com.pebbles_boon.metalrender.render.far.FarTerrainManager.get();
+        if (far.active()) {
+            int rd = net.minecraft.client.Minecraft.getInstance().options.getEffectiveRenderDistance();
+            dsp.addToGroup(DBG_GRP, java.util.List.of(line(), String.format(Locale.ROOT, "Render distance: %d + %d far = %d chunks",
+                    rd, far.farChunks(), rd + far.farChunks()), far.describe(), gpuLine()));
+            return;
+        }
+        dsp.addToGroup(DBG_GRP, java.util.List.of(line(), gpuLine()));
+    }
+
+    private static String gpuLine() {
+        float ms = 0.0f;
+        try {
+            ms = com.pebbles_boon.metalrender.nativebridge.NativeBridge.nGetGpuFrameTimeMs();
+        } catch (Throwable ignored) {
+        }
+        return String.format(Locale.ROOT, "GPU frame: %.2f ms", ms);
     }
 
     private static String line() {
