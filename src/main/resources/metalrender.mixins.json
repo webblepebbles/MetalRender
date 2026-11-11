@@ -27,12 +27,17 @@
     "WeatherRenderMixin",
     "CloudRenderMixin",
     "LevelCloudWeatherMixin",
+    "CameraFarPlaneMixin",
+    "FogFarMixin",
     "accessor.TextureAtlasAccessor",
     "accessor.RenderPassAccessor",
     "accessor.BillboardParticleAccessor",
     "accessor.ParticleAccessor",
     "accessor.ParticleManagerAccessor",
-    "accessor.ParticleGroupAccessor"
+    "accessor.ParticleGroupAccessor",
+    "accessor.WeightedVariantsAccessor",
+    "accessor.SinglePoolElementAccessor",
+    "accessor.StructureTemplateAccessor"
   ],
   "injectors": {
     "defaultRequire": 0
