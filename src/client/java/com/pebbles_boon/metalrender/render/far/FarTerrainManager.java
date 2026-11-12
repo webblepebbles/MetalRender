@@ -91,6 +91,7 @@ public final class FarTerrainManager {
     private final LongOpenHashSet scaffold = new LongOpenHashSet();
     private LongOpenHashSet rootKeys = new LongOpenHashSet();
     private final Long2LongOpenHashMap uncoveredSince = new Long2LongOpenHashMap();
+    private long idleSince;
     private final LongOpenHashSet desiredAnc = new LongOpenHashSet();
     private float farRadius;
     private float radiusScale = 1.0f;
@@ -1159,6 +1160,14 @@ public final class FarTerrainManager {
             handled.add(b);
         }
         long nowMs = System.currentTimeMillis();
+        if (inflight.isEmpty() && uploaded.isEmpty() && uploadQueue.isEmpty()) {
+            if (idleSince == 0L) {
+                idleSince = nowMs;
+            }
+        } else {
+            idleSince = 0L;
+        }
+        boolean quiet = idleSince != 0L && nowMs - idleSince > 3000L;
         var cit = desired.iterator();
         while (cit.hasNext()) {
             long k = cit.nextLong();
@@ -1172,14 +1181,15 @@ public final class FarTerrainManager {
                 continue;
             }
             long age = nowMs - since;
+            if (!(age > 45000L || (quiet && age > 4000L))) {
+                continue;
+            }
             if (built.contains(k)) {
-                if (age > 2500L) {
-                    show.add(k);
-                    handled.add(k);
-                }
-            } else if (age > 12000L && (inflight.remove(k) | uploaded.remove(k))) {
+                show.add(k);
+                handled.add(k);
+            } else if (age > 60000L && (inflight.remove(k) | uploaded.remove(k))) {
                 uncoveredSince.put(k, nowMs);
-            } else if (age > 5000L && inflight.size() < 48 && !inflight.contains(k) && !uploaded.contains(k)) {
+            } else if (inflight.size() < 48 && !inflight.contains(k) && !uploaded.contains(k)) {
                 submitBuild(k, 0.0);
             }
         }

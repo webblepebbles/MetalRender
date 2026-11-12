@@ -713,6 +713,32 @@ public final class QuadTiers {
         return lo + Math.round((hi - lo) * (f / 256f));
     }
 
+    static int mergeFullDetail(ByteBuffer vertices, int quadCount) {
+        SpriteTable sprites = spriteTable;
+        if (sprites == null) {
+            return quadCount;
+        }
+        return FullDetailFaceMerger.merge(vertices, quadCount, bounds -> {
+            int u0 = (int) (bounds & 65535);
+            int v0 = (int) ((bounds >>> 16) & 65535);
+            int u1 = (int) ((bounds >>> 32) & 65535);
+            int v1 = (int) (bounds >>> 48);
+            int sprite = sprites.findContaining(u0, v0, u1, v1);
+            if (sprite < 0 || sprite >= (1 << SPRITE_BITS) || !sprites.solid[sprite]) {
+                return false;
+            }
+            int su0 = sprites.u0[sprite];
+            int sv0 = sprites.v0[sprite];
+            int su1 = sprites.u1[sprite];
+            int sv1 = sprites.v1[sprite];
+            return su1 > su0 && sv1 > sv0
+                    && restore(fraction(u0, su0, su1), su0, su1) == u0
+                    && restore(fraction(u1, su0, su1), su0, su1) == u1
+                    && restore(fraction(v0, sv0, sv1), sv0, sv1) == v0
+                    && restore(fraction(v1, sv0, sv1), sv0, sv1) == v1;
+        });
+    }
+
     public static final class Section {
         public ByteBuffer quads = ByteBuffer.allocateDirect(1 << 16).order(ByteOrder.nativeOrder());
         public ByteBuffer units = ByteBuffer.allocateDirect(1 << 12).order(ByteOrder.nativeOrder());

@@ -45,9 +45,42 @@ public final class MetalTexture extends BaseGpuTexture {
 
     static int pixelFormat(GpuFormat format) {
         return switch (format) {
-            case RGBA8_UNORM -> MetalNative.PIXEL_RGBA8;
             case R8_UNORM -> MetalNative.PIXEL_R8;
+            case R8_SNORM -> 12;
+            case R8_UINT -> 13;
             case R8_SINT -> MetalNative.PIXEL_R8I;
+            case RG8_UNORM -> 30;
+            case RG8_SNORM -> 32;
+            case RG8_UINT -> 33;
+            case RG8_SINT -> 34;
+            case RGBA8_UNORM -> MetalNative.PIXEL_RGBA8;
+            case RGBA8_SNORM -> 72;
+            case RGBA8_UINT -> 73;
+            case RGBA8_SINT -> 74;
+            case R16_UNORM -> 20;
+            case R16_SNORM -> 22;
+            case R16_UINT -> 23;
+            case R16_SINT -> 24;
+            case R16_FLOAT -> 25;
+            case RG16_UNORM -> 60;
+            case RG16_SNORM -> 62;
+            case RG16_UINT -> 63;
+            case RG16_SINT -> 64;
+            case RG16_FLOAT -> 65;
+            case RGBA16_UNORM -> 110;
+            case RGBA16_SNORM -> 112;
+            case RGBA16_UINT -> 113;
+            case RGBA16_SINT -> 114;
+            case RGBA16_FLOAT -> 115;
+            case R32_UINT -> 53;
+            case R32_SINT -> 54;
+            case R32_FLOAT -> 55;
+            case RG32_UINT -> 103;
+            case RG32_SINT -> 104;
+            case RG32_FLOAT -> 105;
+            case RGBA32_UINT -> 123;
+            case RGBA32_SINT -> 124;
+            case RGBA32_FLOAT -> 125;
             case D32_FLOAT -> MetalNative.PIXEL_DEPTH32;
             default -> throw new IllegalArgumentException("Unsupported texture format " + format);
         };

@@ -2557,6 +2557,10 @@ public class CustomChunkMesher {
 
             builder.build();
 
+            if (lodTier == 0 && tiersNow) {
+                builder.opaqueQuadCount = QuadTiers.mergeFullDetail(vertexHolder.buf, builder.opaqueQuadCount);
+            }
+
             int opaqueQuadCount = builder.opaqueQuadCount;
             int waterQuadCount = builder.waterQuadCount;
             int quadCount = opaqueQuadCount + waterQuadCount;
