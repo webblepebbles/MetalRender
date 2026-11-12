@@ -58,6 +58,9 @@ public final class MetalRenderConfig {
     public boolean farWaterPlane = true;
     public boolean farCompactQuads = true;
     public boolean farHiZ = true;
+    public boolean farZoomSaver = true;
+    public boolean farLodFade = true;
+    public boolean farBiomeBlend = true;
     private static volatile float resolutionScale = 1.0f;
     private static volatile boolean adaptiveResolutionEnabled = false;
     private static volatile boolean metalFXTemporalEnabled = false;
@@ -195,6 +198,12 @@ public final class MetalRenderConfig {
                     cfg.farCompactQuads = obj.get("farCompactQuads").getAsBoolean();
                 if (obj.has("farHiZ"))
                     cfg.farHiZ = obj.get("farHiZ").getAsBoolean();
+                if (obj.has("farZoomSaver"))
+                    cfg.farZoomSaver = obj.get("farZoomSaver").getAsBoolean();
+                if (obj.has("farFade"))
+                    cfg.farLodFade = obj.get("farFade").getAsBoolean();
+                if (obj.has("farBiomeBlend"))
+                    cfg.farBiomeBlend = obj.get("farBiomeBlend").getAsBoolean();
                 if (obj.has("customHexBg"))
                     cfg.customHexBg = obj.get("customHexBg").getAsString();
                 if (obj.has("customHexPanel"))
@@ -285,6 +294,9 @@ public final class MetalRenderConfig {
             obj.addProperty("farWaterPlane", farWaterPlane);
             obj.addProperty("farCompactQuads", farCompactQuads);
             obj.addProperty("farHiZ", farHiZ);
+            obj.addProperty("farZoomSaver", farZoomSaver);
+            obj.addProperty("farFade", farLodFade);
+            obj.addProperty("farBiomeBlend", farBiomeBlend);
             obj.addProperty("customHexBg", customHexBg);
             obj.addProperty("customHexPanel", customHexPanel);
             obj.addProperty("customHexAccent", customHexAccent);
