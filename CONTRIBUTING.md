@@ -2,7 +2,7 @@
 
 Thank you for your support in improving MetalRender!
 
-Your changes should be understandable, safe, and verified on a Mac before you submit a PR (Pull Request). Please review this document before submitting any PR.
+Your changes should be understandable, safe, and verified on a Mac before you submit a PR (Pull Request). Please review this document before submitting any PR. By opening a Pull Request to MetalRender, you grant Pebbles_boon the right to licence your contributions under the [Pebbles-boon Licence](https://github.com/webblepebbles/MetalRender/blob/main/LICENSE.md). If you do not intend for your software to be licenced under the licence, do not open a Pull Request on this repository. 
 
 ## Before you start
 
@@ -11,7 +11,7 @@ Your changes should be understandable, safe, and verified on a Mac before you su
 - **If you do NOT have a Mac (YOU CANNOT test if you do not have a Mac), do not submit a pull request** unless you are making changes to documentation
 - **YOU MUST run a test**
 - There are no naming conventions, naming styles, code styles, or other repository-specific styling requirements in MetalRender. You do not need to specify or follow any in your PR
-- There are no restrictions on the use of AI to make a PR, as long as a human has reviewed the code and a test has been run successfully
+- There are no restrictions on the use of AI to make a PR, as long as a human has reviewed the code and a test has been run successfully, without major issues (e.g crash, OFM issues).
 
 ## Development and verification
 
