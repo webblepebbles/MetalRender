@@ -85,7 +85,8 @@ public final class SeedColumns {
                 for (int i = 0; i < n; i++) {
                     int bx = ox + i * g;
                     int bz = oz + j * g;
-                    int sv = solve(src, bx, bz, 0);
+                    int hint = i > 0 ? gs[j * n + i - 1] : (j > 0 ? gs[(j - 1) * n + i] : -1);
+                    int sv = solve(src, bx, bz, 0, hint);
                     gs[j * n + i] = sv;
                     gb[j * n + i] = src.biome(bx, Math.max(sv, src.seaLevel), bz);
                 }
@@ -111,7 +112,7 @@ public final class SeedColumns {
             int[] half = new int[17 * 17];
             for (int j = 0; j < 17; j++) {
                 for (int k = 0; k < 17; k++) {
-                    half[j * 17 + k] = solve(src, ox + k * 2 * w + (w >> 1), oz + j * 2 * w + (w >> 1), level);
+                    half[j * 17 + k] = solve(src, ox + k * 2 * w + (w >> 1), oz + j * 2 * w + (w >> 1), level, -1);
                 }
             }
             for (int z = 0; z < 32; z++) {
@@ -133,6 +134,12 @@ public final class SeedColumns {
                                 + half[(hz + 1) * 17 + hx + 1] + 2) >> 2;
                     }
                     surface[i] = sv;
+                    if (((x | z) & 1) != 0) {
+                        int pi = (z & ~1) * 32 + (x & ~1);
+                        biomes[i] = biomes[pi];
+                        styles[i] = styles[pi];
+                        continue;
+                    }
                     Holder<Biome> b = src.biome(bx, Math.max(sv, src.seaLevel), bz);
                     biomes[i] = b;
                     styles[i] = FarBiomeStyle.of(b);
@@ -158,7 +165,7 @@ public final class SeedColumns {
         int[][] structY = new int[FarTileData.COLS][];
         BlockState[][] structS = new BlockState[FarTileData.COLS][];
         FarStructures fs = src.structures;
-        if (fs != null && level <= FarStructures.MAX_LEVEL) {
+        if (fs != null && level <= 2) {
             int[] counts = new int[FarTileData.COLS];
             List<FarStructures.Placed> placed = fs.collect(ox, oz, size);
             for (FarStructures.Placed p : placed) {
@@ -219,6 +226,7 @@ public final class SeedColumns {
         }
         FarTintView view = new FarTintView(src.minY, src.height);
         BlockPos.MutableBlockPos pos = new BlockPos.MutableBlockPos();
+        int[][] made = new int[FarTileData.COLS][];
         for (int z = 0; z < 32; z++) {
             for (int x = 0; x < 32; x++) {
                 int i = z * 32 + x;
@@ -230,12 +238,79 @@ public final class SeedColumns {
                 int[] spans = column(src, looks, view, pos, bx, bz, surface[i], biomes[i], styles[i], level,
                         canopyLo[i], canopyHi[i], canopyState[i], trunkLo[i], trunkHi[i], trunkState[i], structY[i],
                         structS[i]);
-                tile.set(i, spans, FarTileData.SEED);
+                made[i] = spans;
+            }
+        }
+        if (src.blend) {
+            blendTints(made, level <= 2 ? 3 : 2);
+        }
+        for (int i = 0; i < FarTileData.COLS; i++) {
+            if (made[i] != null) {
+                tile.set(i, made[i], FarTileData.SEED);
             }
         }
     }
 
-    private static int solve(FarSeedSource src, int x, int z, int level) {
+    private static void blendTints(int[][] cols, int r) {
+        int[][] out = new int[cols.length][];
+        for (int z = 0; z < 32; z++) {
+            for (int x = 0; x < 32; x++) {
+                int[] col = cols[z * 32 + x];
+                if (col == null) {
+                    continue;
+                }
+                int[] copy = col.clone();
+                for (int k = 0; k < col.length; k += 3) {
+                    int sid = col[k + 1];
+                    int own = col[k + 2];
+                    if (own == FarTints.WHITE) {
+                        continue;
+                    }
+                    int sr = 0;
+                    int sg = 0;
+                    int sb = 0;
+                    int n = 0;
+                    for (int dz = -r; dz <= r; dz++) {
+                        int nz = z + dz;
+                        if (nz < 0 || nz > 31) {
+                            continue;
+                        }
+                        for (int dx = -r; dx <= r; dx++) {
+                            int nx = x + dx;
+                            if (nx < 0 || nx > 31) {
+                                continue;
+                            }
+                            int[] nc = cols[nz * 32 + nx];
+                            if (nc == null) {
+                                continue;
+                            }
+                            for (int m = nc.length - 3; m >= 0; m -= 3) {
+                                if (nc[m + 1] == sid && nc[m + 2] != FarTints.WHITE) {
+                                    int c = nc[m + 2];
+                                    sr += (c >> 16) & 255;
+                                    sg += (c >> 8) & 255;
+                                    sb += c & 255;
+                                    n++;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if (n > 1) {
+                        copy[k + 2] = ((sr / n) << 16) | ((sg / n) << 8) | (sb / n);
+                    }
+                }
+                out[z * 32 + x] = copy;
+            }
+        }
+        for (int i = 0; i < cols.length; i++) {
+            if (out[i] != null) {
+                cols[i] = out[i];
+            }
+        }
+    }
+
+    private static int solve(FarSeedSource src, int x, int z, int level, int hint) {
         int lo = src.minY + 1;
         int hi = src.minY + src.height - 2;
         int est = Math.max(lo, Math.min(hi, src.surfaceEstimate(x, z)));
@@ -245,6 +320,9 @@ public final class SeedColumns {
         int step = Math.max(4, Math.min(16, 1 << level));
         int prec = Math.max(1, (1 << level) >> 1);
         int y = Math.min(hi, est + 8);
+        if (hint > lo && hint + step < hi && src.density(x, hint, z) > 0 && src.density(x, hint + step, z) <= 0) {
+            y = hint;
+        }
         int solid;
         int air;
         if (src.density(x, y, z) > 0) {

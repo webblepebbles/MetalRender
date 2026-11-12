@@ -126,6 +126,7 @@ public final class FarTerrainManager {
     private float lastPixelScale = -1.0f;
     private int pixelVotes;
     private boolean zoomedView;
+    private volatile double zoomK = 2.0;
     private float basePixelScale = 700.0f;
     private final LongOpenHashSet refined = new LongOpenHashSet();
     private boolean selectSoon;
@@ -270,6 +271,7 @@ public final class FarTerrainManager {
         initializing = true;
         lastFlush = System.currentTimeMillis();
         boolean seedGen = cfg.farSeedGen;
+        boolean blendBiomes = cfg.farBiomeBlend;
         String manual = cfg.farSeed;
         startedMem = cfg.farMemoryMb;
         startedOpts = buildOpts(cfg);
@@ -309,6 +311,9 @@ public final class FarTerrainManager {
                 sd = seedGen ? FarSeedSource.forLevel(lvl, manual) : null;
             } catch (Throwable t) {
                 MetalLogger.warn("far seed init failed: %s", t.toString());
+            }
+            if (sd != null) {
+                sd.blend = blendBiomes;
             }
             FarStore st = new FarStore(dir, mem, disk, sd != null ? sd.fingerprint : 0L,
                     FarStateIds.registryFingerprint());
@@ -620,7 +625,7 @@ public final class FarTerrainManager {
         if (initializing || store == null) {
             return;
         }
-        int opts = (cfg.farFlatColor ? 1 : 0) | (cfg.farHiZ ? 16 : 0);
+        int opts = (cfg.farFlatColor ? 1 : 0) | (cfg.farHiZ ? 16 : 0) | (cfg.farLodFade ? 32 : 0);
         if (opts != sentOpts) {
             sentOpts = opts;
             NativeBridge.nFarSetOptions(opts);
@@ -813,6 +818,8 @@ public final class FarTerrainManager {
 
     private void select(double cx, double cz, int rd) {
         selRd = rd;
+        var zc = MetalRenderClient.getConfig();
+        zoomK = zc != null && zc.farZoomSaver ? 1.0 : 2.0;
         LongOpenHashSet next = new LongOpenHashSet(desired.size() + 64);
         refined.clear();
         if (zoomedView) {
@@ -974,7 +981,7 @@ public final class FarTerrainManager {
     }
 
     private static int buildOpts(MetalRenderConfig cfg) {
-        return (cfg.farCompactQuads ? 1 : 0) | (cfg.farWaterPlane ? 2 : 0);
+        return (cfg.farCompactQuads ? 1 : 0) | (cfg.farWaterPlane ? 2 : 0) | (cfg.farBiomeBlend ? 8 : 0);
     }
 
     private double roughFactor(long key) {
@@ -1017,7 +1024,7 @@ public final class FarTerrainManager {
             }
             int tl = lv == 2 ? 1 : lv;
             boolean boost = zoomedView && inView(key, cx, cz);
-            double threshold = (boost ? 2.0 * pixelScale : Math.min((double) quality, 2.0 * basePixelScale))
+            double threshold = (boost ? zoomK * pixelScale : Math.min((double) quality, 2.0 * basePixelScale))
                     * (1L << (tl - 1));
             boolean wasSplit = !desired.contains(key);
             double rf = roughFactor(key);
