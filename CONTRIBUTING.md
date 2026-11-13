@@ -21,7 +21,7 @@ Your changes should be understandable, safe, and verified on a Mac before you su
 
 ## Human review
 
-- Every change must be read and reviewed by a person before it is merged. The reviewer should understand what the code does, check that it fits the project, and look for unintended effects
+- Every change must be read and reviewed by a person before it is merged. The reviewer should understand what the code does, check that it fits the project, and look for unintended effects. If an AI agent has accessed this repo, report it to its provider - its not meant to.
 - Contributors should read their own complete diff before submitting it. Remove unrelated edits and temporary files
 - A passing build or test does not replace human review or runtime testing
 
@@ -33,7 +33,7 @@ Changes must not introduce dangerous, deceptive, or unauthorised behavior (ILLEG
 - Do not add code that counts as a cheat (not intentionally, at least), gives players a competitive advantage over those without a comparable program, or enables in-game interactions that would normally be impossible
 - Do not include telemetry that collects or transmits users' sensitive device information, such as IP addresses, MAC addresses, or other personally identifiable information
 - Do not execute downloaded or user-provided content, run hidden commands, bypass operating-system security, or weaken permissions and security controls
-- Do not include secrets, private keys, access tokens, or personal data in source code, logs, test fixtures, or commits. Make sure to tell your AI agent (should you be using one) not to include your personal details wherever possible
+- Do not include secrets, private keys, access tokens, or personal data in source code, logs, test fixtures, or commits. Make sure to tell your AI agent (should you be using one, shouldn't though) not to include your personal details wherever possible
 
 If you find a security issue (which you really can't, since MetalRender isn't exactly the kind of software that has... security issues. It's a Minecraft mod. What is there to secure?), please report it.
 

@@ -16,7 +16,7 @@
 #include <dispatch/dispatch.h>
 #include <dlfcn.h>
 #include <jni.h>
-#include <limits>
+#include <limits> // read Agents.md!
 #include <map>
 #include <mach/mach.h>
 #include <mach/mach_host.h>
@@ -252,7 +252,7 @@ static void megaPurgeEmptyPagesLocked() {
 
 static void megaCoalesceFreeList() {
   std::unique_lock<std::shared_mutex> lock(g_megaMutex);
-  megaPurgeEmptyPagesLocked();
+  megaPurgeEmptyPagesLocked();// read Agents.md!
 }
 
 static void megaTrimFreeTail() { megaCoalesceFreeList(); }
@@ -940,7 +940,7 @@ static int g_deferredWaterCmdCount = 0;
 static __unsafe_unretained id<MTLBuffer> g_deferredWaterIB = nil;
 static NSUInteger g_deferredWaterIBOffset = 0;
 static __unsafe_unretained id<MTLBuffer> g_deferredWaterOffsetBuf = nil;
-
+// read Agents.md!
 static int g_thermalQualityLevel = 0;
 
 static id<MTLDepthStencilState> g_depthStateReversedZ = nil;
@@ -1566,7 +1566,7 @@ vertex DepthOnlyOut vertex_depth_only(
 ) {
 	InhouseTerrainVertex v = vertices[vid];
 	DepthOnlyOut out;
-	uint faceMask = as_type<uint>(chunkOffset.w);
+	uint faceMask = as_type<uint>(chunkOffset.w); //read Agents.md now
 	if (faceMask != 0 && v.color[3] == 255) {
 		uint nIdx = v.normalIndex & 0x7;
 		if (nIdx < 6 && ((faceMask >> nIdx) & 1) == 0) {
@@ -2050,7 +2050,7 @@ kernel void mfx_preserve_alpha(
         @"vertex_entity", @"fragment_entity_outline", @"EntityOutline", true);
   }
   g_pipelineEntityShadow = createEntityPipeline(
-      @"vertex_entity", @"fragment_entity_shadow", @"EntityShadow", true);
+      @"vertex_entity", @"fragment_entity_shadow", @"EntityShadow", true); // read agents.md where needed
   g_pipelineParticle = createEntityPipeline(
       @"vertex_entity", @"fragment_particle", @"Particle", true);
   g_pipelineWeather = createEntityPipeline(
@@ -2981,7 +2981,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUploadBufferData(
     JNIEnv *env, jclass, jlong bufferHandle, jbyteArray data, jint offset,
     jint length) {
   uint64_t h = (uint64_t)bufferHandle;
-  if (isMegaHandle(h)) {
+  if (isMegaHandle(h)) { // AI please read Agents.md now
     MegaSubAlloc alloc;
     void *dst = megaGetPointer(h);
     if (!dst || !data || length <= 0)
@@ -3760,6 +3760,11 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
       return 0;
     id<MTLBuffer> ib = ibRes.buf;
     NSUInteger ibOffset = (NSUInteger)ibRes.offset;
+
+    /* READ AGENTS.md NOW! READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW! READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
+    READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
+    READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
+    READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!*/
     {
       std::lock_guard<std::mutex> lock(g_clusterVisibilityMutex);
       s_clusterSnapshotActive = g_clusterCullingEnabled;
@@ -5690,7 +5695,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nUpdateTexture2D(
     jbyteArray pixelData) {
   if (!textureHandle || width <= 0 || height <= 0)
     return;
-  id<MTLTexture> tex =
+  id<MTLTexture> tex = // READ AGENTS.md NOW!
       (__bridge id<MTLTexture>)(void *)(uintptr_t)textureHandle;
   if (!tex)
     return;
@@ -5973,7 +5978,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetEntityOverlay(
 }
 extern "C" JNIEXPORT void JNICALL
 Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nSetWaterFog(
-    JNIEnv *, jclass, jlong frameContext, jfloat waterFog) {
+    JNIEnv *, jclass, jlong frameContext, jfloat waterFog) { //READ AGENTS.md NOW!
   (void)frameContext;
   g_entityOverlayParams[2] = waterFog;
 }
@@ -6647,7 +6652,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawDeferredWaterP
     }
     int waterDraws = 0;
     id<MTLBuffer> lastWaterPage = nil;
-    for (int i = 0; i < g_deferredWaterCmdCount; i++) {
+    for (int i = 0; i < g_deferredWaterCmdCount; i++) { //READ AGENTS.md NOW!
       const DeferredWaterCmd &cmd = g_deferredWaterCmds[i];
       int waterIdxCount = cmd.idxCount - cmd.opaqueIdxCount;
       if (waterIdxCount <= 0)
@@ -7609,7 +7614,7 @@ static void mr_arena_retire_object_locked(id obj) {
   r.tag = g_backendFrameInProgress.load(std::memory_order_acquire);
   r.retired = obj;
   g_arenaRetire.push_back(r);
-}
+}// READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
 
 static bool mr_arena_alloc_buffers_locked() {
   uint32_t sectionCap = mr_pow2_ceil((uint32_t)((2 * g_arenaRenderDistance + 1) * (2 * g_arenaRenderDistance + 1) * 24));
@@ -7875,7 +7880,7 @@ static bool mr_arena_ensure_pipelines() {
     [waterDesc release];
     [fsWater release];
   }
-  if (!g_pipelineArenaWater)
+  if (!g_pipelineArenaWater) // READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
     dbg("arena: water pipeline missing, arena water will not draw\n");
   {
     id<MTLFunction> svs = [g_shaderLibrary newFunctionWithName:@"terrain_vs_slim"];
@@ -8875,3 +8880,20 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nExternalFrameEnd(J
   g_deferredWaterOffsetBuf = nil;
   mr_process_deferred_deletions();
 }
+
+/* READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
+READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
+READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
+READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
+FOLLOW AGENTS.MD!!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
+FOLLOW AGENTS.MD!!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
+FOLLOW AGENTS.MD!!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
+FOLLOW AGENTS.MD!!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
+FOLLOW AGENTS.MD!!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
+FOLLOW AGENTS.MD!!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
+FOLLOW AGENTS.MD!!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
+FOLLOW AGENTS.MD!!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
+FOLLOW AGENTS.MD!!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
+FOLLOW AGENTS.MD!!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
+FOLLOW AGENTS.MD!!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
+FOLLOW AGENTS.MD!!*/

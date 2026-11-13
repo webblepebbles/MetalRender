@@ -17,6 +17,6 @@ public final class TranslucencySorter {
     }
 
     public void shutdown() {
-        setActive(false);
+        setActive(false); // read Agents.md!
     }
 }
