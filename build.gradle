@@ -29,6 +29,7 @@ dependencies {
     minecraft "com.mojang:minecraft:26.3"
     implementation "net.fabricmc:fabric-loader:0.19.5"
     implementation "net.fabricmc.fabric-api:fabric-api:0.163.0+26.3"
+    implementation "maven.modrinth:modmenu:21.0.0"
     implementation "org.lwjgl:lwjgl:3.3.3"
     implementation "org.lwjgl:lwjgl-glfw:3.3.3"
     implementation "org.lwjgl:lwjgl:3.3.3:natives-macos"
