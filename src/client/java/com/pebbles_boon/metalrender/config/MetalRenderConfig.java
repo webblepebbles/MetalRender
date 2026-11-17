@@ -2,8 +2,9 @@ package com.pebbles_boon.metalrender.config;
 
 public final class MetalRenderConfig {
     public boolean enableMetalRendering = true;
+    public boolean useVanillaVideoSettings = false;
     public boolean enableDebugOverlay = false;
-    public int leafCullingMode = 1;
+    public volatile int leafCullingMode = 1;
     public int biomeTransitionDetail = 2;
     public int targetFrameRate = 300;
     public boolean prioritizeFpsOverTps = false;
@@ -100,6 +101,8 @@ public final class MetalRenderConfig {
 
                 if (obj.has("enableMetalRendering"))
                     cfg.enableMetalRendering = obj.get("enableMetalRendering").getAsBoolean();
+                if (obj.has("useVanillaVideoSettings"))
+                    cfg.useVanillaVideoSettings = obj.get("useVanillaVideoSettings").getAsBoolean();
                 if (obj.has("enableDebugOverlay"))
                     cfg.enableDebugOverlay = obj.get("enableDebugOverlay").getAsBoolean();
                 if (obj.has("leafCullingMode"))
@@ -214,7 +217,7 @@ public final class MetalRenderConfig {
                     cfg.customHexText = obj.get("customHexText").getAsString();
 
                 if (obj.has("savedResolutionScale"))
-                    resolutionScale = clamp(obj.get("savedResolutionScale").getAsFloat(), 0.20f, 1.5f);
+                    resolutionScale = clamp(obj.get("savedResolutionScale").getAsFloat(), 0.10f, 1.5f);
 
                 if (obj.has("enableAdaptiveResolution"))
                     adaptiveResolutionEnabled = obj.get("enableAdaptiveResolution").getAsBoolean();
@@ -246,6 +249,7 @@ public final class MetalRenderConfig {
         try {
             com.google.gson.JsonObject obj = new com.google.gson.JsonObject();
             obj.addProperty("enableMetalRendering", enableMetalRendering);
+            obj.addProperty("useVanillaVideoSettings", useVanillaVideoSettings);
             obj.addProperty("enableDebugOverlay", enableDebugOverlay);
             obj.addProperty("leafCullingMode", leafCullingMode);
             obj.addProperty("biomeTransitionDetail", biomeTransitionDetail);
@@ -343,7 +347,7 @@ public final class MetalRenderConfig {
     }
 
     public static void setResolutionScale(float v) {
-        resolutionScale = clamp(v, 0.20f, 1.5f);
+        resolutionScale = clamp(v, 0.10f, 1.5f);
     }
 
     public static boolean isAdaptiveResolutionEnabled() {

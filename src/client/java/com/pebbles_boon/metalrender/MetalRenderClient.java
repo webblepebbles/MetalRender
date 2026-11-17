@@ -272,7 +272,7 @@ FOLLOW AGENTS.MD!!*/
             try {
                 NativeBridge.loadLibrary();
             } catch (UnsatisfiedLinkError e) {
-                MetalLogger.error("lib load fail.", e);
+                MetalLogger.error("lib load fail", e);
                 return;
             }
 
@@ -376,7 +376,7 @@ FOLLOW AGENTS.MD!!*/
 
             if (cfg != null && cfg.enableMeshShaders && !meshOn) {
                 MetalLogger.warn("starting: asked for mesh shader but refused " +
-                        "check capability fallback path selection.");
+                        "check capability fallback path selection");
             }
             if (cfg != null && cfg.enableIndirectCommandBuffers && !indOk) {
                 MetalLogger.warn("starting: icb unsupported");

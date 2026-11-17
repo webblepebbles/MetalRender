@@ -14,6 +14,10 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
+import java.util.function.Function;
+import java.util.function.Supplier;
 import net.minecraft.client.CloudStatus;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.OptionInstance;
@@ -31,7 +35,7 @@ import net.minecraft.resources.Identifier;
 import net.minecraft.server.level.ParticleStatus;
 import net.minecraft.util.ARGB;
 
-public class MetalRenderSettingsScreen extends Screen {
+public class MetalRenderSettingsScreen extends Screen implements MetalRenderSettings.Controls {
     private static final Identifier LOGO = Identifier.fromNamespaceAndPath("metalrender", "textures/metalrender_transparent.png");
 
     private static final class GlassBackdrop implements AutoCloseable {
@@ -228,8 +232,9 @@ public class MetalRenderSettingsScreen extends Screen {
     private EditBox bgHexBox, panelHexBox, accentHexBox, textHexBox;
 
     private final Screen parent;
+    private MetalRenderSettings settings;
     private MetalRenderConfig config;
-    private int selectedTab = 0;
+    private int selectedTab;
     private int scrollOffset = 0;
     private int maxScroll = 0;
     private boolean dragging = false;
@@ -355,29 +360,7 @@ public class MetalRenderSettingsScreen extends Screen {
     private int pendingFov;
     private double pendingDistortion;
     private double pendingFovEffects;
-    private int pendingTargetFps;
-    private int pendingMaxMemMb;
-    private boolean pendingDeepDebugNextRun;
-
     private int initialRenderDist;
-    private int initialBiomeDetail;
-    private int initialLeafCulling;
-    private boolean initialMetalOn;
-    private boolean initialCameraFacingCulling;
-    private boolean initialClusterFrustumCulling;
-    private boolean initialGpuTranslucencySort;
-    private boolean initialDistanceLod;
-    private int initialLodNearChunks;
-    private int initialLodMidChunks;
-    private boolean initialLodThroughputBudget;
-    private boolean initialLodVisibilityGate;
-    private boolean initialLodRecencyEviction;
-    private boolean initialLodStickyTiers;
-    private boolean initialLodViewImpact;
-    private boolean initialLodSkeletonFirst;
-    private boolean initialGreedyMid;
-    private boolean initialGreedyFar;
-    private boolean initialSmoothLighting;
 
     private final List<Row> rows = new ArrayList<>();
 
@@ -420,9 +403,8 @@ public class MetalRenderSettingsScreen extends Screen {
 
     @Override
     protected void init() {
-        config = MetalRenderClient.getConfig();
-        if (config == null)
-            config = MetalRenderConfig.load();
+        settings = new MetalRenderSettings();
+        config = settings.config;
         customHexBg = config.customHexBg;
         customHexPanel = config.customHexPanel;
         customHexAccent = config.customHexAccent;
@@ -437,29 +419,7 @@ public class MetalRenderSettingsScreen extends Screen {
         pendingFov = o.fov().get();
         pendingDistortion = o.screenEffectScale().get();
         pendingFovEffects = o.fovEffectScale().get();
-        pendingTargetFps = config.targetFrameRate;
-        pendingMaxMemMb = config.maxMemoryMB;
-        pendingDeepDebugNextRun = MetalRenderConfig.isOneRunDeepDebugRequested();
-
         initialRenderDist = pendingRenderDist;
-        initialBiomeDetail = config.biomeTransitionDetail;
-        initialLeafCulling = config.leafCullingMode;
-        initialSmoothLighting = config.smoothLighting;
-        initialMetalOn = config.enableMetalRendering;
-        initialCameraFacingCulling = config.enableCameraFacingCulling;
-        initialClusterFrustumCulling = config.enableClusterFrustumCulling;
-        initialGpuTranslucencySort = config.enableGpuTranslucencySort;
-        initialDistanceLod = config.enableDistanceLod;
-        initialLodNearChunks = config.lodNearChunks;
-        initialLodMidChunks = config.lodMidChunks;
-        initialLodThroughputBudget = config.lodThroughputBudget;
-        initialLodVisibilityGate = config.lodVisibilityGate;
-        initialLodRecencyEviction = config.lodRecencyEviction;
-        initialLodStickyTiers = config.lodStickyTiers;
-        initialLodViewImpact = config.lodViewImpact;
-        initialLodSkeletonFirst = config.lodSkeletonFirst;
-        initialGreedyMid = config.enableGreedyMid;
-        initialGreedyFar = config.enableGreedyFar;
         layout();
         rebuild();
     }
@@ -747,7 +707,8 @@ public class MetalRenderSettingsScreen extends Screen {
     }
 
     private int sidebarButtonHeight() {
-        return Math.max(16, Math.min(36, (sh - 16 - (TABS.length - 1) * sidebarButtonGap()) / TABS.length));
+        int tabCount = TABS.length;
+        return Math.max(16, Math.min(36, (sh - 16 - (tabCount - 1) * sidebarButtonGap()) / tabCount));
     }
 
     private void fillRounded(GuiGraphicsExtractor ctx, int x, int y, int w, int h, int col, int r) {
@@ -1250,43 +1211,15 @@ public class MetalRenderSettingsScreen extends Screen {
 
     @Override
     public void onClose() {
-        applyPending();
-        config.save();
-
-        boolean metalFlip = config.enableMetalRendering != initialMetalOn;
-        boolean needsRebuild = (pendingRenderDist != initialRenderDist)
-                || (config.biomeTransitionDetail != initialBiomeDetail)
-                || (config.leafCullingMode != initialLeafCulling)
-                || (config.smoothLighting != initialSmoothLighting)
-                || (config.enableDistanceLod != initialDistanceLod)
-                || (config.lodNearChunks != initialLodNearChunks)
-                || (config.lodMidChunks != initialLodMidChunks)
-                || (config.enableGreedyMid != initialGreedyMid)
-                || (config.enableGreedyFar != initialGreedyFar);
-
-        boolean biomeChanged = config.biomeTransitionDetail != initialBiomeDetail;
-        boolean cameraFacingCullingChanged = config.enableCameraFacingCulling != initialCameraFacingCulling;
-        boolean cullingFeaturesChanged = config.enableClusterFrustumCulling != initialClusterFrustumCulling
-                || config.enableGpuTranslucencySort != initialGpuTranslucencySort;
-        com.pebbles_boon.metalrender.util.MetalLogger.info(
-                "settings close: rebuild=%b rd=%b bm=%b lf=%b lt=%b",
-                needsRebuild,
-                pendingRenderDist != initialRenderDist,
-                biomeChanged,
-                config.leafCullingMode != initialLeafCulling,
-                config.smoothLighting != initialSmoothLighting,
-                false);
-        MetalRenderClient.requestDeferredApply(
-                metalFlip || cameraFacingCullingChanged,
-                metalFlip,
-                !metalFlip && (needsRebuild || biomeChanged || cullingFeaturesChanged));
+        applyPendingVanillaSettings();
+        settings.save(pendingRenderDist != initialRenderDist);
 
         Minecraft mc = Minecraft.getInstance();
         if (mc != null)
             mc.gui.setScreen(parent);
     }
 
-    private void applyPending() {
+    private void applyPendingVanillaSettings() {
         Options o = Minecraft.getInstance().options;
         o.renderDistance().set(pendingRenderDist);
         if (config.prioritizeFpsOverTps) {
@@ -1300,9 +1233,6 @@ public class MetalRenderSettingsScreen extends Screen {
         o.screenEffectScale().set(pendingDistortion);
         o.fovEffectScale().set(pendingFovEffects);
         o.save();
-        config.targetFrameRate = pendingTargetFps;
-        config.maxMemoryMB = pendingMaxMemMb;
-        MetalRenderConfig.setOneRunDeepDebugRequested(pendingDeepDebugNextRun);
     }
 
     private void rebuild() {
@@ -1315,12 +1245,12 @@ public class MetalRenderSettingsScreen extends Screen {
 
         switch (selectedTab) {
             case 0 -> buildVideo();
-            case 1 -> buildMetal();
+            case 1 -> settings.addRenderer(this);
             case 2 -> buildQuality();
-            case 3 -> buildPerformance();
-            case 4 -> buildAdvanced();
+            case 3 -> settings.addPerformance(this);
+            case 4 -> settings.addAdvanced(this);
             case 5 -> buildThemes();
-            case 6 -> buildFarTerrain();
+            case 6 -> settings.addFarTerrain(this);
         }
         computeLayout();
         for (Row r : rows)
@@ -1377,31 +1307,15 @@ public class MetalRenderSettingsScreen extends Screen {
     }
 
     private void applyCustomHex() {
-        customHexBg = sanitizeHex(customHexBg, "141C2A");
-        customHexPanel = sanitizeHex(customHexPanel, "1E242E");
-        customHexAccent = sanitizeHex(customHexAccent, "5AC8FF");
-        customHexText = sanitizeHex(customHexText, "E8F0FF");
-        config.customHexBg = customHexBg;
-        config.customHexPanel = customHexPanel;
-        config.customHexAccent = customHexAccent;
-        config.customHexText = customHexText;
-        config.uiTheme = UiTheme.CUSTOM.name();
+        settings.setCustomColours(customHexBg, customHexPanel, customHexAccent, customHexText);
+        customHexBg = config.customHexBg;
+        customHexPanel = config.customHexPanel;
+        customHexAccent = config.customHexAccent;
+        customHexText = config.customHexText;
         config.save();
         applyTheme(UiTheme.CUSTOM);
         selectedTab = 5;
         rebuild();
-    }
-
-    private static String sanitizeHex(String s, String fallback) {
-        if (s == null)
-            return fallback;
-        String h = s.trim().replace("#", "").replace("0x", "").toUpperCase();
-        if (h.length() != 6)
-            return fallback;
-        for (char c : h.toCharArray())
-            if (!((c >= '0' && c <= '9') || (c >= 'A' && c <= 'F')))
-                return fallback;
-        return h;
     }
 
     private boolean isFullWidth(Row r) {
@@ -1450,19 +1364,19 @@ public class MetalRenderSettingsScreen extends Screen {
 
     private void buildVideo() {
         Options o = Minecraft.getInstance().options;
-        sec("Display");
+        section("Display");
         vanilla("Fullscreen", o.fullscreen());
         vanilla("VSync", o.enableVsync());
         sld("Max FPS", 1, FPS_LIMIT_UNLIMITED, 1, pendingMaxFps,
                 v -> pendingMaxFps = (int) (float) v,
                 MetalRenderSettingsScreen::formatFpsLimit);
         sld("GUI Scale", 0, 6, 1, pendingGuiScale, v -> pendingGuiScale = (int) (float) v);
-        sec("World");
+        section("World");
         sld("Render Distance", 2, 32, 1, pendingRenderDist, v -> pendingRenderDist = (int) (float) v);
         sld("Simulation Distance", 5, 32, 1, pendingSimDist, v -> pendingSimDist = (int) (float) v);
-        sec("Environment");
+        section("Environment");
         sld("Brightness", 0f, 1f, 0.05f, (float) pendingBrightness, v -> pendingBrightness = v);
-        sec("Camera");
+        section("Camera");
         sld("Field of View", 30f, 110f, 1f, pendingFov, v -> pendingFov = (int) (float) v);
         sld("Distortion Effects", 0f, 1f, 0.05f, (float) pendingDistortion, v -> pendingDistortion = v);
         sld("FOV Effects", 0f, 1f, 0.05f, (float) pendingFovEffects, v -> pendingFovEffects = v);
@@ -1471,42 +1385,27 @@ public class MetalRenderSettingsScreen extends Screen {
         vanilla("Graphics", o.graphicsPreset());
     }
 
-    private void buildMetal() {
-        sec("Renderer");
-        tog("Metal Rendering", config.enableMetalRendering, v -> config.enableMetalRendering = v);
-        if (MetalRenderConfig.isDeepDebugActive()) {
-            infoRow("Deep Debug Status", "Active this run");
-        } else {
-            tog("Deep Debug Next Run", pendingDeepDebugNextRun, v -> pendingDeepDebugNextRun = v);
-            infoRow("Deep Debug Status", pendingDeepDebugNextRun ? "Armed for next launch" : "Off");
-        }
-        sec("Hardware");
-        infoRow("GPU", MetalHardwareChecker.getDeviceName());
-        infoRow("Metal", MetalRenderClient.isMetalAvailable() ? "Supported" : "Not Available");
-        infoRow("Apple Silicon", MetalHardwareChecker.appleSilicon() ? "Yes" : "No");
-        infoRow("Sodium", MetalRenderClient.isSodiumLoaded() ? "Installed" : "Not Installed");
-        infoRow("Mesh Shaders", MetalHardwareChecker.supportsMeshShaders() ? "Supported" : "Not Available");
-    }
-
     private void buildQuality() {
         Options o = Minecraft.getInstance().options;
-
-        sec("World");
+        section("World");
         vanilla("Ambient Occlusion", o.ambientOcclusion());
         sld("Biome Blend", 0, 7, 1, o.biomeBlendRadius().get(),
                 v -> o.biomeBlendRadius().set((int) (float) v));
-        cyc("Leaves Quality",
-                config.leafCullingMode == 0 ? "Fast" : "Fancy",
-                () -> config.leafCullingMode = (config.leafCullingMode == 0) ? 1 : 0);
+        settings.addLeaves(this);
+        buildVanillaQuality();
+        settings.addQuality(this);
+    }
 
-        sec("Atmosphere");
+    private void buildVanillaQuality() {
+        Options o = Minecraft.getInstance().options;
+        section("Atmosphere");
         vanilla("Clouds", o.cloudStatus());
         sld("Cloud Distance", 2, 128, 2, o.cloudRange().get(),
                 v -> o.cloudRange().set((int) (float) v));
         sld("Weather Radius", 3, 10, 1, o.weatherRadius().get(),
                 v -> o.weatherRadius().set((int) (float) v));
 
-        sec("Entities & Effects");
+        section("Entities & Effects");
         vanilla("Particles", o.particles());
         vanilla("Entity Shadows", o.entityShadows());
         sld("Entity Distance", 50, 500, 25,
@@ -1517,93 +1416,17 @@ public class MetalRenderSettingsScreen extends Screen {
                 (int) (o.chunkSectionFadeInTime().get() * 1000.0),
                 v -> o.chunkSectionFadeInTime().set(v / 1000.0));
 
-        sec("Textures");
+        section("Textures");
         sld("Mipmap Levels", 0, 4, 1, o.mipmapLevels().get(),
                 v -> o.mipmapLevels().set((int) (float) v));
         vanilla("Improved Transparency", o.improvedTransparency());
         vanilla("Texture Filtering", o.textureFiltering());
         sld("Anisotropy", 0, 3, 1, o.maxAnisotropyBit().get(),
                 v -> o.maxAnisotropyBit().set((int) (float) v));
-
-        sec("Level of Detail");
-        tog("Distance LOD", config.enableDistanceLod, v -> config.enableDistanceLod = v);
-        tog("Throughput Budget", config.lodThroughputBudget, v -> config.lodThroughputBudget = v);
-        tog("Visibility Gate", config.lodVisibilityGate, v -> config.lodVisibilityGate = v);
-        tog("Recency Eviction", config.lodRecencyEviction, v -> config.lodRecencyEviction = v);
-        tog("Sticky Tiers", config.lodStickyTiers, v -> config.lodStickyTiers = v);
-        tog("View Impact", config.lodViewImpact, v -> config.lodViewImpact = v);
-        tog("Skeleton First", config.lodSkeletonFirst, v -> config.lodSkeletonFirst = v);
-        sld("Full Detail Radius (chunks)", 2, 32, 1, config.lodNearChunks,
-                v -> config.lodNearChunks = (int) (float) v);
-        sld("Medium Detail Radius (chunks)", 4, 48, 1, config.lodMidChunks,
-                v -> config.lodMidChunks = (int) (float) v);
-        tog("Greedy Meshing (Mid LOD)", config.enableGreedyMid, v -> config.enableGreedyMid = v);
-        tog("Greedy Meshing (Far LOD)", config.enableGreedyFar, v -> config.enableGreedyFar = v);
-        tog("Thermal-Adaptive LOD", config.lodThermalAdaptive, v -> config.lodThermalAdaptive = v);
-
-        sec("Extras");
-        tog("Smooth Lighting + AO", config.smoothLighting, v -> config.smoothLighting = v);
-        tog("Hidden Fluid Culling", config.hiddenFluidCulling, v -> config.hiddenFluidCulling = v);
-        tog("Improved Fluid Shaping", config.improvedFluidShaping, v -> config.improvedFluidShaping = v);
-        tog("Closest Point Entity Sort", config.closestPointEntitySort, v -> config.closestPointEntitySort = v);
-    }
-
-    private void buildPerformance() {
-        sec("Frame Pacing");
-        sld("Target FPS", 30, 50000, 30, pendingTargetFps, v -> pendingTargetFps = (int) (float) v);
-        tog("GPU-Driven Terrain (restart)", config.gpuDrivenTerrain, v -> config.gpuDrivenTerrain = v);
-        tog("Triple Buffering", config.enableTripleBuffering, v -> config.enableTripleBuffering = v);
-        tog("Burst Thread Mode", config.enableBurstThreadMode, v -> config.enableBurstThreadMode = v);
-        tog("Sacrifice TPS for FPS", config.prioritizeFpsOverTps, v -> config.prioritizeFpsOverTps = v);
-        infoRow("FPS Priority Mode", config.prioritizeFpsOverTps ? "Simulation Distance <= 5" : "Off");
-        tog("Adaptive Resolution", MetalRenderConfig.isAdaptiveResolutionEnabled(),
-                MetalRenderConfig::setAdaptiveResolutionEnabled);
-        tog("Temporal MetalFX", MetalRenderConfig.isMetalFXTemporalEnabled(),
-                MetalRenderConfig::setMetalFXTemporalEnabled);
-        infoRow("MetalFX Mode", MetalRenderConfig.isMetalFXTemporalEnabled() ? "Temporal" : "Spatial");
-        sld(MetalRenderConfig.isAdaptiveResolutionEnabled()
-                ? "Resolution Scale (auto)"
-                : "Resolution Scale",
-                0.50f, 1.50f, 0.05f, MetalRenderConfig.resolutionScale(),
-                MetalRenderConfig::setResolutionScale,
-                v -> Component.literal(String.format(java.util.Locale.ROOT, "%.0f%%", v * 100.0f)));
-        sec("Memory");
-        sld("Max GPU Memory (MB)", 512, 4096, 512, pendingMaxMemMb, v -> pendingMaxMemMb = (int) (float) v);
-        tog("Memory Fallback", config.enableMemoryPressureFallback, v -> config.enableMemoryPressureFallback = v);
-        sec("Runtime");
-        Runtime rt = Runtime.getRuntime();
-        long used = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024);
-        long max = rt.maxMemory() / (1024 * 1024);
-        infoRow("Heap Usage", used + " / " + max + " MB");
-    }
-
-    private void buildAdvanced() {
-        sec("Metal Features");
-        tog("Camera-Facing Face Culling", config.enableCameraFacingCulling,
-                v -> config.enableCameraFacingCulling = v);
-        tog("Argument Buffers", config.enableArgumentBuffers, v -> config.enableArgumentBuffers = v);
-        tog("Indirect CMD Buffers", config.enableIndirectCommandBuffers, v -> config.enableIndirectCommandBuffers = v);
-        tog("Mesh Shaders", config.enableMeshShaders, v -> config.enableMeshShaders = v);
-        cyc("Terrain Path", config.terrainPath, () -> {
-            config.terrainPath = switch (config.terrainPath) {
-                case "auto" -> "vertex";
-                case "vertex" -> "mesh";
-                case "mesh" -> "indirect";
-                default -> "auto";
-            };
-            System.setProperty("metalrender.terrainPath", config.terrainPath);
-            config.loadFeatureFlags();
-            rebuild();
-        });
-        tog("Programmable Blending", config.enableProgrammableBlending, v -> config.enableProgrammableBlending = v);
-        tog("Cluster Frustum Culling", config.enableClusterFrustumCulling,
-                v -> config.enableClusterFrustumCulling = v);
-        tog("GPU Translucency Sort", config.enableGpuTranslucencySort,
-                v -> config.enableGpuTranslucencySort = v);
     }
 
     private void buildThemes() {
-        sec("Colour Themes");
+        section("Colour Themes");
         infoRow("Active Theme", activeTheme.displayName);
         themeRow(UiTheme.LIQUID_GLASS);
         themeRow(UiTheme.PASTEL);
@@ -1611,9 +1434,9 @@ public class MetalRenderSettingsScreen extends Screen {
         themeRow(UiTheme.CRIMSON);
         themeRow(UiTheme.LAVENDER);
         themeRow(UiTheme.CUSTOM);
-        sec("Custom Hex");
+        section("Custom Hex");
         infoRow("Custom", "Edit boxes below \u2192 Apply");
-        sec("Preview");
+        section("Preview");
         infoRow("Tip", "Click a theme to apply instantly");
         infoRow("Background", String.format("#%06X", activeTheme.bgBottom & 0xFFFFFF));
         infoRow("Accent", String.format("#%06X", activeTheme.accent & 0xFFFFFF));
@@ -1636,49 +1459,36 @@ public class MetalRenderSettingsScreen extends Screen {
         rows.add(r);
     }
 
-    private void buildFarTerrain() {
-        sec("Far Terrain");
-        sld("Far Distance (extra chunks)", 0, 512, 8, config.farDistanceChunks,
-                v -> config.farDistanceChunks = (int) (float) v);
-        sld("Far Full-Detail Range (chunks)", 8, 512, 8, config.farQuality / 16,
-                v -> config.farQuality = (int) (float) v * 16);
-        tog("Generate From Seed", config.farSeedGen, v -> config.farSeedGen = v);
-        sld("Far GPU Budget (MB)", 64, 2048, 64, config.farGpuBudgetMb,
-                v -> config.farGpuBudgetMb = (int) (float) v);
-        sld("Far RAM Cache (MB)", 64, 1024, 32, config.farMemoryMb,
-                v -> config.farMemoryMb = (int) (float) v);
-        sld("Far Disk Cache (MB)", 256, 16384, 256, config.farDiskMb,
-                v -> config.farDiskMb = (int) (float) v);
-        sld("Far Worker Threads (0 = auto)", 0, 8, 1, config.farThreads,
-                v -> config.farThreads = (int) (float) v);
-        tog("Far Flat Distant Colour", config.farFlatColor, v -> config.farFlatColor = v);
-        tog("Far Terrain-Aware Detail", config.farRoughLod, v -> config.farRoughLod = v);
-        tog("Far Ocean Water Plane", config.farWaterPlane, v -> config.farWaterPlane = v);
-        tog("Far Compact Geometry", config.farCompactQuads, v -> config.farCompactQuads = v);
-        tog("Far Hidden Tile Culling", config.farHiZ, v -> config.farHiZ = v);
-    }
-
-    private void sec(String label) {
+    @Override
+    public void section(String label) {
         rows.add(new Row(RT.SECTION, label));
     }
 
-    private void tog(String label, boolean on, java.util.function.Consumer<Boolean> setter) {
-        boolean[] s = { on };
-        Row r = new Row(RT.TOGGLE, label);
-        r.value = s[0] ? "Enabled" : "Disabled";
-        r.action = () -> {
-            s[0] = !s[0];
-            r.value = s[0] ? "Enabled" : "Disabled";
-            setter.accept(s[0]);
-        };
-        rows.add(r);
+    @Override
+    public void toggle(String label, BooleanSupplier value, Consumer<Boolean> setter) {
+        Row row = new Row(RT.TOGGLE, label);
+        row.value = value.getAsBoolean() ? "Enabled" : "Disabled";
+        row.action = () -> setter.accept(!value.getAsBoolean());
+        rows.add(row);
     }
 
-    private void cyc(String label, String initial, Runnable action) {
-        Row r = new Row(RT.CYCLE, label);
-        r.value = initial;
-        r.action = action;
-        rows.add(r);
+    @Override
+    public void choice(String label, List<String> choices, String value, Consumer<String> setter) {
+        Row row = new Row(RT.CYCLE, label);
+        row.value = value;
+        row.action = () -> setter.accept(choices.get((choices.indexOf(value) + 1) % choices.size()));
+        rows.add(row);
+    }
+
+    @Override
+    public void info(String label, Supplier<String> value) {
+        infoRow(label, value.get());
+    }
+
+    @Override
+    public void slider(String label, float min, float max, float step, float value,
+            Consumer<Float> setter, Function<Float, Component> formatter) {
+        sld(label, min, max, step, value, setter, formatter);
     }
 
     private void infoRow(String label, String value) {
@@ -1695,13 +1505,13 @@ public class MetalRenderSettingsScreen extends Screen {
     }
 
     private void sld(String label, float min, float max, float step,
-            float cur, java.util.function.Consumer<Float> cb) {
+            float cur, Consumer<Float> cb) {
         sld(label, min, max, step, cur, cb, null);
     }
 
     private void sld(String label, float min, float max, float step,
-            float cur, java.util.function.Consumer<Float> cb,
-            java.util.function.Function<Float, Component> formatter) {
+            float cur, Consumer<Float> cb,
+            Function<Float, Component> formatter) {
         Row r = new Row(RT.SLIDER, label);
         r.slider = new MetalOptionSlider(0, 0, SLIDER_W, SLIDER_H,
                 Component.literal(""), min, max, step, cur, cb, formatter);
