@@ -16,6 +16,9 @@
     ],
     "client": [
       "com.pebbles_boon.metalrender.MetalRenderClient"
+    ],
+    "modmenu": [
+      "com.pebbles_boon.metalrender.compat.ModMenuIntegration"
     ]
   },
   "mixins": [
@@ -25,6 +28,9 @@
     "fabricloader": "*",
     "minecraft": ">=26.3",
     "fabric-api": "*"
+  },
+  "suggests": {
+    "modmenu": "*"
   },
   "breaks": {
     "sodium": "*"
