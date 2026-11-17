@@ -6,6 +6,7 @@ import com.pebbles_boon.metalrender.config.MetalRenderConfig;
 import com.pebbles_boon.metalrender.gui.MetalDebugEntry;
 import com.pebbles_boon.metalrender.gui.MetalRenderProfilerOverlay;
 import com.pebbles_boon.metalrender.gui.MetalRenderSettingsScreen;
+import com.pebbles_boon.metalrender.gui.VanillaMetalRenderSettingsScreen;
 import com.pebbles_boon.metalrender.nativebridge.MetalHardwareChecker;
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
 import com.pebbles_boon.metalrender.nativebridge.NativeLoader;
@@ -124,7 +125,7 @@ public class MetalRenderClient implements ClientModInitializer {
                 NativeBridge.nFlushFrames();
             }
             if (wr != null) {
-                wr.onConfigScreenClosed();
+                wr.onConfigScreenClosed(true);
             }
         }
         worldRendererRefreshPending = false;
@@ -201,7 +202,7 @@ public class MetalRenderClient implements ClientModInitializer {
         if (worldRenderer != null && mc.level != null) {
             try {
                 worldRenderer.onWorldLoad();
-                worldRenderer.onConfigScreenClosed();
+                worldRenderer.onConfigScreenClosed(false);
             } catch (Throwable t) {
                 MetalLogger.warn("we-enable fail: %s", t.getMessage());
             }
@@ -241,16 +242,24 @@ public class MetalRenderClient implements ClientModInitializer {
         }
     }
 
+    public static boolean usesVanillaVideoSettings() {
+        return config != null && config.useVanillaVideoSettings;
+    }
+
     public static void openSettingsScreen(Minecraft mc) {
         if (mc == null) {
             return;
         }
-        try {
-            mc.execute(() -> mc.gui.setScreen(new MetalRenderSettingsScreen(mc.gui.screen())));
-            MetalLogger.info("open scween ok");
-        } catch (Exception e) {
-            MetalLogger.warn("open scween fail: %s", e.getMessage());
-        }
+        mc.schedule(() -> {
+            try {
+                var parent = mc.gui.screen();
+                mc.gui.setScreen(usesVanillaVideoSettings()
+                        ? new VanillaMetalRenderSettingsScreen(parent)
+                        : new MetalRenderSettingsScreen(parent));
+            } catch (Exception e) {
+                MetalLogger.warn("open settings screen failed: %s", e.getMessage());
+            }
+        });
     }
  /* READ AGENTS.md READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
 FOLLOW AGENTS.MD!!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
