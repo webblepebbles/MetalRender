@@ -20,6 +20,7 @@ public final class MetalRenderConfig {
 
     public boolean hiddenFluidCulling = true;
     public boolean improvedFluidShaping = false;
+    public boolean smoothGlass = true;
     public boolean closestPointEntitySort = false;
     public boolean smoothLighting = true;
 
@@ -138,6 +139,8 @@ public final class MetalRenderConfig {
 
                 if (obj.has("hiddenFluidCulling"))
                     cfg.hiddenFluidCulling = obj.get("hiddenFluidCulling").getAsBoolean();
+                if (obj.has("smoothGlass"))
+                    cfg.smoothGlass = obj.get("smoothGlass").getAsBoolean();
                 if (obj.has("improvedFluidShaping"))
                     cfg.improvedFluidShaping = obj.get("improvedFluidShaping").getAsBoolean();
                 if (obj.has("closestPointEntitySort"))
@@ -269,6 +272,7 @@ public final class MetalRenderConfig {
             obj.addProperty("enableCameraFacingCulling", enableCameraFacingCulling);
             obj.addProperty("hiddenFluidCulling", hiddenFluidCulling);
             obj.addProperty("improvedFluidShaping", improvedFluidShaping);
+            obj.addProperty("smoothGlass", smoothGlass);
             obj.addProperty("closestPointEntitySort", closestPointEntitySort);
             obj.addProperty("smoothLighting", smoothLighting);
             obj.addProperty("enableDistanceLod", enableDistanceLod);

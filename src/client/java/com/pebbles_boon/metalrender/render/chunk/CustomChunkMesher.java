@@ -64,6 +64,7 @@ public class CustomChunkMesher {
     private static final int MAX_QUADS = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE * 6;
     private static final int VERTEX_BUF_SIZE = MAX_QUADS * 4 * VERTEX_STRIDE;
     private static final byte WATER_ALPHA = (byte) 168;
+    private static final byte TRANSLUCENT_BLOCK_ALPHA = (byte) 0xFF;
     private static final float FLUID_EPSILON = 1.0f / 128.0f;
     private static final float GRASS_OVERLAY_OFFSET = 1.0f / 256.0f;
     private static final int UPLOAD_PARALLELISM = Math.min(6,
@@ -2825,6 +2826,7 @@ public class CustomChunkMesher {
         private final int lodTier;
         private boolean detailOverride;
         private final boolean smoothLightingEnabled;
+        private final boolean smoothGlassEnabled;
 
         int opaqueQuadCount = 0;
         int waterQuadCount = 0;
@@ -2850,6 +2852,7 @@ public class CustomChunkMesher {
             this.chunkZ = chunkZ;
             this.lodTier = lodTier;
             MetalRenderConfig cfg = MetalRenderClient.getConfig();
+            this.smoothGlassEnabled = cfg == null || cfg.smoothGlass;
             this.smoothLightingEnabled = (cfg == null || cfg.smoothLighting)
                     && vanillaSmoothLightingEnabled();
         }
@@ -4183,10 +4186,22 @@ public class CustomChunkMesher {
                 BlockState state, boolean water, boolean forceFlat, boolean crossLike, boolean ownLight) {
             boolean keepDetail = !water && !crossLike && !state.isSolidRender();
             detailOverride = keepDetail;
-            GrowableStagingBuffer target = water ? waterBuffer : solidBuffer;
+            boolean translucentLayer = !water
+                    && quad.materialInfo().layer() == net.minecraft.client.renderer.chunk.ChunkSectionLayer.TRANSLUCENT;
+            GrowableStagingBuffer target = (water || translucentLayer) ? waterBuffer : solidBuffer;
             Direction face = quad.direction();
+            float[] glassDu = null;
+            float[] glassDv = null;
+            if (translucentLayer && face != null && lodTier == 0 && smoothGlassEnabled && isGlassBlock(state)) {
+                glassDu = new float[4];
+                glassDv = new float[4];
+                computeGlassInset(quad, lx, ly, lz, state, face, glassDu, glassDv);
+            }
             byte normalIndex = (byte) (face != null && state.isSolidRender()
                     ? face.get3DDataValue() : 6);
+            if (translucentLayer && face != null) {
+                normalIndex = (byte) (8 | face.get3DDataValue());
+            }
             Direction shadeFace = quad.materialInfo().shadeDirectionOverride() != null
                     ? quad.materialInfo().shadeDirectionOverride() : face;
             float shade = !crossLike && shadeFace != null
@@ -4250,6 +4265,10 @@ public class CustomChunkMesher {
                 }
                 float u = Float.intBitsToFloat((int) (packedUV >> 32));
                 float v = Float.intBitsToFloat((int) packedUV);
+                if (glassDu != null) {
+                    u += glassDu[i];
+                    v += glassDv[i];
+                }
 
                 boolean fire = state.getBlock() instanceof net.minecraft.world.level.block.BaseFireBlock;
                 short px = fire ? packFireCoordinate(pos.x(), lx) : (short) (x * 256.0f);
@@ -4288,14 +4307,84 @@ public class CustomChunkMesher {
                 byte r = (byte) Math.min(255, (int) fr);
                 byte g = (byte) Math.min(255, (int) fg);
                 byte b = (byte) Math.min(255, (int) fb);
-                byte a = fastLeaves ? (byte) 0xFE : (byte) 0xFF;
+                byte a = translucentLayer ? TRANSLUCENT_BLOCK_ALPHA
+                        : (fastLeaves ? (byte) 0xFE : (byte) 0xFF);
 
                 emitVertex(target, px, py, pz, su, sv, r, g, b, a, light, normalIndex);
             }
-            if (water) {
+            if (water || translucentLayer) {
                 waterQuadCount++;
             } else {
                 opaqueQuadCount++;
+            }
+        }
+
+        private static boolean isGlassBlock(BlockState state) {
+            net.minecraft.world.level.block.Block block = state.getBlock();
+            return block instanceof net.minecraft.world.level.block.TransparentBlock
+                    || block instanceof net.minecraft.world.level.block.TintedGlassBlock;
+        }
+
+        private boolean sameGlassAt(int x, int y, int z, BlockState state) {
+            int id = getPaddedBlockStateId(x, y, z);
+            return id != 0 && getStateById(id) == state;
+        }
+
+        private static float axisComponent(org.joml.Vector3fc p, Direction.Axis axis) {
+            return axis == Direction.Axis.X ? p.x() : axis == Direction.Axis.Y ? p.y() : p.z();
+        }
+
+        private void computeGlassInset(BakedQuad quad, int lx, int ly, int lz, BlockState state,
+                Direction face, float[] du, float[] dv) {
+            final float inset = 1.5f / 16.0f;
+            for (Direction.Axis axis : Direction.Axis.values()) {
+                if (axis == face.getAxis()) {
+                    continue;
+                }
+                Direction plus = Direction.get(Direction.AxisDirection.POSITIVE, axis);
+                Direction minus = plus.getOpposite();
+                boolean joinPlus = sameGlassAt(lx + plus.getStepX(), ly + plus.getStepY(), lz + plus.getStepZ(), state);
+                boolean joinMinus = sameGlassAt(lx + minus.getStepX(), ly + minus.getStepY(), lz + minus.getStepZ(), state);
+                if (!joinPlus && !joinMinus) {
+                    continue;
+                }
+                int lo = -1;
+                int hi = -1;
+                for (int i = 0; i < 4 && lo < 0; i++) {
+                    for (int j = 0; j < 4; j++) {
+                        org.joml.Vector3fc pi = quad.position(i);
+                        org.joml.Vector3fc pj = quad.position(j);
+                        float along = axisComponent(pj, axis) - axisComponent(pi, axis);
+                        if (along < 0.5f) {
+                            continue;
+                        }
+                        float off = Math.abs(pj.x() - pi.x()) + Math.abs(pj.y() - pi.y()) + Math.abs(pj.z() - pi.z())
+                                - along;
+                        if (off < 1.0e-4f) {
+                            lo = i;
+                            hi = j;
+                            break;
+                        }
+                    }
+                }
+                if (lo < 0) {
+                    continue;
+                }
+                float span = axisComponent(quad.position(hi), axis) - axisComponent(quad.position(lo), axis);
+                long pl = quad.packedUV(lo);
+                long ph = quad.packedUV(hi);
+                float gu = (Float.intBitsToFloat((int) (ph >> 32)) - Float.intBitsToFloat((int) (pl >> 32))) / span;
+                float gv = (Float.intBitsToFloat((int) ph) - Float.intBitsToFloat((int) pl)) / span;
+                for (int i = 0; i < 4; i++) {
+                    float c = axisComponent(quad.position(i), axis);
+                    if (joinPlus && c > 0.9999f) {
+                        du[i] -= gu * inset;
+                        dv[i] -= gv * inset;
+                    } else if (joinMinus && c < 1.0e-4f) {
+                        du[i] += gu * inset;
+                        dv[i] += gv * inset;
+                    }
+                }
             }
         }
 

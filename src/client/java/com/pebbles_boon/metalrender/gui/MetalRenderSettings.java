@@ -52,6 +52,7 @@ final class MetalRenderSettings {
     private final boolean initialGreedyMid;
     private final boolean initialGreedyFar;
     private final boolean initialSmoothLighting;
+    private boolean initialSmoothGlass;
 
     MetalRenderSettings() {
         config = Objects.requireNonNullElseGet(MetalRenderClient.getConfig(), MetalRenderConfig::load);
@@ -62,6 +63,7 @@ final class MetalRenderSettings {
         initialBiomeDetail = config.biomeTransitionDetail;
         initialLeafCulling = config.leafCullingMode;
         initialSmoothLighting = config.smoothLighting;
+        initialSmoothGlass = config.smoothGlass;
         initialMetalOn = config.enableMetalRendering;
         initialCameraFacingCulling = config.enableCameraFacingCulling;
         initialClusterFrustumCulling = config.enableClusterFrustumCulling;
@@ -84,6 +86,7 @@ final class MetalRenderSettings {
                 || (config.biomeTransitionDetail != initialBiomeDetail)
                 || (config.leafCullingMode != initialLeafCulling)
                 || (config.smoothLighting != initialSmoothLighting)
+                || (config.smoothGlass != initialSmoothGlass)
                 || (config.enableDistanceLod != initialDistanceLod)
                 || (config.lodNearChunks != initialLodNearChunks)
                 || (config.lodMidChunks != initialLodMidChunks)

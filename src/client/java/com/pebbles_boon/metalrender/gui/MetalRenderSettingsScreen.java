@@ -1419,7 +1419,8 @@ public class MetalRenderSettingsScreen extends Screen implements MetalRenderSett
         section("Textures");
         sld("Mipmap Levels", 0, 4, 1, o.mipmapLevels().get(),
                 v -> o.mipmapLevels().set((int) (float) v));
-        vanilla("Improved Transparency", o.improvedTransparency());
+        toggle("merged glass", () -> MetalRenderClient.getConfig().smoothGlass,
+                v -> MetalRenderClient.getConfig().smoothGlass = v);
         vanilla("Texture Filtering", o.textureFiltering());
         sld("Anisotropy", 0, 3, 1, o.maxAnisotropyBit().get(),
                 v -> o.maxAnisotropyBit().set((int) (float) v));

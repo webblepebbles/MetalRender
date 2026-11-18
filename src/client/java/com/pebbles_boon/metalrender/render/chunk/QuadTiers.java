@@ -859,6 +859,11 @@ public final class QuadTiers {
             int qbase = (translucent ? i - opaqueTotal : i) * 4 * VERTEX_STRIDE;
             if (translucent) {
                 bucket = 6;
+                q.load(qsrc, qbase);
+                int nf = q.n[0];
+                if (q.a[0] == 0xFF && nf >= 8 && nf <= 13) {
+                    bucket = nf & 7;
+                }
             } else {
                 while (bucket < 6 && inBucket >= bucketCounts[bucket]) {
                     bucket++;
