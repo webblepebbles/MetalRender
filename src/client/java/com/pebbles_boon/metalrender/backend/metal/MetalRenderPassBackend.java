@@ -368,6 +368,12 @@ public final class MetalRenderPassBackend implements RenderPassBackend {
         return targetHeight;
     }
 
+    public void finishTerrainDepthCapture() {
+        if (encoder.isEncoding(this)) {
+            encoder.endEncoder();
+        }
+    }
+
     public void restoreNativeState() {
         if (encoder.isEncoding(this)) {
             MetalNative.nCtxRestoreViewport(encoder.ctx());
