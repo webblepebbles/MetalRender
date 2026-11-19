@@ -28,6 +28,8 @@ void mr_host_count_draw();
 
 bool mr_far_active();
 void mr_far_prepare();
+bool mr_far_has_near_mask();
+bool mr_far_near_column(int32_t cx, int32_t cz);
 void mr_far_encode(id<MTLRenderCommandEncoder> enc);
 void mr_far_encode_water(id<MTLRenderCommandEncoder> enc);
 

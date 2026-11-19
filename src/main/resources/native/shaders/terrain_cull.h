@@ -41,9 +41,7 @@ inline bool terr_hiz_occluded(constant TerrainCullFrame& f, texture2d<float> hiz
         nmax = max(nmax, ndc.xy);
         nearest = rev ? max(nearest, ndc.z) : min(nearest, ndc.z);
     }
-    nmin = max(nmin, float2(-1.0f));
-    nmax = min(nmax, float2(1.0f));
-    if (any(nmin > nmax)) {
+    if (any(nmin < float2(-1.0f)) || any(nmax > float2(1.0f))) {
         return false;
     }
     float2 full = float2(f.hizSize);
