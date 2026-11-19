@@ -70,6 +70,21 @@ final class MetalSurface {
         }
     }
 
+    private int pacedState = -1;
+    private static final boolean PACED_FORCED =
+            com.pebbles_boon.metalrender.config.MetalRenderConfig.getBool("metalrender.pacedPresent", false);
+
+    void syncPacing() {
+        Minecraft mc = Minecraft.getInstance();
+        Window w = mc != null ? mc.getWindow() : null;
+        boolean windowed = w != null && !mc.options.fullscreen().get();
+        int want = PACED_FORCED || (windowed && !vsync) ? 1 : 0;
+        if (want != pacedState) {
+            pacedState = want;
+            MetalNative.nSetPacedPresent(want == 1);
+        }
+    }
+
     void setVsync(boolean vsync) {
         vsync = vsync && !UNCAPPED;
         if (this.vsync != vsync) {
