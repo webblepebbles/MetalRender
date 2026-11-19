@@ -3,7 +3,6 @@ package com.pebbles_boon.metalrender.render.far;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.IntBuffer;
-import net.minecraft.world.level.block.state.BlockState;
 
 public final class FarTileBuilder {
     public static final int COLS = 34;
@@ -78,15 +77,14 @@ public final class FarTileBuilder {
         IntBuffer ib = blob.asIntBuffer();
         int[] palette = new int[256];
         int paletteSize = 0;
-        java.util.HashMap<Integer, Integer> paletteIndex = new java.util.HashMap<>();
+        int[] palSlot = new int[512];
+        int[] palKey = new int[512];
+        java.util.Arrays.fill(palSlot, -1);
         int cursor = 0;
         int bound = 0;
         int unit = FarKeys.vunit(level);
         int yLo = Integer.MAX_VALUE;
         int yHi = Integer.MIN_VALUE;
-        int[] lookCache = new int[64];
-        int[] lookCacheKey = new int[64];
-        java.util.Arrays.fill(lookCacheKey, -1);
         int[] spanPairs = new int[total * 2];
         int[] offsets = new int[OFFSETS];
         int[] colTop = new int[1024];
@@ -100,16 +98,7 @@ public final class FarTileBuilder {
             for (int k = 0; k < col.length; k += 3) {
                 int lo = col[k];
                 int stateId = col[k + 1];
-                int slot = (stateId * 0x9E3779B1 >>> 26) & 63;
-                int look;
-                if (lookCacheKey[slot] == stateId) {
-                    look = lookCache[slot];
-                } else {
-                    BlockState st = FarStateIds.state(stateId);
-                    look = st == null ? 0 : looks.lookOf(st);
-                    lookCacheKey[slot] = stateId;
-                    lookCache[slot] = look;
-                }
+                int look = looks.lookOfId(stateId);
                 if (look == 0) {
                     continue;
                 }
@@ -118,14 +107,18 @@ public final class FarTileBuilder {
                     continue;
                 }
                 int rgb = col[k + 2] & 0xFFFFFF;
-                Integer pi = paletteIndex.get(rgb);
+                int ph = (rgb * 0x9E3779B1) >>> 23;
+                while (palSlot[ph] >= 0 && palKey[ph] != rgb) {
+                    ph = (ph + 1) & 511;
+                }
                 int tintIdx;
-                if (pi != null) {
-                    tintIdx = pi;
+                if (palSlot[ph] >= 0) {
+                    tintIdx = palSlot[ph];
                 } else if (paletteSize < 256) {
                     tintIdx = paletteSize;
                     palette[paletteSize++] = rgb;
-                    paletteIndex.put(rgb, tintIdx);
+                    palSlot[ph] = tintIdx;
+                    palKey[ph] = rgb;
                 } else {
                     tintIdx = nearest(palette, paletteSize, rgb);
                 }
