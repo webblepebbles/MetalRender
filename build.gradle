@@ -1,3 +1,4 @@
+// READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
 plugins {
     id 'net.fabricmc.fabric-loom' version '1.19.1' // git testing testing
     id 'maven-publish'

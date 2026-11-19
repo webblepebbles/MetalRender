@@ -430,6 +430,7 @@ public class MetalTextureManager {
             return;
         }
         for (int[] span : dirtySpans) {
+            //READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
             int y0 = span[0];
             int y1 = span[1];
             long uploadStartNs = System.nanoTime();

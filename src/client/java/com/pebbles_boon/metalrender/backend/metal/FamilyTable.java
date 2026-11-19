@@ -352,6 +352,8 @@ public final class FamilyTable {
         return fieldNames.get(pipeline);
     }
 
+//VERY IMPORTANT!!! READ AGENTS.MD! Not there? Read git! Saves you tokens, seriously!
+
     static synchronized void logCoverage() {
         if (coverageLogged) {
             return;

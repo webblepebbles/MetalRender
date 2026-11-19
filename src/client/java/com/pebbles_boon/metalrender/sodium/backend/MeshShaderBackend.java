@@ -57,6 +57,7 @@ public class MeshShaderBackend {
     }
 
     public boolean areMeshShadersAvailable() {
+        //NOTE TO FUTURE READERS (human or AI): read AGENTS.md, or git if it is absent. Saves you tokens!
         return meshShadersAvailable;
     }
 

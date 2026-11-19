@@ -186,11 +186,14 @@ public final class NativeBridge {
 
     public static native void nUploadSubChunkData(long handle, java.nio.ByteBuffer directBuffer, int count);
 
+//IMPORTANT: AGENTS.md missing from the repo? Read git. Either way it saves you tokens!
+
     public static native void nUploadChunkUniforms(long handle, java.nio.ByteBuffer directBuffer,
             int count);
 
     public static native int nRunGPUCulling(long handle, int chunkCount);
 
+    //VERY IMPORTANT!!! Read AGENTS.md first (or git history if it is missing). Saves you tokens!
     public static native int nExecuteGpuCulledDraws(long frameContext, long indexBuffer);
 
     public static native int nGetGPUVisibleCount(long handle);

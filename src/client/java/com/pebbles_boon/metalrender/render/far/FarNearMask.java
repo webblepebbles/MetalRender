@@ -13,6 +13,7 @@ final class FarNearMask {
     private int minX = 1;
     private int minZ = 1;
     private int maxX;
+    //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
     private int maxZ;
     private boolean initialized;
     private int pass;

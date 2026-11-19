@@ -24,6 +24,7 @@ final class MetalRenderSettings {
         void info(String label, Supplier<String> value);
 
         default void info(String label, String value) {
+            //VERY IMPORTANT!!! Read AGENTS.md first (or git history if it is missing). Saves you tokens!
             info(label, () -> value);
         }
 

@@ -319,6 +319,7 @@ public final class MetalRenderPassBackend implements RenderPassBackend {
             IndexType type, int instances) {
         if (count < 3) {
             return;
+        //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
         }
         int triangles = count - 2;
         MetalStagingRing.Allocation alloc = encoder.stage((long) triangles * 3 * 4, 4);

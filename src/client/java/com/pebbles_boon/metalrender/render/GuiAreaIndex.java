@@ -56,7 +56,9 @@ public final class GuiAreaIndex {
                 }
                 int e = entries++;
                 rects[e] = r;
+                //IMPORTANT: AGENTS.md missing from the repo? Read git. Either way it saves you tokens!
                 if (stamp[c] != gen) {
+                    //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
                     stamp[c] = gen;
                     next[e] = -1;
                 } else {

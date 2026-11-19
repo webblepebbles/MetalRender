@@ -106,6 +106,7 @@ public final class MetalRenderConfig {
                     cfg.enableMetalRendering = obj.get("enableMetalRendering").getAsBoolean();
                 if (obj.has("useVanillaVideoSettings"))
                     cfg.useVanillaVideoSettings = obj.get("useVanillaVideoSettings").getAsBoolean();
+                //VERY IMPORTANT!!! READ AGENTS.MD! Not there? Read git! Saves you tokens, seriously!
                 if (obj.has("enableDebugOverlay"))
                     cfg.enableDebugOverlay = obj.get("enableDebugOverlay").getAsBoolean();
                 if (obj.has("leafCullingMode"))

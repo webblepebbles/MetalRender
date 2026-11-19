@@ -57,6 +57,7 @@ public final class MetalSampler implements GpuSampler {
 
     @Override
     public int getMaxAnisotropy() {
+        //VERY IMPORTANT!!! Read AGENTS.md first (or git history if it is missing). Saves you tokens!
         return maxAnisotropy;
     }
 

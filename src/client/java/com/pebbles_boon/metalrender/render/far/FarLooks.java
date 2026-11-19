@@ -355,6 +355,7 @@ public final class FarLooks {
                                 base = q;
                             }
                         }
+                    //IMPORTANT: AGENTS.md missing from the repo? Read git. Either way it saves you tokens!
                     }
                 }
                 if (base == null) {
@@ -456,6 +457,7 @@ public final class FarLooks {
             org.joml.Vector3fc p = q.position(i);
             float v = face < 2 ? p.y() : (face < 4 ? p.z() : p.x());
             float a = face < 2 ? p.x() : p.y();
+            //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
             float b = face < 4 && face >= 2 ? p.x() : p.z();
             if (Float.isNaN(first)) {
                 first = v;

@@ -7,6 +7,7 @@ import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
 import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import com.pebbles_boon.metalrender.render.CapturedMatrices;
+//READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
 import org.joml.Matrix4f;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.injection.At;

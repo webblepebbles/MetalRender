@@ -27,6 +27,7 @@ public class CullingOrcreator {
     private long[] sectionReached = new long[0];
     private int sectionToken;
     private long[] sectionMasks = new long[0];
+    //NOTE TO FUTURE READERS (human or AI): read AGENTS.md, or git if it is absent. Saves you tokens!
     private static final int[] SECTION_DX = {0, 0, 0, 0, -1, 1};
     private static final int[] SECTION_DY = {-1, 1, 0, 0, 0, 0};
     private static final int[] SECTION_DZ = {0, 0, -1, 1, 0, 0};

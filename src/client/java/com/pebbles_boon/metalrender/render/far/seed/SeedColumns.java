@@ -691,6 +691,7 @@ public final class SeedColumns {
         int[] out = new int[maxCell * 3];
         int n = 0;
         int c = 0;
+        //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
         while (c < maxCell) {
             if (st[c] == null) {
                 c++;

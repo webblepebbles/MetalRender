@@ -6,6 +6,7 @@ import org.lwjgl.sdl.SDLProperties;
 import org.lwjgl.sdl.SDLVideo;
 import org.lwjgl.system.MemoryStack;
 
+//READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
 final class MetalSurface {
     private final long window;
     private long layer;

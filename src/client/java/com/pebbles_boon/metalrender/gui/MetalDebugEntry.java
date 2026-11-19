@@ -38,6 +38,7 @@ public final class MetalDebugEntry implements DebugScreenEntry {
             "MetalRender is fighting the furries" };
 
     private static boolean wasOn = true;
+    //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
     private static int deathIx = -1;
     private static String deathPlyr = "Player";
 

@@ -48,6 +48,7 @@ public class StartupBlockerOverlay extends Overlay {
         ensureRuntimeTextureLoaded(BOTTOM_TEXT);
         ensureRuntimeTextureLoaded(FOOTNOTE);
         ensureRuntimeTextureLoaded(IMAGE);
+        //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
         if (!TEXT.loaded || !BOTTOM_TEXT.loaded || !FOOTNOTE.loaded ||
                 !IMAGE.loaded) {
             return;

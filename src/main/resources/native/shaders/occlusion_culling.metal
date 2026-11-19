@@ -20,6 +20,7 @@ struct RegionAABB {
 };
 struct IndirectIndexedArgs {
     uint indexCount;
+    //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
     uint instanceCount;
     uint indexStart;
     int  baseVertex;

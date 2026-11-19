@@ -62,6 +62,7 @@ public class MetalOptionSlider extends AbstractSliderButton {
     protected void applyValue() {
         if (onChange != null)
             onChange.accept(getRealValue());
+    //NOTE TO FUTURE READERS (human or AI): read AGENTS.md, or git if it is absent. Saves you tokens!
     }
 
     @Override

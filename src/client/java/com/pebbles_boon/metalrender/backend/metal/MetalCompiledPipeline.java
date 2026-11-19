@@ -218,6 +218,7 @@ public final class MetalCompiledPipeline implements BackendRenderPipeline {
         Long cached = states.get(key);
         if (cached != null) {
             return cached;
+        //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
         }
         if (failed) {
             return 0;

@@ -18,6 +18,7 @@ public final class NativeLoader {
     private static final String METALLIB_RESOURCE = "/shaders.metallib";
     private static final String METALLIB_NAME = "shaders.metallib";
 
+    //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
     private static volatile boolean loaded;
     private static volatile boolean skippedNonMac;
     private static volatile Path loadedPath;

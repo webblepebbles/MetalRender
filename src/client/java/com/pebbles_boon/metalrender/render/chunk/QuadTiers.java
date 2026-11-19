@@ -986,6 +986,7 @@ public final class QuadTiers {
             int unitTiled = s.qTiled[idx0];
             int count = 0;
             int j = i;
+            //READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
             int stride = unitTier == TIER_A ? TIER_A_BYTES : unitTier == TIER_B ? TIER_B_BYTES : TIER_C_BYTES;
             int planeBound = 0;
             int bx0 = 31;

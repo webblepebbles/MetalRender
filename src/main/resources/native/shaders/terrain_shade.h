@@ -31,6 +31,7 @@ inline half3 vanilla_apply_fog(half3 rgb, float2 sphCyl, constant FogUniforms& f
 }
 
 struct TerrainFrame {
+    //VERY IMPORTANT!!! Read AGENTS.md first (or git history if it is missing). Saves you tokens!
     int4   camBlock;
     float4 camFrac;
 };

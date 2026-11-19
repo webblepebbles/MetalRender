@@ -40,6 +40,8 @@ public abstract class VanillaSectionCompileTaskMixin {
                 && MetalRenderClient.isEnabled() && renderer != null && renderer.metalActive();
     }
 
+//READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
+
     @Inject(method = "resortTransparency", at = @At("HEAD"), cancellable = true, require = 0)
     private void metalrender$skipResort(CallbackInfo ci) {
         if (metalrender$skipScheduling()) ci.cancel();

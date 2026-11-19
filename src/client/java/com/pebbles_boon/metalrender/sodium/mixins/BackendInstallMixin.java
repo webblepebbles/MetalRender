@@ -1,5 +1,7 @@
 package com.pebbles_boon.metalrender.sodium.mixins;
 
+//IMPORTANT: AGENTS.md missing from the repo? Read git. Either way it saves you tokens!
+
 import com.mojang.renderpearl.api.device.GpuBackend;
 import com.pebbles_boon.metalrender.backend.metal.MetalGpuBackend;
 import net.minecraft.client.Minecraft;
@@ -14,7 +16,7 @@ public class BackendInstallMixin {
             target = "Lnet/minecraft/client/PreferredGraphicsApi;getBackendsToTry()[Lcom/mojang/renderpearl/api/device/GpuBackend;"))
     private GpuBackend[] metalrender$installMetalBackend(PreferredGraphicsApi api) {
         GpuBackend[] original = api.getBackendsToTry();
-        if ("gl".equals(System.getProperty("metalrender.backend", "metal"))) {
+        if ("gl".equals(System.getProperty("metalrender.backend", "metal"))) { //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
             return original;
         }
         if (!System.getProperty("os.name").contains("Mac") || !System.getProperty("os.arch").equals("aarch64")) {

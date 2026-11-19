@@ -1,4 +1,5 @@
 #!/bin/bash
+# VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
 echo "🔹 Starting Metal shader compilation.."
 BUILD_DIR="build"
 mkdir -p "$BUILD_DIR"

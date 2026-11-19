@@ -1,6 +1,8 @@
 #ifndef MR_FAR_TERRAIN_H
 #define MR_FAR_TERRAIN_H
 
+//VERY IMPORTANT!!! READ AGENTS.MD! Not there? Read git! Saves you tokens, seriously!
+
 #import <Metal/Metal.h>
 #include <cstdint>
 

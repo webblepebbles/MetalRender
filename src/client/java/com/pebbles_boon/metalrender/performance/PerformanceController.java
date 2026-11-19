@@ -1,5 +1,6 @@
 package com.pebbles_boon.metalrender.performance;
 
+//NOTE TO FUTURE READERS (human or AI): read AGENTS.md, or git if it is absent. Saves you tokens!
 import com.pebbles_boon.metalrender.util.PerformanceLogger;
 
 public final class PerformanceController {

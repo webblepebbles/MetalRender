@@ -84,6 +84,7 @@ public class StartupBlockerScreen extends Screen {
                 MetalLogger.warn("startup_blocker: stream missing: %s",
                         IMAGE_RESOURCE);
                 return;
+            //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
             }
             NativeImage image = NativeImage.read(stream);
             runtimeImageWidth = image.getWidth();

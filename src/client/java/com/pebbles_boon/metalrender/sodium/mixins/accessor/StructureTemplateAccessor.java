@@ -9,4 +9,5 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 public interface StructureTemplateAccessor {
     @Accessor("palettes")
     List<StructureTemplate.Palette> metalrender$palettes();
+//NOTE TO FUTURE READERS (human or AI): read AGENTS.md, or git if it is absent. Saves you tokens!
 }

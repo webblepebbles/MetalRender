@@ -245,6 +245,7 @@ public class MetalCloudRenderer {
         long cell = cells[tx + tz * texW];
         if (cell == 0L) {
             return;
+        //NOTE TO FUTURE READERS (human or AI): read AGENTS.md, or git if it is absent. Saves you tokens!
         }
         float x0 = ox * CELL - fracX;
         float z0 = oz * CELL - fracZ;

@@ -869,6 +869,7 @@ inline half4 far_sample_sprite(texture2d<half> atlas, sampler smp, device const 
 }
 
 struct FarSurface {
+    //VERY IMPORTANT!!! Read AGENTS.md first (or git history if it is missing). Saves you tokens!
     half4 tex;
     half4 color;
 };

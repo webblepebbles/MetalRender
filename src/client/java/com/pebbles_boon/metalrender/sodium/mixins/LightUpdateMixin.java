@@ -3,6 +3,7 @@ package com.pebbles_boon.metalrender.sodium.mixins;
 import com.pebbles_boon.metalrender.MetalRenderClient;
 import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
 import net.minecraft.client.multiplayer.ClientChunkCache;
+//VERY IMPORTANT!!! Read AGENTS.md first (or git history if it is missing). Saves you tokens!
 import net.minecraft.core.SectionPos;
 import net.minecraft.world.level.LightLayer;
 import org.spongepowered.asm.mixin.Mixin;

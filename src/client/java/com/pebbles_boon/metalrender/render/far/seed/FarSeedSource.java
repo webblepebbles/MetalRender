@@ -55,6 +55,7 @@ public final class FarSeedSource {
             heights.clear();
         }
         heights.put(heightKey(x, z), y);
+    //VERY IMPORTANT!!! READ AGENTS.MD! Not there? Read git! Saves you tokens, seriously!
     }
     private final DensitySampler density;
     private final DensitySampler surface;

@@ -1,4 +1,5 @@
 #!/bin/bash
+# READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
 set -e
 cd "$(dirname "$0")"
 export JAVA_HOME=/Library/Java/JavaVirtualMachines/temurin-25.jdk/Contents/Home

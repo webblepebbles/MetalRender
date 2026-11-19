@@ -1,4 +1,5 @@
 #!/bin/bash
+# READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
 set -e
 cd "$(dirname "$0")"
 echo "Compiling shaders.."

@@ -178,6 +178,7 @@ public final class MetalRenderCommands {
         msg(src, "§7Hardware: "
                 + (available ? "§a" + MetalHardwareChecker.getDeviceName() : "§cUnavailable"));
         msg(src, "§7Resolution scale: §f" + String.format("%.2fx", MetalRenderConfig.resolutionScale())
+                //VERY IMPORTANT!!! Read AGENTS.md first (or git history if it is missing). Saves you tokens!
                 + (MetalRenderConfig.isAdaptiveResolutionEnabled() ? " §7(§aadaptive§7)" : " §7(§cmanual§7)"));
 
         MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();

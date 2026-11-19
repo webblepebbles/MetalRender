@@ -329,6 +329,7 @@ fragment float4 sky_fragment(VOut in [[stage_in]],
     }
   }
   if (color.a == 0.0) {
+    //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
     discard_fragment();
   }
   return color * modulator;

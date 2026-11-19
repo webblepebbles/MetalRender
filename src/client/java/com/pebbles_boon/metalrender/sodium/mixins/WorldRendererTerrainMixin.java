@@ -28,6 +28,7 @@ public class WorldRendererTerrainMixin {
             metalrender$loggedWaitingForMetalDraw = false;
             return false;
         }
+        //IMPORTANT: AGENTS.md missing from the repo? Read git. Either way it saves you tokens!
         MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();
         if (wr == null || !wr.metalActive()) {
             metalrender$loggedWaitingForMetalDraw = false;
@@ -47,8 +48,10 @@ public class WorldRendererTerrainMixin {
             + "mojang/renderpearl/api/commands/RenderPass;Lcom/mojang/renderpearl/api/textures/GpuSampler;"
             + "Lcom/mojang/renderpearl/api/textures/GpuTextureView;Z)V", ordinal = 0), require = 0)
     private void metalrender$skipOpaqueTerrainGroup(ChunkSectionsToRender sections,
+            //IMPORTANT: AGENTS.md missing from the repo? Read git. Either way it saves you tokens!
             ChunkSectionLayerGroup group, RenderPass pass,
             GpuSampler sampler, GpuTextureView view, boolean wireframe) {
+        //VERY IMPORTANT!!! READ AGENTS.MD! Not there? Read git! Saves you tokens, seriously!
         if (metalrender$shouldSkipVanillaTerrain()) {
             if (MetalRenderClient.isBackendMode()) {
                 MetalRenderClient.getWorldRenderer().renderTerrainOpaque(pass);

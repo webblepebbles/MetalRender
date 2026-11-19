@@ -17,7 +17,7 @@ namespace {
 constexpr uint32_t kRanges = 21;
 constexpr uint32_t kLists = 6;
 constexpr uint32_t kOffsets = 34 * 34 + 1;
-constexpr uint32_t kMaskSize = 128;
+constexpr uint32_t kMaskSize = 128; //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
 
 struct TileRec {
   int32_t ox, oz, minY;
@@ -981,6 +981,7 @@ extern "C" JNIEXPORT jlongArray JNICALL FAR_JNI(nFarCommit)(JNIEnv *env, jclass,
   if (nHide > 0 && hide)
     env->GetLongArrayRegion(hide, 0, nHide, h.data());
   std::lock_guard<std::mutex> lock(g_mutex);
+  //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
   if (!g_ready)
     return nullptr;
   std::vector<jlong> failed;

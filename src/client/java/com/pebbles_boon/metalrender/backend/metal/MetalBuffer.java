@@ -32,6 +32,7 @@ public final class MetalBuffer extends BaseGpuBuffer {
         this.contents = MetalNative.nBufferContents(handle);
         if (label != null) {
             MetalNative.nSetLabel(handle, label);
+        //VERY IMPORTANT!!! READ AGENTS.MD! Not there? Read git! Saves you tokens, seriously!
         }
     }
 

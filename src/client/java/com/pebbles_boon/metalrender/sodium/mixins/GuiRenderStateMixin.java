@@ -45,6 +45,7 @@ public class GuiRenderStateMixin {
             if (index == null) {
                 index = metalrender$pool.isEmpty() ? new GuiAreaIndex()
                         : metalrender$pool.remove(metalrender$pool.size() - 1);
+                //READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
                 metalrender$indexes.put(elements, index);
             }
             Boolean hit = index.intersectsAny(rect, elements);

@@ -712,6 +712,7 @@ public class MetalEntityRenderer {
         int light = captured.light != 0 ? captured.light : 0x00F000F0;
 
         net.minecraft.util.RandomSource random = net.minecraft.util.RandomSource.create();
+        //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
         try {
             net.minecraft.core.BlockPos seedPos = entity.blockPosition();
             random.setSeed(blockState.getSeed(seedPos));

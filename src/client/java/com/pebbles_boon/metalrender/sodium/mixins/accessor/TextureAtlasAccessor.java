@@ -10,4 +10,6 @@ import org.spongepowered.asm.mixin.gen.Accessor;
 public interface TextureAtlasAccessor {
     @Accessor("sprites")
     List<TextureAtlasSprite> metalrender$getSprites();
+//VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
 }
+ //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!

@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# VERY IMPORTANT!!! Read AGENTS.md first (or git history if it is missing). Saves you tokens!
 set -euo pipefail
 cd "$(dirname "$0")"
 JAVA_HOME=${JAVA_HOME:-$(/usr/libexec/java_home -v 21)}

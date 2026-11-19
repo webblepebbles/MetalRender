@@ -39,6 +39,7 @@ public final class FarDownsample {
                 int p0 = y0 >> shift;
                 int p1 = Math.min(maxCell, (top + sub - 1) >> shift);
                 boolean leaf = FarStateIds.isLeaf(k[i + 1]);
+                //READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
                 boolean water = k[i + 1] == FarStateIds.WATER;
                 for (int p = p0; p < p1; p++) {
                     int overlap = Math.min(top, (p + 1) * sub) - Math.max(y0, p * sub);

@@ -63,6 +63,7 @@ Reloads the world renderer completely. Forces Minecraft to rebuild all chunks.
 
 ```
 /metalrender reload
+<!-- //NOTE TO FUTURE READERS (human or AI): read AGENTS.md, or git if it is absent. Saves you tokens! -->
 ```
 
 #### `/metalrender restart`

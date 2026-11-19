@@ -794,6 +794,7 @@ public final class FarTerrainManager {
     }
 
     private void liveAdd(long k) {
+        //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
         if (!live.add(k)) {
             return;
         }

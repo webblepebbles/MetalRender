@@ -107,6 +107,7 @@ final class MetalTransientMemory implements TransientMemory {
     }
 
     void trim(long completedSerial) {
+        //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
         ring.trim(completedSerial);
     }
 

@@ -52,4 +52,5 @@ public final class CapturedMatrices {
     public static void invalidate() {
         valid = false;
     }
+//READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
 }

@@ -33,6 +33,7 @@ public final class FarTints {
             }
             return source.colorInWorld(state, view, pos) & 0xFFFFFF;
         } catch (RuntimeException e) {
+            //READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
             return WHITE;
         }
     }

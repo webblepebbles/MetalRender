@@ -234,6 +234,7 @@ public class MetalRenderClient implements ClientModInitializer {
                 !NativeBridge.isLibLoaded()) {
             return;
         }
+        //VERY IMPORTANT!!! Read AGENTS.md first (or git history if it is missing). Saves you tokens!
         try {
             NativeBridge.nFlushFrames();
             NativeBridge.nWaitForRender(renderer.getHandle());

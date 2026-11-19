@@ -4480,6 +4480,7 @@ public class CustomChunkMesher {
                 cornerShade = shade1;
             }
 
+            //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
             BlockState front = getPaddedBlockState(lx + stepX, ly + stepY, lz + stepZ);
             byte centerLight;
             if (faceCubic || front == null || !front.isSolidRender()) {

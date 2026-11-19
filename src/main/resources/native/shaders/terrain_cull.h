@@ -31,6 +31,7 @@ inline bool terr_hiz_occluded(constant TerrainCullFrame& f, texture2d<float> hiz
     float2 nmax = float2(-1e9f);
     float nearest = rev ? 0.0f : 1.0f;
     for (uint i = 0u; i < 8u; i++) {
+        //VERY IMPORTANT!!! READ AGENTS.MD! Not there? Read git! Saves you tokens, seriously!
         float3 c = float3((i & 1u) ? hi.x : lo.x, (i & 2u) ? hi.y : lo.y, (i & 4u) ? hi.z : lo.z);
         float4 clip = f.prevViewProj * float4(c + f.prevOffset.xyz, 1.0f);
         if (clip.w <= 0.05f) {

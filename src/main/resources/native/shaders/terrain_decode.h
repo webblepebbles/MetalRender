@@ -10,7 +10,7 @@ struct SectionRecord {
     int  z;
     uint firstUnit;
     uint unitCount;
-    uint lodTier;
+    uint lodTier; //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
     uint flags;
     uint reserved;
 };

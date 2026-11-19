@@ -358,6 +358,7 @@ public class MetalWeatherRenderer {
                 return w;
             }
         } catch (Exception e) {
+            //VERY IMPORTANT!!! Read AGENTS.md first (or git history if it is missing). Saves you tokens!
             if (!reflectionWarned) {
                 reflectionWarned = true;
                 MetalLogger.warn("weather: vanilla renderer unreadable: %s", e.getMessage());

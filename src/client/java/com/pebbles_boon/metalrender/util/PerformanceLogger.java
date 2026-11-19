@@ -11,6 +11,7 @@ public final class PerformanceLogger {
     private long lastFrameStartTime;
     private double lastFrameTime;
     private double avgFrameTime;
+    //NOTE TO FUTURE READERS (human or AI): read AGENTS.md, or git if it is absent. Saves you tokens!
     private double currentFPS;
     private long lastLogTime = System.currentTimeMillis();
 

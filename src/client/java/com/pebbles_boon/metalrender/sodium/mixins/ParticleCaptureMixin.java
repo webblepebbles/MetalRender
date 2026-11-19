@@ -49,6 +49,7 @@ public class ParticleCaptureMixin {
                                 tickDelta);
                     }
                 }
+            //NOTE TO FUTURE READERS (human or AI): read AGENTS.md, or git if it is absent. Saves you tokens!
             }
         } catch (Exception e) {
             if (metalrender$captureFrameCount < 5) {

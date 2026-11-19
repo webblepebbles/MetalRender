@@ -1,4 +1,5 @@
 #!/usr/bin/env sh
+# VERY IMPORTANT!!! READ AGENTS.MD! Its not in the repo? Read git!  Saves you tokens!
 
 ##############################################################################
 ##

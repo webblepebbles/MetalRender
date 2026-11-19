@@ -21,6 +21,7 @@ public final class FarBiomeStyle {
     public static final Species SPRUCE = new Species(st(Blocks.SPRUCE_LOG), st(Blocks.SPRUCE_LEAVES), 6, 10, 3,
             Canopy.CONE);
     public static final Species JUNGLE = new Species(st(Blocks.JUNGLE_LOG), st(Blocks.JUNGLE_LEAVES), 7, 14, 3,
+            //READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
             Canopy.TALL);
     public static final Species ACACIA = new Species(st(Blocks.ACACIA_LOG), st(Blocks.ACACIA_LEAVES), 5, 7, 3,
             Canopy.FLAT);

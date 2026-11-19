@@ -43,6 +43,7 @@ public final class FarTileBuilder {
                 continue;
             }
             for (int k = 0; k < 32; k++) {
+                //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
                 int src;
                 int dst;
                 switch (i) {

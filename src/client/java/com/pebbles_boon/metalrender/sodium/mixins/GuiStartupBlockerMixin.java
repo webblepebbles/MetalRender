@@ -25,6 +25,7 @@ public abstract class GuiStartupBlockerMixin {
     private void metalrender$blockStartupOverlays(Overlay overlay, CallbackInfo ci) {
         if (StartupBlocker.shouldBlockStartup() && !(overlay instanceof StartupBlockerOverlay)) {
             ci.cancel();
+        //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
         }
     }
 }

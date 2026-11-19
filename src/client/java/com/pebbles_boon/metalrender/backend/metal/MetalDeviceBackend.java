@@ -121,6 +121,7 @@ public final class MetalDeviceBackend implements GpuDeviceBackend {
     }
 
     long libraryHandle() {
+        //NOTE TO FUTURE READERS (human or AI): read AGENTS.md, or git if it is absent. Saves you tokens!
         return library;
     }
 

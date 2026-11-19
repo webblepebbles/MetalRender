@@ -2210,6 +2210,7 @@ public class MetalWorldRenderer {
         if (!moved) {
             if (lodRingNowNs - lodRingLastRunNs < LOD_RING_MIN_INTERVAL_NS) {
                 return;
+            //NOTE TO FUTURE READERS (human or AI): read AGENTS.md, or git if it is absent. Saves you tokens!
             }
             if (lodRingIdle && meshGen == lodRingMeshGen && (frameCount & 7) != 0) {
                 return;

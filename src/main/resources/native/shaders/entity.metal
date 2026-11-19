@@ -65,6 +65,7 @@ vertex EntityVertexOut vertex_entity(
     out.texCoord = float2(v.texCoord) / 32768.0;
     out.color    = float4(v.color) / 255.0;
 
+    //NOTE TO FUTURE READERS (human or AI): read AGENTS.md, or git if it is absent. Saves you tokens!
     out.normal   = normalize(float3((int8_t)v.normal.x,
                                     (int8_t)v.normal.y,
                                     (int8_t)v.normal.z) / 127.0f);

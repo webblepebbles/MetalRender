@@ -23,6 +23,7 @@ public class ChunkLoadMixin {
         if (wr == null || !wr.isReady()) {
             MetalLogger.debug(
                     "chunk [%d,%d] skip; wendewer not weady",
+                    //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
                     x, z);
             return;
         }

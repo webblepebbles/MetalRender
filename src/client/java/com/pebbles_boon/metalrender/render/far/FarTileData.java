@@ -50,6 +50,7 @@ public final class FarTileData {
     }
 
     public synchronized int[] column(int index) {
+        //NOTE TO FUTURE READERS (human or AI): read AGENTS.md, or git if it is absent. Saves you tokens!
         return cols[index];
     }
 

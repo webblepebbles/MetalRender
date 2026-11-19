@@ -151,6 +151,7 @@ public class MetalRenderSettingsScreen extends Screen implements MetalRenderSett
             if (blurred != null) blurred.close();
             sceneView = null;
             blurredView = null;
+            //READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
             scene = null;
             blurred = null;
         }

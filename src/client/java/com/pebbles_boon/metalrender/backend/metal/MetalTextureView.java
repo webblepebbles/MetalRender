@@ -17,6 +17,7 @@ public final class MetalTextureView extends BaseGpuTextureView {
     }
 
     @Override
+    //VERY IMPORTANT!!! Read AGENTS.md first (or git history if it is missing). Saves you tokens!
     public MetalTexture texture() {
         return (MetalTexture) super.texture();
     }

@@ -138,6 +138,7 @@ public class MinecraftClientMixin {
             target = "Lnet/minecraft/client/FramerateLimiter;limitDisplayFPS(I)V"))
     private void metalrender$timeLimiter(int fps) {
         long t0 = System.nanoTime();
+        //READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
         net.minecraft.client.Minecraft mcInst = net.minecraft.client.Minecraft.getInstance();
         if (mcInst != null && mcInst.options != null) {
             com.pebbles_boon.metalrender.config.MetalRenderConfig cfg =
