@@ -86,7 +86,11 @@ public final class SeedColumns {
                     int bx = ox + i * g;
                     int bz = oz + j * g;
                     int hint = i > 0 ? gs[j * n + i - 1] : (j > 0 ? gs[(j - 1) * n + i] : -1);
-                    int sv = solve(src, bx, bz, 0, hint);
+                    int sv = src.cachedHeight(bx, bz);
+                    if (sv == Integer.MIN_VALUE) {
+                        sv = solve(src, bx, bz, 0, hint);
+                        src.cacheHeight(bx, bz, sv);
+                    }
                     gs[j * n + i] = sv;
                     gb[j * n + i] = src.biome(bx, Math.max(sv, src.seaLevel), bz);
                 }
@@ -165,7 +169,7 @@ public final class SeedColumns {
         int[][] structY = new int[FarTileData.COLS][];
         BlockState[][] structS = new BlockState[FarTileData.COLS][];
         FarStructures fs = src.structures;
-        if (fs != null && level <= 2) {
+        if (fs != null && level <= 1) {
             int[] counts = new int[FarTileData.COLS];
             List<FarStructures.Placed> placed = fs.collect(ox, oz, size);
             for (FarStructures.Placed p : placed) {
@@ -449,7 +453,7 @@ public final class SeedColumns {
                     if (style.treeGrid != g || style.species.length == 0 || unit(h) > style.treeChance) {
                         continue;
                     }
-                    if (!treeGround(style) || surface[ci] < src.seaLevel) {
+                    if (!treeGround(style) || surface[ci] < src.seaLevel - 1) {
                         continue;
                     }
                     FarBiomeStyle.Species sp = style.species[(int) ((h >>> 48) & 0xFF) % style.species.length];
@@ -505,7 +509,7 @@ public final class SeedColumns {
             for (int x = 0; x < 32; x++) {
                 int i = z * 32 + x;
                 FarBiomeStyle s = styles[i];
-                if (s.treeGrid <= 0 || s.species.length == 0 || !treeGround(s) || surface[i] < src.seaLevel) {
+                if (s.treeGrid <= 0 || s.species.length == 0 || !treeGround(s) || surface[i] < src.seaLevel - 1) {
                     continue;
                 }
                 FarBiomeStyle.Species sp = s.species[0];
@@ -668,8 +672,15 @@ public final class SeedColumns {
             }
         }
         if (u > 1) {
+            int topSolid = -1;
+            for (int k = maxCell - 1; k >= 0; k--) {
+                if (st[k] != null && !st[k].is(Blocks.WATER) && !st[k].is(net.minecraft.tags.BlockTags.LEAVES)) {
+                    topSolid = k;
+                    break;
+                }
+            }
             for (int k = 0; k < maxCell; k++) {
-                if (st[k] != null) {
+                if (st[k] != null && k != topSolid) {
                     boolean leafTop = st[k].is(net.minecraft.tags.BlockTags.LEAVES);
                     if (leafTop ? leafy[k] * 4 < u : cov[k] * 2 < u) {
                         st[k] = null;
