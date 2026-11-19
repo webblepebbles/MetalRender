@@ -65,6 +65,8 @@ public final class FarLooks {
     private final ConcurrentHashMap<BlockState, Integer> kinds = new ConcurrentHashMap<>();
     private int[] records = new int[WORDS * 1024];
     private int[] tintIndex = new int[1024];
+    private volatile int[] headers = new int[1024];
+    private volatile int[] idLook = new int[0];
     private BlockState[] states = new BlockState[1024];
     private int count = 1;
     private volatile boolean dirty = true;
