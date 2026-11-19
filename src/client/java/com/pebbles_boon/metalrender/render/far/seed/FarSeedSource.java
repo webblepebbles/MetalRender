@@ -39,6 +39,23 @@ public final class FarSeedSource {
     public final long fingerprint;
     public volatile FarStructures structures;
     public volatile boolean blend = true;
+    private final it.unimi.dsi.fastutil.longs.Long2IntMap heights = it.unimi.dsi.fastutil.longs.Long2IntMaps
+            .synchronize(new it.unimi.dsi.fastutil.longs.Long2IntOpenHashMap());
+
+    private static long heightKey(int x, int z) {
+        return ((long) (x >> 2) << 32) | ((z >> 2) & 0xFFFFFFFFL);
+    }
+
+    public int cachedHeight(int x, int z) {
+        return heights.getOrDefault(heightKey(x, z), Integer.MIN_VALUE);
+    }
+
+    public void cacheHeight(int x, int z, int y) {
+        if (heights.size() > 1_500_000) {
+            heights.clear();
+        }
+        heights.put(heightKey(x, z), y);
+    }
     private final DensitySampler density;
     private final DensitySampler surface;
     private final ThreadLocal<BiomeResolver> resolvers;
