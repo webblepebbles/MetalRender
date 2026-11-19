@@ -250,9 +250,11 @@ public final class NativeBridge {
 
     public static native int nFarPollBuilt(long[] out);
 
-    public static native void nFarCommit(long[] show, int nShow, long[] hide, int nHide);
+    public static native int nFarLiveKeys(long[] out);
 
-    public static native void nFarSetNearColumns(int[] packed, int count);
+    public static native long[] nFarCommit(long[] show, int nShow, long[] hide, int nHide);
+
+    public static native void nFarSetNearColumns(byte[] columns);
 
     public static native void nFarSetView(float farRadius, int minCx, int minCz, int maxCx, int maxCz);
 
@@ -324,6 +326,8 @@ public final class NativeBridge {
     public static native void nDrawOITPass(long frameContext);
 
     public static native int nTerrainExternalDraw(long encoder, long indexBuffer, int width, int height);
+
+    public static native void nFarExternalDraw(long encoder, int width, int height);
 
     public static native void nWaterExternalDraw(long encoder, int width, int height);
 
