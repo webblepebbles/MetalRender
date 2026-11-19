@@ -104,7 +104,7 @@ public final class MetalCommandEncoderBackend implements CommandEncoderBackend {
         return ring.allocate(size, alignment, openSerial, completed());
     }
 
-    private void endEncoder() {
+    void endEncoder() {
         if (encodingPass != null) {
             MetalNative.nCtxEndEncoder(ctx);
             encodingPass = null;
