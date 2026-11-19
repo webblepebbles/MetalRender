@@ -29,6 +29,11 @@ final class MetalSurfaceBackend implements GpuSurfaceBackend {
 
     @Override
     public void acquireNextTexture() {
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        if (mc != null && mc.options != null) {
+            surface.setVsync(Boolean.TRUE.equals(mc.options.enableVsync().get()));
+        }
+        surface.syncPacing();
         surface.syncSize();
     }
 

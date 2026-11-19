@@ -1227,6 +1227,9 @@ public class MetalRenderSettingsScreen extends Screen implements MetalRenderSett
         }
         o.simulationDistance().set(pendingSimDist);
         o.framerateLimit().set(toVanillaFpsLimit(pendingMaxFps));
+        config.menuMaxFps = toVanillaFpsLimit(pendingMaxFps);
+        config.menuVsync = Boolean.TRUE.equals(o.enableVsync().get()) ? 1 : 0;
+        config.save();
         o.guiScale().set(pendingGuiScale);
         o.gamma().set(pendingBrightness);
         o.fov().set(pendingFov);

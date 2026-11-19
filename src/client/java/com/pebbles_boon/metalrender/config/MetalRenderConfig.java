@@ -7,6 +7,8 @@ public final class MetalRenderConfig {
     public volatile int leafCullingMode = 1;
     public int biomeTransitionDetail = 2;
     public int targetFrameRate = 300;
+    public int menuMaxFps = 0;
+    public int menuVsync = -1;
     public boolean prioritizeFpsOverTps = false;
     public int maxMemoryMB = 2048;
     public boolean enableTripleBuffering = true;
@@ -60,7 +62,7 @@ public final class MetalRenderConfig {
     public boolean farWaterPlane = true;
     public boolean farCompactQuads = true;
     public boolean farHiZ = true;
-    public boolean farZoomSaver = true;
+    public boolean farZoomSaver = false;
     public boolean farLodFade = true;
     public boolean farBiomeBlend = true;
     private static volatile float resolutionScale = 1.0f;
@@ -110,6 +112,10 @@ public final class MetalRenderConfig {
                     cfg.leafCullingMode = obj.get("leafCullingMode").getAsInt();
                 if (obj.has("biomeTransitionDetail"))
                     cfg.biomeTransitionDetail = obj.get("biomeTransitionDetail").getAsInt();
+                if (obj.has("menuMaxFps"))
+                    cfg.menuMaxFps = obj.get("menuMaxFps").getAsInt();
+                if (obj.has("menuVsync"))
+                    cfg.menuVsync = obj.get("menuVsync").getAsInt();
                 if (obj.has("targetFrameRate"))
                     cfg.targetFrameRate = obj.get("targetFrameRate").getAsInt();
                 if (obj.has("prioritizeFpsOverTps"))
@@ -257,6 +263,8 @@ public final class MetalRenderConfig {
             obj.addProperty("leafCullingMode", leafCullingMode);
             obj.addProperty("biomeTransitionDetail", biomeTransitionDetail);
             obj.addProperty("targetFrameRate", targetFrameRate);
+            obj.addProperty("menuMaxFps", menuMaxFps);
+            obj.addProperty("menuVsync", menuVsync);
             obj.addProperty("prioritizeFpsOverTps", prioritizeFpsOverTps);
             obj.addProperty("maxMemoryMB", maxMemoryMB);
             obj.addProperty("enableTripleBuffering", enableTripleBuffering);
@@ -318,6 +326,18 @@ public final class MetalRenderConfig {
             java.nio.file.Files.writeString(path,
                     new com.google.gson.GsonBuilder().setPrettyPrinting().create().toJson(obj));
         } catch (Exception e) {
+        }
+    }
+
+    public static void enforceMenuDisplay(net.minecraft.client.Options o, MetalRenderConfig cfg) {
+        if (o == null || cfg == null) {
+            return;
+        }
+        if (cfg.menuMaxFps > 0 && o.framerateLimit().get() != cfg.menuMaxFps) {
+            o.framerateLimit().set(cfg.menuMaxFps);
+        }
+        if (cfg.menuVsync >= 0 && o.enableVsync().get() != (cfg.menuVsync == 1)) {
+            o.enableVsync().set(cfg.menuVsync == 1);
         }
     }
 
