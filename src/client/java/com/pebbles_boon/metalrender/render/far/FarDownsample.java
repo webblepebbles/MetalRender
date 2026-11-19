@@ -55,11 +55,18 @@ public final class FarDownsample {
                 }
             }
         }
+        int topSolid = -1;
+        for (int q = maxCell - 1; q >= 0; q--) {
+            if (cellState[q] >= 0 && cellState[q] != FarStateIds.WATER && !FarStateIds.isLeaf(cellState[q])) {
+                topSolid = q;
+                break;
+            }
+        }
         for (int q = 0; q < maxCell; q++) {
-            if (cellState[q] < 0 || cellState[q] == FarStateIds.WATER) {
+            if (cellState[q] < 0 || cellState[q] == FarStateIds.WATER || q == topSolid) {
                 continue;
             }
-            if (FarStateIds.isLeaf(cellState[q]) ? cellLeaf[q] < (3 * sub + 1) / 2 : cellCov[q] < 2 * sub) {
+            if (FarStateIds.isLeaf(cellState[q]) ? cellLeaf[q] * 4 < 3 * sub : cellCov[q] < 2 * sub) {
                 cellState[q] = -1;
             }
         }
