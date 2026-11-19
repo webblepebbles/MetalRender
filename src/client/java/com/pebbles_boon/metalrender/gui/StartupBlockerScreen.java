@@ -16,7 +16,7 @@ public class StartupBlockerScreen extends Screen {
     private static final String IMAGE_RESOURCE = "/assets/metalrender/textures/gui/dont_be_like_bloffo.png";
     private static final Identifier RUNTIME_IMAGE = Identifier.fromNamespaceAndPath("metalrender",
             "startup_blocker_runtime");
-    private static final Component MESSAGE = Component.literal("You are on Windows. You do not need this.");
+    private static final Component MESSAGE = Component.literal("You are on Windows. You do not need this");
     private static final int IMAGE_WIDTH = 1954;
     private static final int IMAGE_HEIGHT = 1556;
     private static final int PADDING = 16;
