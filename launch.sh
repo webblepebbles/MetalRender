@@ -6,4 +6,4 @@ rm -f run/logs/latest.log
 rm -f run/logs/*.gz
 ./compile_native.sh
 
-./gradlew runClient
+./gradlew runClient -Pjfr -Pcsv
