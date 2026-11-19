@@ -3,7 +3,7 @@ set -e
 
 ./compile_shaders.sh
 
-echo "Compiling native library..."
+echo "Compiling native library.."
 JAVA_HOME=${JAVA_HOME:-$(/usr/libexec/java_home)}
 echo "Using JAVA_HOME: $JAVA_HOME"
 
