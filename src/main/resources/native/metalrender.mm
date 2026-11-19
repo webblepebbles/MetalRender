@@ -3936,8 +3936,11 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawAllVisibleChun
 
     validCount = 0;
     megaCount = 0;
+    bool restrictToNear = g_externalMode && mr_far_has_near_mask();
     for (int si = 0; si < totalActive; si++) {
       const MeshSnapshot &ms = s_snapshots[si];
+      if (restrictToNear && !mr_far_near_column(ms.chunkX, ms.chunkZ))
+        continue;
       if (!isClusterVisible(ms.chunkX, ms.chunkZ) ||
           !isGpuCullVisible(ms.bufferHandle) ||
           (s_sectionSnapshotActive && s_sectionSnapshot.count(packMeshKey(ms.chunkX, ms.chunkY, ms.chunkZ)) == 0))
@@ -6064,6 +6067,9 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nDrawEntityBuffer(
       pipeline = g_pipelineEntityTranslucent ? g_pipelineEntityTranslucent
                                              : g_pipelineEntity;
       depthSt = g_depthStateNoWrite ? g_depthStateNoWrite : g_depthState;
+    }
+    if (renderFlags & 0x4) {
+      depthSt = g_depthStateNoWrite;
     }
     if (!pipeline) {
       pipeline = g_pipelineInhouse;
@@ -8423,6 +8429,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nTerrainPrepare(JNI
     return;
   @autoreleasepool {
     mr_backend_wait_frame();
+    mr_far_prepare();
     std::lock_guard<std::mutex> lock(g_arenaMutex);
     mr_arena_collect_locked();
     mr_arena_evict_locked();
@@ -8442,8 +8449,20 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nTerrainPrepare(JNI
                                                            MTLResourceCPUCacheModeWriteCombined];
     }
     if (g_arenaSecSnap[slot]) {
-      memcpy([g_arenaSecSnap[slot] contents], [g_arenaSecBuf contents], (size_t)g_arenaSlotHigh * sizeof(ArenaSectionRecord));
+      auto *sections = static_cast<ArenaSectionRecord *>([g_arenaSecSnap[slot] contents]);
+      memcpy(sections, [g_arenaSecBuf contents], (size_t)g_arenaSlotHigh * sizeof(ArenaSectionRecord));
+      if (mr_far_has_near_mask()) {
+        for (uint32_t i = 0; i < g_arenaSlotHigh; i++) {
+          if (sections[i].flags != 0 && !mr_far_near_column(sections[i].x >> 4, sections[i].z >> 4))
+            sections[i].flags = 0;
+        }
+      }
       fb.sections = [g_arenaSecSnap[slot] retain];
+    } else if (mr_far_has_near_mask()) {
+      fb.sections = nil;
+      fb.valid = false;
+      g_arenaDrawSlot = -1;
+      return;
     } else {
       fb.sections = [g_arenaSecBuf retain];
     }
@@ -8458,7 +8477,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nTerrainPrepare(JNI
     fb.meshPath = mr_arena_mesh_ready();
     memcpy(fb.camBlock, frame.camBlock, sizeof(fb.camBlock));
     memcpy(fb.camFrac, frame.camFrac, sizeof(fb.camFrac));
-    ArenaSectionRecord *secs = (ArenaSectionRecord *)[g_arenaSecBuf contents];
+    ArenaSectionRecord *secs = (ArenaSectionRecord *)[fb.sections contents];
     ArenaUnitRecord *units = (ArenaUnitRecord *)[g_arenaUnitBuf contents];
     id<MTLBuffer> argsBuf = g_arenaArgs[slot];
     id<MTLBuffer> statsBuf = g_arenaStats[slot];
@@ -8545,7 +8564,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nTerrainPrepare(JNI
       g_arenaFaceCullRemoved.store(0, std::memory_order_relaxed);
     }
   }
-  mr_far_prepare();
 }
 
 struct ArenaFogRecon {
@@ -8831,7 +8849,6 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nTerrainExternalDra
   @autoreleasepool {
     mr_apply_external_state(enc, width, height);
     mr_arena_encode(enc);
-    mr_far_encode(enc);
     {
       std::lock_guard<std::mutex> hl(g_arenaHizMutex);
       memcpy(g_arenaHizPending.proj, g_projMatrix, sizeof(g_arenaHizPending.proj));
@@ -8847,6 +8864,19 @@ Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nTerrainExternalDra
         env, cls, 1, indexBuffer);
     mr_release_external_encoder();
     return drawn;
+  }
+}
+
+extern "C" JNIEXPORT void JNICALL
+Java_com_pebbles_1boon_metalrender_nativebridge_NativeBridge_nFarExternalDraw(
+    JNIEnv *, jclass, jlong encoder, jint width, jint height) {
+  id<MTLRenderCommandEncoder> enc = (id<MTLRenderCommandEncoder>)(uintptr_t)encoder;
+  if (!enc)
+    return;
+  @autoreleasepool {
+    mr_apply_external_state(enc, width, height);
+    mr_far_encode(enc);
+    mr_release_external_encoder();
   }
 }
 
