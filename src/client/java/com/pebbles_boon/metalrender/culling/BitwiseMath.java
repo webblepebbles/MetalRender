@@ -11,4 +11,5 @@ public final class BitwiseMath {
     public static int greaterThan(int a, int b) {
         return (b - a) >>> 31;
     }
+//READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
 }

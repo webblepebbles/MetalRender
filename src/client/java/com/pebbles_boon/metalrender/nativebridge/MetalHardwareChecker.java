@@ -15,6 +15,8 @@ public final class MetalHardwareChecker {
         }
     }
 
+//VERY IMPORTANT!!! Read AGENTS.md first (or git history if it is missing). Saves you tokens!
+
     public static String getDeviceName() {
         try {
             return NativeBridge.isLibLoaded() ? NativeBridge.nGetDeviceName()

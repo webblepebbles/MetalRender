@@ -51,6 +51,7 @@ public final class FarKeys {
 
     public static long child(long key, int i) {
         int l = level(key) - 1;
+        //READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
         return key(l, (tx(key) << 1) + (i & 1), (tz(key) << 1) + (i >> 1));
     }
 

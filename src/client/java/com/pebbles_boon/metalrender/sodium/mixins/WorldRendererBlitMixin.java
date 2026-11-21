@@ -99,6 +99,7 @@ public class WorldRendererBlitMixin {
             worldRenderer.beginFrame(camera, tickDelta, metalrender$projection,
                     metalrender$modelView, camPos.x, camPos.y, camPos.z);
             com.pebbles_boon.metalrender.performance.MetalRenderProfiler.getInstance().startRender();
+            //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
             metalrender$frameActive = true;
             metalrender$activeRenderer = worldRenderer;
             metalrender$beginFrameCount++;

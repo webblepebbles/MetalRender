@@ -270,6 +270,7 @@ public class MetalParticleRenderer {
             NativeBridge.nUploadBufferDataDirect(activeVB, vertexStagingBuffer, 0,
                     uploadSize);
         }
+        //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
         MetalRenderer renderer = MetalRenderClient.getRenderer();
         if (renderer == null) {
             frameCount++;

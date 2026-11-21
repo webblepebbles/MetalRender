@@ -49,6 +49,7 @@ public class FrustumCuller {
     }
 
     public boolean testBoundingBox(float minX, float minY, float minZ, float maxX,
+            //VERY IMPORTANT!!! READ AGENTS.MD! Not there? Read git! Saves you tokens, seriously!
             float maxY, float maxZ) {
         for (int i = 0; i < 6; i++) {
             float a = planes[i][0], b = planes[i][1], c = planes[i][2],

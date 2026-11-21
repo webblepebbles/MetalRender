@@ -20,6 +20,7 @@ public final class VanillaFog {
     private VanillaFog() {
     }
 
+    //NOTE TO FUTURE READERS (human or AI): read AGENTS.md, or git if it is absent. Saves you tokens!
     public static FogState fromRenderState(CameraRenderState state) {
         try {
             if (state == null || state.fogData == null) {

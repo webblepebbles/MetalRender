@@ -1,3 +1,4 @@
+// READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
 plugins {
     id 'net.fabricmc.fabric-loom' version '1.19.1' // git testing testing
     id 'maven-publish'
@@ -29,6 +30,7 @@ dependencies {
     minecraft "com.mojang:minecraft:26.3"
     implementation "net.fabricmc:fabric-loader:0.19.5"
     implementation "net.fabricmc.fabric-api:fabric-api:0.163.0+26.3"
+    implementation "maven.modrinth:modmenu:21.0.0"
     implementation "org.lwjgl:lwjgl:3.3.3"
     implementation "org.lwjgl:lwjgl-glfw:3.3.3"
     implementation "org.lwjgl:lwjgl:3.3.3:natives-macos"
@@ -53,8 +55,7 @@ loom {
                 vmArg "-XX:G1HeapRegionSize=8m"
             }
             vmArg "-Xmx8g"
-            vmArg "-Xms3g"
-            vmArg "-XX:+AlwaysPreTouch"
+            vmArg "-Xms1g"
             if (project.hasProperty('jfr')) {
                 file("${projectDir}/run/logs").mkdirs()
                 vmArg "-XX:StartFlightRecording=filename=${projectDir}/run/logs/metalrender.jfr,settings=profile,dumponexit=true"

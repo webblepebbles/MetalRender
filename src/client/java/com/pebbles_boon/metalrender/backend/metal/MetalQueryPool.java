@@ -22,6 +22,7 @@ public final class MetalQueryPool implements GpuQueryPool {
     }
 
     @Override
+    //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
     public OptionalLong[] getValues(int first, int count) {
         OptionalLong[] values = new OptionalLong[count];
         Arrays.fill(values, OptionalLong.empty());

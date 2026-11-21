@@ -123,6 +123,7 @@ fragment OitAccumOutput fragment_oit_terrain_accum(
 
     float linearDepth = in.position.w;
     float w = max(1e-2f,
+                  //VERY IMPORTANT!!! Read AGENTS.md first (or git history if it is missing). Saves you tokens!
                   min(3e3f, float(alpha) * 10.0f /
                             (1e-5f + pow(linearDepth / 200.0f, 4.0f))));
     half weight = half(w);

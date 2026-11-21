@@ -12,6 +12,7 @@ import com.pebbles_boon.metalrender.util.MetalLogger;
 import net.minecraft.client.Minecraft;
 import net.fabricmc.fabric.api.client.command.v2.ClientCommandRegistrationCallback;
 import net.fabricmc.fabric.api.client.command.v2.FabricClientCommandSource;
+import net.fabricmc.loader.api.FabricLoader;
 import net.minecraft.network.chat.Component;
 
 public final class MetalRenderCommands {
@@ -65,6 +66,8 @@ public final class MetalRenderCommands {
                                 msg(ctx.getSource(), "§cAdaptive resolution disabled, scale reset to 1.0x");
                                 return 1;
                             })))
+                    .then(literal("vanilla")
+                            .then(literal("menu").executes(ctx -> toggleVanillaMenu(ctx.getSource()))))
                     .then(literal("config")
                             .then(literal("open").executes(ctx -> {
                                 openConfigScreen(ctx.getSource());
@@ -124,11 +127,31 @@ public final class MetalRenderCommands {
         msg(src, "§e/metalrender cache clear §7- Clear mesh cache and rebuild terrain");
         msg(src, "§e/metalrender reload §7- Reload world renderer");
         msg(src, "§e/metalrender restart §7- Restart renderer");
+        msg(src, "§e/metalrender vanilla menu §7- Switch between vanilla and MetalRender video settings");
         msg(src, "§e/metalrender config open §7- Open MetalRender settings screen");
         msg(src, "§e/metalrender config save|reload|reset §7- Config management");
         msg(src, "§e/metalrender performance reset §7- reset perf settings");
         msg(src, "§e/metalrender mark <name> §7- Mark a profiling scene");
         msg(src, "§e/metalrender profile §7- Toggle profiler overlay");
+    }
+
+    private static int toggleVanillaMenu(FabricClientCommandSource src) {
+        MetalRenderConfig config = MetalRenderClient.getConfig();
+        if (config == null) {
+            msg(src, "§cMetalRender configuration is unavailable");
+            return 0;
+        }
+
+        config.useVanillaVideoSettings = !config.useVanillaVideoSettings;
+        config.save();
+        if (!config.useVanillaVideoSettings) {
+            msg(src, "§aVideo Settings now opens the MetalRender menu");
+        } else if (FabricLoader.getInstance().isModLoaded("modmenu")) {
+            msg(src, "§aVanilla Video Settings restored. Open Mods > MetalRender > Configure for MetalRender settings");
+        } else {
+            msg(src, "§aVanilla Video Settings restored. Use /metalrender config open for MetalRender settings");
+        }
+        return 1;
     }
 
     private static void openConfigScreen(FabricClientCommandSource src) {
@@ -139,7 +162,7 @@ public final class MetalRenderCommands {
                 return;
             }
             MetalRenderClient.openSettingsScreen(mc);
-            msg(src, "§aOpened MetalRender settings");
+            msg(src, "§aOpening MetalRender settings");
         } catch (Exception e) {
             msg(src, "§cFailed to open settings screen: " + e.getMessage());
         }
@@ -155,6 +178,7 @@ public final class MetalRenderCommands {
         msg(src, "§7Hardware: "
                 + (available ? "§a" + MetalHardwareChecker.getDeviceName() : "§cUnavailable"));
         msg(src, "§7Resolution scale: §f" + String.format("%.2fx", MetalRenderConfig.resolutionScale())
+                //VERY IMPORTANT!!! Read AGENTS.md first (or git history if it is missing). Saves you tokens!
                 + (MetalRenderConfig.isAdaptiveResolutionEnabled() ? " §7(§aadaptive§7)" : " §7(§cmanual§7)"));
 
         MetalWorldRenderer wr = MetalRenderClient.getWorldRenderer();

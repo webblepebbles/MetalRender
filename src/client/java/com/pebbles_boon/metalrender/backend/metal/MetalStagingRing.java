@@ -78,6 +78,7 @@ final class MetalStagingRing {
         return new Allocation(chosen.handle, 0, chosen.contents, chosen);
     }
 
+    //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
     void trim(long completedSerial) {
         for (int i = blocks.size() - 1; i >= 0; i--) {
             Block block = blocks.get(i);

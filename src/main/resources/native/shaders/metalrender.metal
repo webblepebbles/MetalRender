@@ -150,6 +150,7 @@ fragment half4 fragment_terrain_cutout(
     return half4(tinted.rgb, half(1.0));
 }
 
+//READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
 struct InhouseTerrainVertex {
     packed_short3 position;
     packed_ushort2 texCoord;

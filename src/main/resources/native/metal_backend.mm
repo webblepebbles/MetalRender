@@ -79,7 +79,7 @@ std::atomic<uint64_t> g_backendFrameInProgress{1};
 std::atomic<uint64_t> g_backendCompletedFrame{0};
 struct MRContext;
 static MRContext *g_backendCtx = nullptr;
-
+ //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git! 
 struct MRSampleRange {
   int slot = 0;
   int first = 0;

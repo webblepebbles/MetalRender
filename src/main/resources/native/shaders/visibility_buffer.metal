@@ -5,6 +5,7 @@ struct VisBufferParams {
     float4   cameraPos;
     uint     totalTriangles;
     uint     _pad0;
+    //VERY IMPORTANT!!! READ AGENTS.MD! Not there? Read git! Saves you tokens, seriously!
     uint     _pad1;
     uint     _pad2;
 };

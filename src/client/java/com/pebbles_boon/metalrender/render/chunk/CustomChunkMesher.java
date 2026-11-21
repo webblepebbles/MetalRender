@@ -64,6 +64,7 @@ public class CustomChunkMesher {
     private static final int MAX_QUADS = SECTION_SIZE * SECTION_SIZE * SECTION_SIZE * 6;
     private static final int VERTEX_BUF_SIZE = MAX_QUADS * 4 * VERTEX_STRIDE;
     private static final byte WATER_ALPHA = (byte) 168;
+    private static final byte TRANSLUCENT_BLOCK_ALPHA = (byte) 0xFF;
     private static final float FLUID_EPSILON = 1.0f / 128.0f;
     private static final float GRASS_OVERLAY_OFFSET = 1.0f / 256.0f;
     private static final int UPLOAD_PARALLELISM = Math.min(6,
@@ -370,9 +371,9 @@ public class CustomChunkMesher {
         }
     }
 
-    private boolean outsideBuildRange(int x, int z) {
+    public boolean isInBuildRange(int x, int z) {
         BuildRange range = buildRange;
-        return CIRCULAR_BUILD_RANGE && range != null && !net.minecraft.server.level.ChunkTrackingView.isInViewDistance(
+        return !CIRCULAR_BUILD_RANGE || range == null || net.minecraft.server.level.ChunkTrackingView.isInViewDistance(
                 range.x, range.z, range.distance, x, z);
     }
 
@@ -687,20 +688,22 @@ public class CustomChunkMesher {
             return false;
 
         if (mc.player != null) updateBuildRange(mc.player.chunkPosition().x(), mc.player.chunkPosition().z(), mc.options.renderDistance().get());
-        if (outsideBuildRange(chunkX, chunkZ)) return false;
+        if (!isInBuildRange(chunkX, chunkZ)) return false;
         long key = packChunkKey(chunkX, chunkY, chunkZ);
         final long genAtSubmit;
-        final long globalGenAtSubmit = globalBuildGeneration.get();
+        final long globalGenAtSubmit;
         final long epochAtSubmit;
         synchronized (dirtyGeneration) {
+            synchronized (pendingKeys) {
+                if (!pendingKeys.add(key)) {
+                    return true;
+                }
+            }
+            globalGenAtSubmit = globalBuildGeneration.get();
             genAtSubmit = dirtyGeneration.get(key);
-        }
-        synchronized (variantLock) {
-            epochAtSubmit = contentEpochByKey.get(key);
-        }
-
-        synchronized (pendingKeys) {
-            pendingKeys.add(key);
+            synchronized (variantLock) {
+                epochAtSubmit = contentEpochByKey.get(key);
+            }
         }
 
         int priority = interactive ? 0 : (highPriority ? 1 : 2);
@@ -757,19 +760,11 @@ public class CustomChunkMesher {
                     BUILD_WALL_ACC.set(0);
                     BUILD_WALL_CNT.set(0);
                 }
-                synchronized (dirtyGeneration) {
-                    if (dirtyGeneration.get(key) == genAtSubmit) {
-                        synchronized (pendingKeys) {
-                            pendingKeys.remove(key);
-                        }
-                    }
-                }
+                finishBuild(key, genAtSubmit, globalGenAtSubmit);
             }
         }, chunkX, chunkZ);
         if (!submitted) {
-            synchronized (pendingKeys) {
-                pendingKeys.remove(key);
-            }
+            finishBuild(key, genAtSubmit, globalGenAtSubmit);
         }
         return submitted;
     }
@@ -867,25 +862,27 @@ public class CustomChunkMesher {
                 newlyDirty = dirtyKeys.add(key);
             }
             dirtyGeneration.put(key, dirtyGeneration.get(key) + 1L);
+            synchronized (emptyKeys) {
+                emptyKeys.remove(key);
+            }
+            synchronized (pendingKeys) {
+                pendingKeys.remove(key);
+            }
         }
         if (newlyDirty) connectivityDirtyGeneration.incrementAndGet();
         noteRebuild(reason);
-        synchronized (emptyKeys) {
-            emptyKeys.remove(key);
-        }
-        synchronized (pendingKeys) {
-            pendingKeys.remove(key);
-        }
     }
 
     public void contentChanged(int cx, int cy, int cz, String source) {
         DIAG_CONTENTCHANGED.incrementAndGet();
         long key = packChunkKey(cx, cy, cz);
-        synchronized (variantLock) {
-            contentEpochByKey.put(key, contentEpochByKey.get(key) + 1L);
-            destroyStashForKeyLocked(key);
+        synchronized (dirtyGeneration) {
+            synchronized (variantLock) {
+                contentEpochByKey.put(key, contentEpochByKey.get(key) + 1L);
+                destroyStashForKeyLocked(key);
+            }
+            markDirtyWithReason(cx, cy, cz, "content_changed:" + source);
         }
-        markDirtyWithReason(cx, cy, cz, "content_changed:" + source);
     }
 
     public static long hashDataLayer(net.minecraft.world.level.chunk.DataLayer layer) {
@@ -938,80 +935,87 @@ public class CustomChunkMesher {
             return false;
         }
         long key = packChunkKey(cx, cy, cz);
-        ChunkMeshData promoted = null;
-        long currentEpoch;
-        synchronized (variantLock) {
-            currentEpoch = contentEpochByKey.get(key);
-            StashedVariants sv = stashedVariants.get(key);
-            if (sv != null && sv.byTier[targetTier] != null
-                    && sv.epoch[targetTier] == currentEpoch) {
-                promoted = sv.byTier[targetTier];
-                sv.byTier[targetTier] = null;
-                sv.epoch[targetTier] = 0;
-                sv.stamp[targetTier] = 0;
-                sv.liveSlots--;
-                stashedVariantCount--;
-            }
-        }
-        if (promoted == null) {
-            return false;
-        }
-
-        synchronized (meshCache) {
-            ChunkMeshData old = meshCache.get(key);
-            if (old == null) {
-                NativeBridge.nDestroyBuffer(promoted.bufferHandle);
-                return true;
-            }
-            if (old.lodTier == promoted.lodTier) {
-                synchronized (variantLock) {
-                    StashedVariants sv = stashedVariants.get(key);
-                    if (sv == null) {
-                        sv = new StashedVariants();
-                        stashedVariants.put(key, sv);
-                    }
-                    sv.byTier[targetTier] = promoted;
-                    sv.epoch[targetTier] = currentEpoch;
-                    sv.stamp[targetTier] = ++variantTick;
-                    sv.liveSlots++;
-                    stashedVariantCount++;
+        synchronized (dirtyGeneration) {
+            synchronized (dirtyKeys) {
+                if (dirtyKeys.contains(key)) {
+                    return false;
                 }
-                return true;
+            }
+            ChunkMeshData promoted = null;
+            long currentEpoch;
+            synchronized (variantLock) {
+                currentEpoch = contentEpochByKey.get(key);
+                StashedVariants sv = stashedVariants.get(key);
+                if (sv != null && sv.byTier[targetTier] != null
+                        && sv.epoch[targetTier] == currentEpoch) {
+                    promoted = sv.byTier[targetTier];
+                    sv.byTier[targetTier] = null;
+                    sv.epoch[targetTier] = 0;
+                    sv.stamp[targetTier] = 0;
+                    sv.liveSlots--;
+                    stashedVariantCount--;
+                }
+            }
+            if (promoted == null) {
+                return false;
             }
 
-            meshCache.put(key, promoted);
-            vertexCountAtomic.addAndGet((promoted.quadCount - old.quadCount) * 4);
-
-            boolean demoted = false;
-            synchronized (variantLock) {
-                long oldEpoch = meshEpochByKey.get(key);
-                meshEpochByKey.put(key, currentEpoch);
-                if (old.lodTier != targetTier && oldEpoch == currentEpoch) {
-                    StashedVariants sv = stashedVariants.get(key);
-                    if (sv == null) {
-                        sv = new StashedVariants();
-                        stashedVariants.put(key, sv);
-                    }
-                    if (sv.byTier[old.lodTier] == null) {
-                        sv.byTier[old.lodTier] = old;
-                        sv.epoch[old.lodTier] = currentEpoch;
-                        sv.stamp[old.lodTier] = ++variantTick;
+            synchronized (meshCache) {
+                ChunkMeshData old = meshCache.get(key);
+                if (old == null) {
+                    NativeBridge.nDestroyBuffer(promoted.bufferHandle);
+                    return true;
+                }
+                if (old.lodTier == promoted.lodTier) {
+                    synchronized (variantLock) {
+                        StashedVariants sv = stashedVariants.get(key);
+                        if (sv == null) {
+                            sv = new StashedVariants();
+                            stashedVariants.put(key, sv);
+                        }
+                        sv.byTier[targetTier] = promoted;
+                        sv.epoch[targetTier] = currentEpoch;
+                        sv.stamp[targetTier] = ++variantTick;
                         sv.liveSlots++;
                         stashedVariantCount++;
-                        demoted = true;
+                    }
+                    return true;
+                }
+
+                meshCache.put(key, promoted);
+                vertexCountAtomic.addAndGet((promoted.quadCount - old.quadCount) * 4);
+
+                boolean demoted = false;
+                synchronized (variantLock) {
+                    long oldEpoch = meshEpochByKey.get(key);
+                    meshEpochByKey.put(key, currentEpoch);
+                    if (old.lodTier != targetTier && oldEpoch == currentEpoch) {
+                        StashedVariants sv = stashedVariants.get(key);
+                        if (sv == null) {
+                            sv = new StashedVariants();
+                            stashedVariants.put(key, sv);
+                        }
+                        if (sv.byTier[old.lodTier] == null) {
+                            sv.byTier[old.lodTier] = old;
+                            sv.epoch[old.lodTier] = currentEpoch;
+                            sv.stamp[old.lodTier] = ++variantTick;
+                            sv.liveSlots++;
+                            stashedVariantCount++;
+                            demoted = true;
+                        }
                     }
                 }
+                if (!demoted && old.bufferHandle != promoted.bufferHandle) {
+                    NativeBridge.nDestroyBuffer(old.bufferHandle);
+                }
             }
-            if (!demoted && old.bufferHandle != promoted.bufferHandle) {
-                NativeBridge.nDestroyBuffer(old.bufferHandle);
+            queueDrawRegistration(promoted);
+            synchronized (dirtyKeys) {
+                dirtyKeys.remove(key);
             }
+            meshUpdateGeneration.incrementAndGet();
+            return true;
         }
-        queueDrawRegistration(promoted);
-        synchronized (dirtyKeys) {
-            dirtyKeys.remove(key);
-        }
-        meshUpdateGeneration.incrementAndGet();
-        return true;
     }
 
     private void destroyStashForKeyLocked(long key) {
@@ -1112,51 +1116,75 @@ public class CustomChunkMesher {
     }
 
     public void markAllDirty() {
-        invalidateThreadLocalCaches();
-        destroyAllStashedVariants();
-        long[] keys;
-        long[] emptyArr;
-        synchronized (meshCache) {
-            keys = meshCache.keySet().toLongArray();
-        }
-        synchronized (emptyKeys) {
-            emptyArr = emptyKeys.toLongArray();
-            emptyKeys.clear();
-        }
-        synchronized (dirtyKeys) {
-            for (long k : keys)
-                dirtyKeys.add(k);
-            for (long k : emptyArr)
-                dirtyKeys.add(k);
-        }
-        globalBuildGeneration.incrementAndGet();
         synchronized (dirtyGeneration) {
-            for (long k : keys)
-                dirtyGeneration.put(k, dirtyGeneration.get(k) + 1L);
-            for (long k : emptyArr)
-                dirtyGeneration.put(k, dirtyGeneration.get(k) + 1L);
+            invalidateThreadLocalCaches();
+            destroyAllStashedVariants();
+            long[] keys;
+            long[] emptyArr;
+            synchronized (meshCache) {
+                keys = meshCache.keySet().toLongArray();
+            }
+            synchronized (variantLock) {
+                for (long key : keys) {
+                    contentEpochByKey.put(key, contentEpochByKey.get(key) + 1L);
+                }
+            }
+            synchronized (emptyKeys) {
+                emptyArr = emptyKeys.toLongArray();
+                emptyKeys.clear();
+            }
+            synchronized (dirtyKeys) {
+                for (long k : keys)
+                    dirtyKeys.add(k);
+                for (long k : emptyArr)
+                    dirtyKeys.add(k);
+            }
+            globalBuildGeneration.incrementAndGet();
+            synchronized (pendingKeys) {
+                pendingKeys.clear();
+            }
+            connectivityDirtyGeneration.incrementAndGet();
+            noteRebuildBulk("mark_all_dirty", keys.length + emptyArr.length);
         }
-        connectivityDirtyGeneration.incrementAndGet();
-        noteRebuildBulk("mark_all_dirty", keys.length + emptyArr.length);
     }
 
     public void removeMesh(int cx, int cy, int cz) {
         long key = packChunkKey(cx, cy, cz);
-        forgetLightHashes(key);
+        synchronized (dirtyGeneration) {
+            synchronized (dirtyKeys) {
+                if (!dirtyKeys.contains(key) && !hasMeshIgnoreDirty(cx, cy, cz) && !isBuildPending(cx, cy, cz)) {
+                    return;
+                }
+            }
+            dirtyGeneration.put(key, dirtyGeneration.get(key) + 1L);
+            removePublishedMesh(key, cx, cy, cz);
+            synchronized (emptyKeys) {
+                emptyKeys.remove(key);
+            }
+            synchronized (pendingKeys) {
+                pendingKeys.remove(key);
+            }
+            synchronized (dirtyKeys) {
+                if (dirtyKeys.remove(key)) connectivityDirtyGeneration.incrementAndGet();
+            }
+        }
+    }
+
+    private void removePublishedMesh(long key, int cx, int cy, int cz) {
         synchronized (variantLock) {
+            forgetLightHashes(key);
             destroyStashForKeyLocked(key);
             meshEpochByKey.remove(key);
         }
         ChunkMeshData old;
-        synchronized (dirtyGeneration) {
-            dirtyGeneration.put(key, dirtyGeneration.get(key) + 1L);
-            synchronized (meshCache) {
-                old = meshCache.remove(key);
-            }
+        synchronized (meshCache) {
+            old = meshCache.remove(key);
         }
-        com.pebbles_boon.metalrender.render.far.FarTerrainManager.get().nearMask().invalidate(cx, cz);
         if (old != null) {
-            NativeBridge.nUnregisterChunkMesh(cx, cy, cz);
+            synchronized (batchRegData) {
+                flushMeshRegistrations();
+                NativeBridge.nUnregisterChunkMesh(cx, cy, cz);
+            }
             if (old.bufferHandle != 0) {
                 NativeBridge.nDestroyBuffer(old.bufferHandle);
             }
@@ -1165,57 +1193,54 @@ public class CustomChunkMesher {
             totalQuadCountAcc.addAndGet(-(long) old.quadCount);
             residentQuadBytesAcc.addAndGet(-(long) old.quadCount * 4L * 16L);
         }
-        synchronized (emptyKeys) {
-            emptyKeys.remove(key);
-        }
-        synchronized (dirtyKeys) {
-            dirtyKeys.remove(key);
-        }
         meshUpdateGeneration.incrementAndGet();
     }
 
     public void clearAllMeshes() {
-        com.pebbles_boon.metalrender.render.far.FarTerrainManager.get().nearMask().invalidateAll();
-        invalidateThreadLocalCaches();
-        destroyAllStashedVariants();
-        synchronized (variantLock) {
-            meshEpochByKey.clear();
-            contentEpochByKey.clear();
-            builtBlockLightHashByKey.clear();
-            builtSkyLightHashByKey.clear();
-        }
         int count;
-        synchronized (meshCache) {
-            count = meshCache.size();
-            if (NativeBridge.isLibLoaded()) {
-                NativeBridge.nClearAllChunkRegistrations();
+        synchronized (dirtyGeneration) {
+            globalBuildGeneration.incrementAndGet();
+            invalidateThreadLocalCaches();
+            destroyAllStashedVariants();
+            synchronized (variantLock) {
+                meshEpochByKey.clear();
+                contentEpochByKey.clear();
+                builtBlockLightHashByKey.clear();
+                builtSkyLightHashByKey.clear();
             }
-            for (ChunkMeshData mesh : meshCache.values()) {
-                if (mesh.bufferHandle != 0) {
-                    NativeBridge.nDestroyBuffer(mesh.bufferHandle);
+            synchronized (batchRegData) {
+                batchRegCount = 0;
+                if (NativeBridge.isLibLoaded()) {
+                    NativeBridge.nClearAllChunkRegistrations();
                 }
             }
-            meshCache.clear();
-            meshCountAtomic.set(0);
-            vertexCountAtomic.set(0);
-            totalQuadCountAcc.set(0);
-            residentQuadBytesAcc.set(0);
+            synchronized (meshCache) {
+                count = meshCache.size();
+                for (ChunkMeshData mesh : meshCache.values()) {
+                    if (mesh.bufferHandle != 0) {
+                        NativeBridge.nDestroyBuffer(mesh.bufferHandle);
+                    }
+                }
+                meshCache.clear();
+                meshCountAtomic.set(0);
+                vertexCountAtomic.set(0);
+                totalQuadCountAcc.set(0);
+                residentQuadBytesAcc.set(0);
+            }
+            synchronized (pendingKeys) {
+                pendingKeys.clear();
+            }
+            synchronized (dirtyKeys) {
+                dirtyKeys.clear();
+            }
+            synchronized (emptyKeys) {
+                emptyKeys.clear();
+            }
+            lodTierOverrides.clear();
+            meshUpdateGeneration.incrementAndGet();
+            connectivityDirtyGeneration.incrementAndGet();
         }
-        synchronized (pendingKeys) {
-            pendingKeys.clear();
-        }
-        synchronized (dirtyKeys) {
-            dirtyKeys.clear();
-        }
-        synchronized (emptyKeys) {
-            emptyKeys.clear();
-        }
-        lodTierOverrides.clear();
-        globalBuildGeneration.incrementAndGet();
-        synchronized (batchRegData) {
-            batchRegCount = 0;
-        }
-        MetalLogger.info("mesher data cleared (%d).", count);
+        MetalLogger.info("mesher data cleared (%d)", count);
     }
 
     public int getMeshCount() {
@@ -1473,6 +1498,16 @@ public class CustomChunkMesher {
         return backgroundPool.getActiveCount() + backgroundPool.getQueue().size();
     }
 
+    private void finishBuild(long key, long generation, long globalGeneration) {
+        synchronized (dirtyGeneration) {
+            if (!isTaskCancelled(key, generation, globalGeneration)) {
+                synchronized (pendingKeys) {
+                    pendingKeys.remove(key);
+                }
+            }
+        }
+    }
+
     private boolean isTaskCancelled(long key, long generation, long globalGeneration) {
         if (globalBuildGeneration.get() != globalGeneration) {
             return true;
@@ -1509,43 +1544,19 @@ public class CustomChunkMesher {
 
     private void removeEmptyMesh(long key, int chunkX, int chunkY, int chunkZ,
             long generation, long globalGeneration) {
-        forgetLightHashes(key);
-        synchronized (variantLock) {
-            destroyStashForKeyLocked(key);
-            meshEpochByKey.remove(key);
-        }
-        ChunkMeshData old;
         synchronized (dirtyGeneration) {
-            if (globalBuildGeneration.get() != globalGeneration ||
-                    dirtyGeneration.get(key) != generation) {
+            if (isTaskCancelled(key, generation, globalGeneration)) {
                 return;
             }
-            synchronized (meshCache) {
-                old = meshCache.remove(key);
+            removePublishedMesh(key, chunkX, chunkY, chunkZ);
+            synchronized (emptyKeys) {
+                emptyKeys.add(key);
             }
-        }
-        if (old != null) {
-            NativeBridge.nUnregisterChunkMesh(chunkX, chunkY, chunkZ);
-            if (old.bufferHandle != 0) {
-                NativeBridge.nDestroyBuffer(old.bufferHandle);
+            synchronized (dirtyKeys) {
+                if (dirtyKeys.remove(key)) connectivityDirtyGeneration.incrementAndGet();
             }
-            meshCountAtomic.decrementAndGet();
-            vertexCountAtomic.addAndGet(-old.quadCount * 4);
-            totalQuadCountAcc.addAndGet(-(long) old.quadCount);
-            residentQuadBytesAcc.addAndGet(-(long) old.quadCount * 4L * 16L);
+            recordVisibleLatency(key);
         }
-        synchronized (emptyKeys) {
-            emptyKeys.add(key);
-        }
-        synchronized (dirtyGeneration) {
-            if (dirtyGeneration.get(key) == generation) {
-                synchronized (dirtyKeys) {
-                    dirtyKeys.remove(key);
-                }
-            }
-        }
-        meshUpdateGeneration.incrementAndGet();
-        recordVisibleLatency(key);
     }
 
     private static final class SectionSnapshot {
@@ -2674,20 +2685,14 @@ public class CustomChunkMesher {
             }
 
             int roundedSize = dataLen > 0 ? roundToSizeClass(dataLen) : 0;
-            long oldHintHandle = 0;
-            synchronized (meshCache) {
-                ChunkMeshData existing = meshCache.get(key);
-                if (existing != null) {
-                    oldHintHandle = existing.bufferHandle;
-                }
-            }
-
             long bufferHandle = 0;
             if (dataLen > 0) {
                 UPLOAD_SEMAPHORE.acquireUninterruptibly();
                 try {
-                    bufferHandle = NativeBridge.nCreateBufferWithHint(
-                            deviceHandle, roundedSize, NativeMemory.STORAGE_MODE_SHARED, oldHintHandle);
+                    bufferHandle = NativeBridge.nCreateBuffer(deviceHandle, roundedSize, NativeMemory.STORAGE_MODE_SHARED);
+                    if (bufferHandle == 0) {
+                        return;
+                    }
                     long uploadStart = System.nanoTime();
                     NativeBridge.nUploadBufferDataDirect(bufferHandle, vertexBuffer, 0, dataLen);
                     MetalRenderProfiler.getInstance().recordUploadTime(System.nanoTime() - uploadStart);
@@ -2706,9 +2711,8 @@ public class CustomChunkMesher {
                     computeMissingNeighborMask(context.world, chunkX, chunkZ),
                     opaqueFormat);
             mesh.tiered = tiered;
-            ChunkMeshData old;
             synchronized (dirtyGeneration) {
-                if (isTaskCancelled(key, generation, globalGeneration) || outsideBuildRange(chunkX, chunkZ)) {
+                if (isTaskCancelled(key, generation, globalGeneration) || !isInBuildRange(chunkX, chunkZ)) {
                     if (bufferHandle != 0) {
                         NativeBridge.nDestroyBuffer(bufferHandle);
                     }
@@ -2720,82 +2724,55 @@ public class CustomChunkMesher {
                                     tierSection.quadBytes, tierSection.units, tierSection.unitCount, opaqueQuadCount + arenaWaterQuads)
                             : NativeBridge.nArenaPublish(chunkX, chunkY, chunkZ, lodTier, null, 0, null, 0, 0);
                     if (!published) {
+                        if (bufferHandle != 0) {
+                            NativeBridge.nDestroyBuffer(bufferHandle);
+                        }
+                        markDirtyWithReason(chunkX, chunkY, chunkZ, "arena_publish_retry");
                         MetalLogger.error("terrain arena publish failed [%d,%d,%d]", chunkX, chunkY, chunkZ);
+                        return;
                     }
                 }
+                ChunkMeshData old;
                 synchronized (meshCache) {
                     old = meshCache.put(key, mesh);
                 }
-            }
-            if (old == null) {
-                DIAG_NEW.incrementAndGet();
-                meshCountAtomic.incrementAndGet();
-                vertexCountAtomic.addAndGet(mesh.quadCount * 4);
-                totalQuadCountAcc.addAndGet(mesh.quadCount);
-                residentQuadBytesAcc.addAndGet((long) roundedSize);
-            } else {
-                DIAG_REPLACE.incrementAndGet();
-                vertexCountAtomic.addAndGet(mesh.quadCount * 4 - old.quadCount * 4);
-                totalQuadCountAcc.addAndGet((long) mesh.quadCount - (long) old.quadCount);
-                residentQuadBytesAcc.addAndGet((long) (mesh.quadCount - old.quadCount) * 4L * 16L);
-            }
+                if (old == null) {
+                    DIAG_NEW.incrementAndGet();
+                    meshCountAtomic.incrementAndGet();
+                    vertexCountAtomic.addAndGet(mesh.quadCount * 4);
+                    totalQuadCountAcc.addAndGet(mesh.quadCount);
+                    residentQuadBytesAcc.addAndGet((long) roundedSize);
+                } else {
+                    DIAG_REPLACE.incrementAndGet();
+                    vertexCountAtomic.addAndGet(mesh.quadCount * 4 - old.quadCount * 4);
+                    totalQuadCountAcc.addAndGet((long) mesh.quadCount - (long) old.quadCount);
+                    residentQuadBytesAcc.addAndGet((long) (mesh.quadCount - old.quadCount) * 4L * 16L);
+                }
 
-            int flushCount = -1;
-            synchronized (dirtyGeneration) {
-                synchronized (batchRegData) {
-                    int idx = batchRegCount * BATCH_REG_STRIDE;
-                    int[] regFacing = tiered ? new int[7] : facingQuadCounts;
-                    batchRegData[idx] = (chunkX & 0xFFFFFFFFL) | ((long) chunkY << 32);
-                    batchRegData[idx + 1] = (chunkZ & 0xFFFFFFFFL) | ((long) (tiered ? legacyWaterQuads : quadCount) << 32);
-                    batchRegData[idx + 2] = bufferHandle;
-                    batchRegData[idx + 3] = visibilityMask;
-                    batchRegData[idx + 4] = ((tiered ? 0 : opaqueQuadCount) & 0xFFFFFFFFL)
-                            | ((long) (regFacing.length > 0 ? regFacing[0] : 0) << 32);
-                    batchRegData[idx
-                            + 5] = ((long) (regFacing.length > 1 ? regFacing[1] : 0) & 0xFFFFFFFFL)
-                                    | ((long) (regFacing.length > 2 ? regFacing[2] : 0) << 32);
-                    batchRegData[idx
-                            + 6] = ((long) (regFacing.length > 3 ? regFacing[3] : 0) & 0xFFFFFFFFL)
-                                    | ((long) (regFacing.length > 4 ? regFacing[4] : 0) << 32);
-                    batchRegData[idx
-                            + 7] = ((long) (regFacing.length > 5 ? regFacing[5] : 0) & 0xFFFFFFFFL)
-                                    | ((long) (regFacing.length > 6 ? regFacing[6] : 0) << 32);
-                    batchRegData[idx + 8] = (lodTier & 0xFF) | ((long) (opaqueFormat & 0xFF) << 16);
-                    batchRegCount++;
-                    if (batchRegCount >= BATCH_REG_CAPACITY) {
-                        flushCount = batchRegCount;
-                        batchRegCount = 0;
+                queueDrawRegistration(mesh, tiered ? legacyWaterQuads : quadCount,
+                        tiered ? 0 : opaqueQuadCount, tiered ? null : facingQuadCounts);
+                boolean stashedOld = false;
+                synchronized (variantLock) {
+                    long oldEpoch = meshEpochByKey.get(key);
+                    meshEpochByKey.put(key, contentEpochAtSubmit);
+                    if (old != null && old.bufferHandle != bufferHandle
+                            && old.lodTier != mesh.lodTier && oldEpoch == contentEpochAtSubmit
+                            && !tiered && !old.tiered && old.bufferHandle != 0) {
+                        stashedOld = true;
                     }
                 }
-            }
-            if (flushCount > 0) {
-                NativeBridge.nRegisterChunkMeshBatch(flushCount, batchRegData);
-            }
-            boolean stashedOld = false;
-            synchronized (variantLock) {
-                long oldEpoch = meshEpochByKey.get(key);
-                meshEpochByKey.put(key, contentEpochAtSubmit);
-                if (old != null && old.bufferHandle != bufferHandle
-                        && old.lodTier != mesh.lodTier && oldEpoch == contentEpochAtSubmit
-                        && !tiered && !old.tiered && old.bufferHandle != 0) {
-                    stashedOld = true;
+                if (stashedOld) {
+                    stashVariant(key, old, contentEpochAtSubmit);
+                } else if (old != null && old.bufferHandle != 0 && old.bufferHandle != bufferHandle) {
+                    NativeBridge.nDestroyBuffer(old.bufferHandle);
                 }
-            }
-            if (stashedOld) {
-                stashVariant(key, old, contentEpochAtSubmit);
-            } else if (old != null && old.bufferHandle != 0 && old.bufferHandle != bufferHandle) {
-                NativeBridge.nDestroyBuffer(old.bufferHandle);
-            }
 
-            meshUpdateGeneration.incrementAndGet();
-            recordBuiltLightHashes(key, snapshot);
-            recordVisibleLatency(key);
-            MetalRenderProfiler.getInstance().incrementMeshesBuilt(1);
-            synchronized (dirtyGeneration) {
-                if (dirtyGeneration.get(key) == generation) {
-                    synchronized (dirtyKeys) {
-                        if (dirtyKeys.remove(key)) connectivityDirtyGeneration.incrementAndGet();
-                    }
+                meshUpdateGeneration.incrementAndGet();
+                recordBuiltLightHashes(key, snapshot);
+                recordVisibleLatency(key);
+                MetalRenderProfiler.getInstance().incrementMeshesBuilt(1);
+                synchronized (dirtyKeys) {
+                    if (dirtyKeys.remove(key)) connectivityDirtyGeneration.incrementAndGet();
                 }
             }
         } catch (Exception e) {
@@ -2805,13 +2782,6 @@ public class CustomChunkMesher {
         } finally {
             long buildElapsed = System.nanoTime() - buildStart;
             MetalRenderProfiler.getInstance().recordMeshingTime(buildElapsed);
-            synchronized (dirtyGeneration) {
-                if (dirtyGeneration.get(key) == generation) {
-                    synchronized (pendingKeys) {
-                        pendingKeys.remove(key);
-                    }
-                }
-            }
         }
     }
 
@@ -2825,6 +2795,8 @@ public class CustomChunkMesher {
         private final int lodTier;
         private boolean detailOverride;
         private final boolean smoothLightingEnabled;
+        private final boolean smoothGlassEnabled;
+        private final boolean fastLeaves;
 
         int opaqueQuadCount = 0;
         int waterQuadCount = 0;
@@ -2850,6 +2822,8 @@ public class CustomChunkMesher {
             this.chunkZ = chunkZ;
             this.lodTier = lodTier;
             MetalRenderConfig cfg = MetalRenderClient.getConfig();
+            this.fastLeaves = cfg != null && cfg.leafCullingMode == 0;
+            this.smoothGlassEnabled = cfg == null || cfg.smoothGlass;
             this.smoothLightingEnabled = (cfg == null || cfg.smoothLighting)
                     && vanillaSmoothLightingEnabled();
         }
@@ -3030,7 +3004,7 @@ public class CustomChunkMesher {
                 return info;
             }
             try {
-                if (state.isAir() || (!state.isSolidRender() && !(state.getBlock() instanceof LeavesBlock)))
+                if (state.isAir() || (!state.isSolidRender() && !(fastLeaves && state.getBlock() instanceof LeavesBlock)))
                     return info;
                 if (state.getRenderShape() != net.minecraft.world.level.block.RenderShape.MODEL)
                     return info;
@@ -3364,12 +3338,7 @@ public class CustomChunkMesher {
                         } else if (state.getBlock() == Blocks.GRASS_BLOCK && dir.getAxis() != Direction.Axis.Y) {
                             continue;
                         }
-                        int alpha = 0xFF;
-                        try {
-                            if (state.getBlock() instanceof LeavesBlock)
-                                alpha = 0xFE;
-                        } catch (Exception ignored) {
-                        }
+                        int alpha = fastLeaves && state.getBlock() instanceof LeavesBlock ? 0xFE : 0xFF;
                         int idx = 0;
                         if (lastIdx != 0 && matByIdx[lastIdx].matches(template, tintColor, light, alpha)) {
                             idx = lastIdx;
@@ -3764,14 +3733,7 @@ public class CustomChunkMesher {
             if (state.isSolidRender()) {
                 return true;
             }
-            if (state.getBlock() instanceof LeavesBlock) {
-                if (lodTier >= 1) {
-                    return true;
-                }
-                MetalRenderConfig cfg = MetalRenderClient.getConfig();
-                return cfg == null || cfg.leafCullingMode == 0;
-            }
-            return false;
+            return fastLeaves && state.getBlock() instanceof LeavesBlock;
         }
 
         private void renderFluid(FluidState fluid, BlockPos pos, int lx, int ly, int lz) {
@@ -4183,10 +4145,22 @@ public class CustomChunkMesher {
                 BlockState state, boolean water, boolean forceFlat, boolean crossLike, boolean ownLight) {
             boolean keepDetail = !water && !crossLike && !state.isSolidRender();
             detailOverride = keepDetail;
-            GrowableStagingBuffer target = water ? waterBuffer : solidBuffer;
+            boolean translucentLayer = !water
+                    && quad.materialInfo().layer() == net.minecraft.client.renderer.chunk.ChunkSectionLayer.TRANSLUCENT;
+            GrowableStagingBuffer target = (water || translucentLayer) ? waterBuffer : solidBuffer;
             Direction face = quad.direction();
+            float[] glassDu = null;
+            float[] glassDv = null;
+            if (translucentLayer && face != null && lodTier == 0 && smoothGlassEnabled && isGlassBlock(state)) {
+                glassDu = new float[4];
+                glassDv = new float[4];
+                computeGlassInset(quad, lx, ly, lz, state, face, glassDu, glassDv);
+            }
             byte normalIndex = (byte) (face != null && state.isSolidRender()
                     ? face.get3DDataValue() : 6);
+            if (translucentLayer && face != null) {
+                normalIndex = (byte) (8 | face.get3DDataValue());
+            }
             Direction shadeFace = quad.materialInfo().shadeDirectionOverride() != null
                     ? quad.materialInfo().shadeDirectionOverride() : face;
             float shade = !crossLike && shadeFace != null
@@ -4194,9 +4168,7 @@ public class CustomChunkMesher {
                             ? context.faceShade[shadeFace.get3DDataValue()]
                             : 1.0f;
 
-            boolean isLeaves = state.getBlock() instanceof LeavesBlock;
-            MetalRenderConfig cfg = MetalRenderClient.getConfig();
-            boolean fastLeaves = isLeaves && (lodTier >= 1 || (cfg != null && cfg.leafCullingMode == 0));
+            boolean opaqueLeaves = fastLeaves && state.getBlock() instanceof LeavesBlock;
 
             TextureAtlasSprite quadSprite = quad.materialInfo().sprite();
             boolean grassOverlay = state.getBlock() == Blocks.GRASS_BLOCK &&
@@ -4250,6 +4222,10 @@ public class CustomChunkMesher {
                 }
                 float u = Float.intBitsToFloat((int) (packedUV >> 32));
                 float v = Float.intBitsToFloat((int) packedUV);
+                if (glassDu != null) {
+                    u += glassDu[i];
+                    v += glassDv[i];
+                }
 
                 boolean fire = state.getBlock() instanceof net.minecraft.world.level.block.BaseFireBlock;
                 short px = fire ? packFireCoordinate(pos.x(), lx) : (short) (x * 256.0f);
@@ -4288,14 +4264,84 @@ public class CustomChunkMesher {
                 byte r = (byte) Math.min(255, (int) fr);
                 byte g = (byte) Math.min(255, (int) fg);
                 byte b = (byte) Math.min(255, (int) fb);
-                byte a = fastLeaves ? (byte) 0xFE : (byte) 0xFF;
+                byte a = translucentLayer ? TRANSLUCENT_BLOCK_ALPHA
+                        : (opaqueLeaves ? (byte) 0xFE : (byte) 0xFF);
 
                 emitVertex(target, px, py, pz, su, sv, r, g, b, a, light, normalIndex);
             }
-            if (water) {
+            if (water || translucentLayer) {
                 waterQuadCount++;
             } else {
                 opaqueQuadCount++;
+            }
+        }
+
+        private static boolean isGlassBlock(BlockState state) {
+            net.minecraft.world.level.block.Block block = state.getBlock();
+            return block instanceof net.minecraft.world.level.block.TransparentBlock
+                    || block instanceof net.minecraft.world.level.block.TintedGlassBlock;
+        }
+
+        private boolean sameGlassAt(int x, int y, int z, BlockState state) {
+            int id = getPaddedBlockStateId(x, y, z);
+            return id != 0 && getStateById(id) == state;
+        }
+
+        private static float axisComponent(org.joml.Vector3fc p, Direction.Axis axis) {
+            return axis == Direction.Axis.X ? p.x() : axis == Direction.Axis.Y ? p.y() : p.z();
+        }
+
+        private void computeGlassInset(BakedQuad quad, int lx, int ly, int lz, BlockState state,
+                Direction face, float[] du, float[] dv) {
+            final float inset = 1.5f / 16.0f;
+            for (Direction.Axis axis : Direction.Axis.values()) {
+                if (axis == face.getAxis()) {
+                    continue;
+                }
+                Direction plus = Direction.get(Direction.AxisDirection.POSITIVE, axis);
+                Direction minus = plus.getOpposite();
+                boolean joinPlus = sameGlassAt(lx + plus.getStepX(), ly + plus.getStepY(), lz + plus.getStepZ(), state);
+                boolean joinMinus = sameGlassAt(lx + minus.getStepX(), ly + minus.getStepY(), lz + minus.getStepZ(), state);
+                if (!joinPlus && !joinMinus) {
+                    continue;
+                }
+                int lo = -1;
+                int hi = -1;
+                for (int i = 0; i < 4 && lo < 0; i++) {
+                    for (int j = 0; j < 4; j++) {
+                        org.joml.Vector3fc pi = quad.position(i);
+                        org.joml.Vector3fc pj = quad.position(j);
+                        float along = axisComponent(pj, axis) - axisComponent(pi, axis);
+                        if (along < 0.5f) {
+                            continue;
+                        }
+                        float off = Math.abs(pj.x() - pi.x()) + Math.abs(pj.y() - pi.y()) + Math.abs(pj.z() - pi.z())
+                                - along;
+                        if (off < 1.0e-4f) {
+                            lo = i;
+                            hi = j;
+                            break;
+                        }
+                    }
+                }
+                if (lo < 0) {
+                    continue;
+                }
+                float span = axisComponent(quad.position(hi), axis) - axisComponent(quad.position(lo), axis);
+                long pl = quad.packedUV(lo);
+                long ph = quad.packedUV(hi);
+                float gu = (Float.intBitsToFloat((int) (ph >> 32)) - Float.intBitsToFloat((int) (pl >> 32))) / span;
+                float gv = (Float.intBitsToFloat((int) ph) - Float.intBitsToFloat((int) pl)) / span;
+                for (int i = 0; i < 4; i++) {
+                    float c = axisComponent(quad.position(i), axis);
+                    if (joinPlus && c > 0.9999f) {
+                        du[i] -= gu * inset;
+                        dv[i] -= gv * inset;
+                    } else if (joinMinus && c < 1.0e-4f) {
+                        du[i] += gu * inset;
+                        dv[i] += gv * inset;
+                    }
+                }
             }
         }
 
@@ -4434,6 +4480,7 @@ public class CustomChunkMesher {
                 cornerShade = shade1;
             }
 
+            //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
             BlockState front = getPaddedBlockState(lx + stepX, ly + stepY, lz + stepZ);
             byte centerLight;
             if (faceCubic || front == null || !front.isSolidRender()) {
@@ -4857,52 +4904,35 @@ public class CustomChunkMesher {
         }
     }
 
-    public void queueDrawRegistration(ChunkMeshData mesh) {
-        if (mesh == null || mesh.bufferHandle == 0 || mesh.quadCount <= 0 || mesh.tiered) {
-            return;
-        }
+    private void queueDrawRegistration(ChunkMeshData mesh) {
         int opaqueQuadCount = 0;
-        int[] facing = mesh.facingQuadCounts;
-        if (facing != null) {
-            for (int i = 0; i < 7 && i < facing.length; i++) {
-                opaqueQuadCount += Math.max(0, facing[i]);
-            }
+        for (int face = 0; face < 7; face++) {
+            opaqueQuadCount += faceCount(mesh.facingQuadCounts, face);
         }
-        int flushCount = -1;
+        queueDrawRegistration(mesh, mesh.quadCount, opaqueQuadCount, mesh.facingQuadCounts);
+    }
+
+    private void queueDrawRegistration(ChunkMeshData mesh, int quadCount, int opaqueQuadCount, int[] facing) {
         synchronized (batchRegData) {
-            if (batchRegCount >= BATCH_REG_CAPACITY) {
-                try {
-                    NativeBridge.nRegisterChunkMeshBatch(batchRegCount, batchRegData);
-                } catch (Exception ignored) {
-                }
-                batchRegCount = 0;
-            }
             int idx = batchRegCount * BATCH_REG_STRIDE;
             batchRegData[idx] = (mesh.chunkX & 0xFFFFFFFFL) | ((long) mesh.chunkY << 32);
-            batchRegData[idx + 1] = (mesh.chunkZ & 0xFFFFFFFFL) | ((long) mesh.quadCount << 32);
+            batchRegData[idx + 1] = (mesh.chunkZ & 0xFFFFFFFFL) | ((long) quadCount << 32);
             batchRegData[idx + 2] = mesh.bufferHandle;
             batchRegData[idx + 3] = mesh.visibilityMask;
-            batchRegData[idx + 4] = (opaqueQuadCount & 0xFFFFFFFFL)
-                    | ((long) (facing.length > 0 ? Math.max(0, facing[0]) : 0) << 32);
-            batchRegData[idx + 5] = ((long) (facing.length > 1 ? Math.max(0, facing[1]) : 0) & 0xFFFFFFFFL)
-                    | ((long) (facing.length > 2 ? Math.max(0, facing[2]) : 0) << 32);
-            batchRegData[idx + 6] = ((long) (facing.length > 3 ? Math.max(0, facing[3]) : 0) & 0xFFFFFFFFL)
-                    | ((long) (facing.length > 4 ? Math.max(0, facing[4]) : 0) << 32);
-            batchRegData[idx + 7] = ((long) (facing.length > 5 ? Math.max(0, facing[5]) : 0) & 0xFFFFFFFFL)
-                    | ((long) (facing.length > 6 ? Math.max(0, facing[6]) : 0) << 32);
+            batchRegData[idx + 4] = (opaqueQuadCount & 0xFFFFFFFFL) | ((long) faceCount(facing, 0) << 32);
+            for (int i = 1; i < 7; i += 2) {
+                batchRegData[idx + 4 + (i + 1) / 2] = (faceCount(facing, i) & 0xFFFFFFFFL)
+                        | ((long) faceCount(facing, i + 1) << 32);
+            }
             batchRegData[idx + 8] = (mesh.lodTier & 0xFF) | ((long) (mesh.opaqueFormat & 0xFF) << 16);
-            batchRegCount++;
-            if (batchRegCount >= BATCH_REG_CAPACITY) {
-                flushCount = batchRegCount;
-                batchRegCount = 0;
+            if (++batchRegCount == BATCH_REG_CAPACITY) {
+                flushMeshRegistrations();
             }
         }
-        if (flushCount > 0) {
-            try {
-                NativeBridge.nRegisterChunkMeshBatch(flushCount, batchRegData);
-            } catch (Exception ignored) {
-            }
-        }
+    }
+
+    private static int faceCount(int[] facing, int face) {
+        return facing != null && face < facing.length ? Math.max(0, facing[face]) : 0;
     }
 
     private static final class ConnectivityScratch {

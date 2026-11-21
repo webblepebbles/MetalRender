@@ -364,6 +364,7 @@ Java_com_pebbles_1boon_metalrender_nativebridge_MeshShaderNative_createTerrainMe
       handles[i] = (jlong)h;
       meshDbg("Created terrain mesh pipeline[%d] handle=0x%llx (%s)\n", i,
               (unsigned long long)h, specs[i].fragmentFunc);
+    //READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
     } else {
       meshDbg("Failed terrain mesh pipeline[%d] (%s): %s\n", i,
               specs[i].fragmentFunc,

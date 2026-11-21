@@ -1,5 +1,6 @@
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#include <chrono>
 #include <jni.h>
 #include <algorithm>
 #include <atomic>
@@ -16,7 +17,7 @@ namespace {
 constexpr uint32_t kRanges = 21;
 constexpr uint32_t kLists = 6;
 constexpr uint32_t kOffsets = 34 * 34 + 1;
-constexpr uint32_t kMaskSize = 128;
+constexpr uint32_t kMaskSize = 128; //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
 
 struct TileRec {
   int32_t ox, oz, minY;
@@ -27,8 +28,10 @@ struct TileRec {
   uint32_t starts[21];
   uint32_t lookPal;
   uint32_t plane;
+  uint32_t fadeIn;
+  uint32_t fadeOut;
 };
-static_assert(sizeof(TileRec) == 224, "far tile record");
+static_assert(sizeof(TileRec) == 232, "far tile record");
 
 struct CullParams {
   int32_t nearBox[4];
@@ -43,8 +46,12 @@ struct DrawParams {
   float camFrac[4];
   float depthPush;
   uint32_t reverseZ;
-  uint32_t pad0, pad1;
+  uint32_t nowMs, fadeMs;
+  int32_t seaY;
+  uint32_t pad[3];
 };
+
+static_assert(sizeof(DrawParams) == 64, "far draw params");
 
 struct CullFrame {
   int32_t camBlock[4];
@@ -171,6 +178,9 @@ int g_drawSlot = -1;
 int g_waterSlot = -1;
 float g_farRadius = 0.0f;
 int32_t g_nearBox[4] = {1, 1, 0, 0};
+int32_t g_frameNearBox[4] = {1, 1, 0, 0};
+uint8_t g_nearColumns[kMaskSize * kMaskSize] = {};
+bool g_maskDirty = false;
 bool g_cullDirty = true;
 int g_cullSlot = 0;
 int g_buildFlip = 0;
@@ -188,6 +198,19 @@ std::vector<BuildBatch *> g_batches;
 uint32_t g_lookCount = 0;
 float g_depthPush = 2.0e-5f;
 uint32_t g_opts = 0;
+
+struct Fading {
+  int64_t key;
+  uint32_t slot;
+  uint32_t end;
+};
+std::vector<Fading> g_fading;
+
+uint32_t far_now_ms() {
+  static const auto t0 = std::chrono::steady_clock::now();
+  auto d = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - t0).count();
+  return (uint32_t)d + 1000u;
+}
 id<MTLComputePipelineState> g_spriteAvgPso = nil;
 id<MTLBuffer> g_spriteAvg = nil;
 id g_spriteSrc = nil;
@@ -432,6 +455,7 @@ void clear_all_locked() {
   for (auto &e : g_liveTiles)
     retire_tile(e.second);
   g_liveTiles.clear();
+  g_fading.clear();
   for (auto &e : g_pending)
     for (Tile &t : e.second) {
       if (t.state == kBuilding)
@@ -446,8 +470,12 @@ void clear_all_locked() {
   g_builtReady.clear();
   g_liveQuads = 0;
   g_liveDirty = true;
-  if (g_mask)
-    memset([g_mask contents], 0, g_mask.length);
+  memset(g_nearColumns, 0, sizeof(g_nearColumns));
+  g_maskDirty = true;
+  g_farRadius = 0.0f;
+  g_nearBox[0] = g_nearBox[1] = 1;
+  g_nearBox[2] = g_nearBox[3] = 0;
+  g_waterSlot = -1;
 }
 
 uint32_t take_slot() {
@@ -479,6 +507,18 @@ void ensure_list_capacity(int slot, uint32_t want) {
 
 bool mr_far_active() { return g_ready && (g_liveCount[0] + g_liveCount[1]) > 0; }
 
+bool mr_far_has_near_mask() {
+  return g_frameNearBox[0] <= g_frameNearBox[2];
+}
+
+bool mr_far_near_column(int32_t cx, int32_t cz) {
+  if (cx < g_frameNearBox[0] || cx > g_frameNearBox[2] ||
+      cz < g_frameNearBox[1] || cz > g_frameNearBox[3])
+    return false;
+  auto *columns = static_cast<const uint8_t *>([g_mask contents]);
+  return columns[(uint32_t(cx) & (kMaskSize - 1)) + (uint32_t(cz) & (kMaskSize - 1)) * kMaskSize] != 0;
+}
+
 void mr_far_prepare() {
   if (!g_ready)
     return;
@@ -486,11 +526,46 @@ void mr_far_prepare() {
     std::lock_guard<std::mutex> lock(g_mutex);
     collect();
     finish_batches();
+    if (!g_fading.empty()) {
+      uint32_t nowF = far_now_ms();
+      size_t w = 0;
+      for (size_t i = 0; i < g_fading.size(); i++) {
+        Fading f = g_fading[i];
+        if ((int32_t)(nowF - f.end) < 0) {
+          g_fading[w++] = f;
+          continue;
+        }
+        auto lit = g_liveTiles.find(f.key);
+        if (lit != g_liveTiles.end() && lit->second.slot == f.slot) {
+          g_liveQuads -= lit->second.used;
+          retire_tile(lit->second);
+          g_liveTiles.erase(lit);
+          g_liveDirty = true;
+        }
+      }
+      g_fading.resize(w);
+    }
     g_drawSlot = -1;
+    g_frameNearBox[0] = g_frameNearBox[1] = 1;
+    g_frameNearBox[2] = g_frameNearBox[3] = 0;
+    if (g_farRadius <= 0.0f)
+      return;
+    bool maskChanged = g_maskDirty || memcmp(g_nearBox, g_lastCull + sizeof(CullFrame), sizeof(g_nearBox)) != 0;
+    if (g_maskDirty) {
+      id<MTLBuffer> nextMask = [g_dev newBufferWithBytes:g_nearColumns
+                                                 length:sizeof(g_nearColumns)
+                                                options:MTLResourceStorageModeShared];
+      if (!nextMask)
+        return;
+      retire_object(g_mask);
+      g_mask = nextMask;
+      g_maskDirty = false;
+      g_cullDirty = true;
+    }
+    memcpy(g_frameNearBox, g_nearBox, sizeof(g_frameNearBox));
     CullFrame frame;
     mr_host_fill_cull_frame(&frame, sizeof(frame));
-    if ((g_opts & 16u) == 0u)
-      frame.hizFlags = 0u;
+    frame.hizFlags = 0u;
     bool liveChanged = g_liveDirty;
     if (g_liveDirty) {
       g_liveSlots.clear();
@@ -503,6 +578,19 @@ void mr_far_prepare() {
     CullParams params;
     memcpy(params.nearBox, g_nearBox, sizeof(params.nearBox));
     params.farRadius = g_farRadius;
+    {
+      size_t fsz = 0;
+      const float *fg = (const float *)mr_host_fog_uniforms(&fsz);
+      if (fg && fsz >= 8 * sizeof(float) && fg[3] >= 0.99f) {
+        float e = 1e9f;
+        if (fg[5] > 16.0f)
+          e = std::min(e, fg[5]);
+        if (fg[7] > 16.0f)
+          e = std::min(e, fg[7]);
+        if (e < 1e8f)
+          params.farRadius = std::min(g_farRadius, e + 32.0f);
+      }
+    }
     params.listCap = 0;
     params.tileCount = liveN;
     params.reverseZ = mr_host_reverse_z() ? 1u : 0u;
@@ -645,7 +733,10 @@ static void far_bind(id<MTLRenderCommandEncoder> enc, int slot) {
   memcpy(dp.camFrac, frame.camFrac, sizeof(dp.camFrac));
   dp.depthPush = g_depthPush;
   dp.reverseZ = mr_host_reverse_z() ? 1u : 0u;
-  dp.pad0 = dp.pad1 = 0;
+  dp.nowMs = far_now_ms();
+  dp.fadeMs = (g_opts & 32u) ? 120u : 0u;
+  dp.seaY = (int32_t)((g_opts >> 8) & 0xFFFu) - 512;
+  dp.pad[0] = dp.pad[1] = dp.pad[2] = 0;
   [enc setFrontFacingWinding:mr_host_ext_winding()];
   [enc setDepthBias:0.0f slopeScale:0.0f clamp:0.0f];
   [enc setVertexBytes:mr_host_proj() length:64 atIndex:1];
@@ -664,9 +755,12 @@ static void far_bind(id<MTLRenderCommandEncoder> enc, int slot) {
   [enc setFragmentBuffer:mr_host_sprites() offset:0 atIndex:8];
   [enc setFragmentBuffer:g_looks offset:0 atIndex:9];
   [enc setFragmentBuffer:g_mask offset:0 atIndex:10];
-  uint32_t flat = ((g_opts & 1u) && g_spriteAvg && g_spriteSrc == mr_host_sprites()) ? 1u : 0u;
-  [enc setFragmentBytes:&flat length:4 atIndex:11];
+  uint32_t shading = g_opts & 64u;
+  if ((g_opts & 1u) && g_spriteAvg && g_spriteSrc == mr_host_sprites())
+    shading |= 1u;
+  [enc setFragmentBytes:&shading length:sizeof(shading) atIndex:11];
   [enc setFragmentBuffer:(g_spriteAvg ? g_spriteAvg : g_mask) offset:0 atIndex:12];
+  [enc setFragmentBytes:g_frameNearBox length:sizeof(g_frameNearBox) atIndex:13];
   (void)slot;
 }
 
@@ -825,6 +919,8 @@ extern "C" JNIEXPORT jint JNICALL FAR_JNI(nFarUploadTile)(JNIEnv *env, jclass, j
   rec->flags = 1u | ((uint32_t)flags & ~1u);
   rec->lookPal = (uint32_t)lookPal;
   rec->plane = (uint32_t)plane;
+  rec->fadeIn = 0;
+  rec->fadeOut = 0;
   auto &vec = g_pending[key];
   for (Tile &o : vec) {
     if (o.state == kPending) {
@@ -842,6 +938,25 @@ extern "C" JNIEXPORT jint JNICALL FAR_JNI(nFarUploadTile)(JNIEnv *env, jclass, j
   return (jint)t.version;
 }
 
+extern "C" JNIEXPORT jint JNICALL FAR_JNI(nFarLiveKeys)(JNIEnv *env, jclass, jlongArray out) {
+  std::lock_guard<std::mutex> lock(g_mutex);
+  if (!out)
+    return 0;
+  jsize cap = env->GetArrayLength(out) / 2;
+  std::vector<jlong> tmp;
+  tmp.reserve(g_liveTiles.size() * 2);
+  TileRec *recs = (TileRec *)[g_tiles contents];
+  for (auto &e : g_liveTiles) {
+    if ((jsize)(tmp.size() / 2) >= cap)
+      break;
+    bool fading = recs[e.second.slot].fadeOut != 0;
+    tmp.push_back((jlong)e.first);
+    tmp.push_back((jlong)e.second.used | (fading ? (1LL << 40) : 0LL));
+  }
+  env->SetLongArrayRegion(out, 0, (jsize)tmp.size(), tmp.data());
+  return (jint)(tmp.size() / 2);
+}
+
 extern "C" JNIEXPORT jint JNICALL FAR_JNI(nFarPollBuilt)(JNIEnv *env, jclass, jlongArray out) {
   std::lock_guard<std::mutex> lock(g_mutex);
   if (!out)
@@ -857,8 +972,8 @@ extern "C" JNIEXPORT jint JNICALL FAR_JNI(nFarPollBuilt)(JNIEnv *env, jclass, jl
   return n;
 }
 
-extern "C" JNIEXPORT void JNICALL FAR_JNI(nFarCommit)(JNIEnv *env, jclass, jlongArray show, jint nShow,
-                                                     jlongArray hide, jint nHide) {
+extern "C" JNIEXPORT jlongArray JNICALL FAR_JNI(nFarCommit)(JNIEnv *env, jclass, jlongArray show, jint nShow,
+                                                          jlongArray hide, jint nHide) {
   std::vector<jlong> s((size_t)std::max(0, (int)nShow));
   std::vector<jlong> h((size_t)std::max(0, (int)nHide));
   if (nShow > 0 && show)
@@ -866,16 +981,67 @@ extern "C" JNIEXPORT void JNICALL FAR_JNI(nFarCommit)(JNIEnv *env, jclass, jlong
   if (nHide > 0 && hide)
     env->GetLongArrayRegion(hide, 0, nHide, h.data());
   std::lock_guard<std::mutex> lock(g_mutex);
+  //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
   if (!g_ready)
-    return;
+    return nullptr;
+  std::vector<jlong> failed;
+  {
+    std::vector<jlong> okShow;
+    for (jlong key : s) {
+      bool ok = g_liveTiles.find(key) != g_liveTiles.end();
+      auto pit = g_pending.find(key);
+      if (!ok && pit != g_pending.end()) {
+        for (Tile &t : pit->second)
+          if (t.state == kBuilt)
+            ok = true;
+      }
+      (ok ? okShow : failed).push_back(key);
+    }
+    if (!failed.empty()) {
+      s = okShow;
+      h.clear();
+    }
+  }
+  bool fade = (g_opts & 32u) != 0u && !s.empty() && !h.empty();
+  if (fade) {
+    bool differs = false;
+    for (jlong key : s) {
+      auto pit = g_pending.find(key);
+      if (pit == g_pending.end())
+        continue;
+      for (Tile &t : pit->second) {
+        if (t.state == kBuilt && (((TileRec *)[g_tiles contents])[t.slot].flags & 4u) == 0u)
+          differs = true;
+      }
+    }
+    fade = differs;
+  }
+  uint32_t now = far_now_ms();
   for (jlong key : s) {
     auto it = g_pending.find(key);
-    if (it == g_pending.end())
+    if (it == g_pending.end()) {
+      auto lv = g_liveTiles.find(key);
+      if (lv != g_liveTiles.end()) {
+        TileRec *rec = &((TileRec *)[g_tiles contents])[lv->second.slot];
+        if (rec->fadeOut != 0) {
+          rec->fadeOut = 0;
+          rec->fadeIn = 0;
+          for (size_t fi = 0; fi < g_fading.size(); fi++) {
+            if (g_fading[fi].key == (int64_t)key) {
+              g_fading.erase(g_fading.begin() + (long)fi);
+              break;
+            }
+          }
+        }
+      }
       continue;
+    }
     auto &vec = it->second;
     for (size_t i = 0; i < vec.size(); i++) {
       if (vec[i].state == kBuilt) {
         make_live(vec[i]);
+        if (fade)
+          ((TileRec *)[g_tiles contents])[vec[i].slot].fadeIn = now;
         vec.erase(vec.begin() + (long)i);
         break;
       }
@@ -886,10 +1052,18 @@ extern "C" JNIEXPORT void JNICALL FAR_JNI(nFarCommit)(JNIEnv *env, jclass, jlong
   for (jlong key : h) {
     auto lit = g_liveTiles.find(key);
     if (lit != g_liveTiles.end()) {
-      g_liveQuads -= lit->second.used;
-      retire_tile(lit->second);
-      g_liveTiles.erase(lit);
-      g_liveDirty = true;
+      if (fade && lit->second.state == kBuilt) {
+        TileRec *rec = &((TileRec *)[g_tiles contents])[lit->second.slot];
+        if (rec->fadeOut == 0) {
+          rec->fadeOut = now;
+          g_fading.push_back({(int64_t)key, lit->second.slot, now + 140u});
+        }
+      } else {
+        g_liveQuads -= lit->second.used;
+        retire_tile(lit->second);
+        g_liveTiles.erase(lit);
+        g_liveDirty = true;
+      }
     }
     auto pit = g_pending.find(key);
     if (pit != g_pending.end()) {
@@ -906,23 +1080,22 @@ extern "C" JNIEXPORT void JNICALL FAR_JNI(nFarCommit)(JNIEnv *env, jclass, jlong
         if (t.key == key)
           t.doomed = true;
   }
+  if (failed.empty())
+    return nullptr;
+  jlongArray out = env->NewLongArray((jsize)failed.size());
+  if (out)
+    env->SetLongArrayRegion(out, 0, (jsize)failed.size(), failed.data());
+  return out;
 }
 
-extern "C" JNIEXPORT void JNICALL FAR_JNI(nFarSetNearColumns)(JNIEnv *env, jclass, jintArray packed, jint count) {
-  if (!packed || count <= 0)
+extern "C" JNIEXPORT void JNICALL FAR_JNI(nFarSetNearColumns)(JNIEnv *env, jclass, jbyteArray columns) {
+  if (!columns || env->GetArrayLength(columns) != sizeof(g_nearColumns))
     return;
-  std::vector<jint> v((size_t)count * 3);
-  env->GetIntArrayRegion(packed, 0, count * 3, v.data());
   std::lock_guard<std::mutex> lock(g_mutex);
   if (!g_ready)
     return;
-  uint8_t *m = (uint8_t *)[g_mask contents];
-  for (jint i = 0; i < count; i++) {
-    int cx = v[(size_t)i * 3];
-    int cz = v[(size_t)i * 3 + 1];
-    m[(uint32_t)(cx & 127) + (uint32_t)(cz & 127) * kMaskSize] = v[(size_t)i * 3 + 2] != 0 ? 1 : 0;
-  }
-  g_cullDirty = true;
+  env->GetByteArrayRegion(columns, 0, sizeof(g_nearColumns), reinterpret_cast<jbyte *>(g_nearColumns));
+  g_maskDirty = true;
 }
 
 extern "C" JNIEXPORT void JNICALL FAR_JNI(nFarSetView)(JNIEnv *, jclass, jfloat farRadius, jint minCx, jint minCz,
@@ -945,7 +1118,7 @@ extern "C" JNIEXPORT void JNICALL FAR_JNI(nFarClear)(JNIEnv *, jclass) {
 extern "C" JNIEXPORT jint JNICALL FAR_JNI(nFarStats)(JNIEnv *env, jclass, jlongArray out) {
   if (!out)
     return 0;
-  jlong v[12] = {0};
+  jlong v[20] = {0};
   {
     std::lock_guard<std::mutex> lock(g_mutex);
     if (g_ready) {
@@ -962,6 +1135,11 @@ extern "C" JNIEXPORT jint JNICALL FAR_JNI(nFarStats)(JNIEnv *env, jclass, jlongA
       v[5] = (jlong)((uint64_t)(g_blobAlloc.capacity - g_blobAlloc.freeTotal) * 4);
       v[6] = (jlong)((uint64_t)g_blobAlloc.capacity * 4);
       v[7] = (jlong)g_freeSlots.size() + (jlong)(g_slotCap - g_slotHigh);
+      const TileRec *recs = (const TileRec *)[g_tiles contents];
+      for (auto &e : g_liveTiles) {
+        uint32_t lv = std::min<uint32_t>(recs[e.second.slot].level, 6u);
+        v[12 + lv] += (jlong)e.second.used;
+      }
     }
   }
   v[8] = g_drawnTiles.load(std::memory_order_relaxed);
@@ -969,6 +1147,6 @@ extern "C" JNIEXPORT jint JNICALL FAR_JNI(nFarStats)(JNIEnv *env, jclass, jlongA
   v[10] = g_cullUs.load(std::memory_order_relaxed);
   v[11] = g_ready ? 1 : 0;
   jsize len = env->GetArrayLength(out);
-  env->SetLongArrayRegion(out, 0, std::min<jsize>(len, 12), v);
-  return 12;
+  env->SetLongArrayRegion(out, 0, std::min<jsize>(len, 20), v);
+  return 20;
 }

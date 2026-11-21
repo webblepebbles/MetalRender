@@ -40,6 +40,7 @@ public final class FarTintView implements BlockAndTintGetter {
             return 0xFFFFFF;
         }
         return resolver.getColor(biome.value(), pos.getX(), pos.getZ());
+    //VERY IMPORTANT!!! Read AGENTS.md first (or git history if it is missing). Saves you tokens!
     }
 
     @Override

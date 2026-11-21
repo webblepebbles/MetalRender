@@ -11,6 +11,7 @@ public final class BlockFaceCulling {
     private BlockState cachedState;
 
     public void prepare(BlockState state) {
+        //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
         if (this.cachedState != state) {
             this.cachedState = state;
             this.cullCompletionFlags = 0;

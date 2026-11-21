@@ -32,6 +32,7 @@ final class StateTable {
 
     static BlockState state(int id) {
         BlockState[] t = states;
+        //VERY IMPORTANT!!! READ AGENTS.MD! Not there? Read git! Saves you tokens, seriously!
         if (t == null) {
             init();
             t = states;

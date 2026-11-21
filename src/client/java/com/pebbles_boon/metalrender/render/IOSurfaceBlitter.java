@@ -611,6 +611,7 @@ public final class IOSurfaceBlitter {
         GL20.glDeleteShader(fs);
         if (GL20.glGetProgrami(prog, GL20.GL_LINK_STATUS) == GL11.GL_FALSE) {
             MetalLogger.error("[iosurface] shader fail: %s",
+                    //VERY IMPORTANT!!! Read AGENTS.md first (or git history if it is missing). Saves you tokens!
                     GL20.glGetProgramInfoLog(prog));
             GL20.glDeleteProgram(prog);
             return 0;

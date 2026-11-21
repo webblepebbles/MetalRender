@@ -74,6 +74,7 @@ public final class CameraFaceCuller {
         int planes = (1 << DIR_UNASSIGNED);
         planes |= BitwiseMath.greaterThan(originX, (minX - 3)) << DIR_EAST;
         planes |= BitwiseMath.greaterThan(originY, (minY - 3)) << DIR_UP;
+        //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
         planes |= BitwiseMath.greaterThan(originZ, (minZ - 3)) << DIR_SOUTH;
         planes |= BitwiseMath.lessThan(originX, (maxX + 3)) << DIR_WEST;
         planes |= BitwiseMath.lessThan(originY, (maxY + 3)) << DIR_DOWN;

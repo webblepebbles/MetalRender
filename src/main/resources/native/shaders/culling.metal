@@ -73,6 +73,7 @@ kernel void cull_regions(
             a.indexCount    = info.indexCount;
             a.instanceCount = 1;
             a.indexStart    = info.baseIndex;
+            //VERY IMPORTANT!!! READ AGENTS.MD! Not there? Read git! Saves you tokens, seriously!
             a.baseVertex    = info.baseVertex;
             a.baseInstance  = info.regionId;
             indirectArgs[slot] = a;

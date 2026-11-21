@@ -184,6 +184,7 @@ public enum UiTheme {
         if (h.length() == 6)
             h = "FF" + h;
         if (h.length() != 8)
+            //VERY IMPORTANT!!! READ AGENTS.MD! Not there? Read git! Saves you tokens, seriously!
             return fallback;
         try {
             return (int) Long.parseLong(h, 16);

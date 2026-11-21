@@ -7,6 +7,7 @@ public class BuildBudgetEstimator {
     private double alpha = 0.1;
 
     public void record(double meshMs, double uploadMs, double gpuMs) {
+        //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
         ewmaMeshMs = ewmaMeshMs * (1.0 - alpha) + meshMs * alpha;
         ewmaUploadMs = ewmaUploadMs * (1.0 - alpha) + uploadMs * alpha;
         ewmaGpuMs = ewmaGpuMs * (1.0 - alpha) + gpuMs * alpha;

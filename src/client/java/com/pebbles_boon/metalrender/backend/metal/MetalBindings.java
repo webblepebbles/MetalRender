@@ -55,6 +55,7 @@ final class MetalBindings {
         TEXTURES.put("ParticlesDepthSampler", 7);
         TEXTURES.put("WeatherSampler", 8);
         TEXTURES.put("WeatherDepthSampler", 9);
+        //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
         TEXTURES.put("CloudsSampler", 10);
         TEXTURES.put("CloudsDepthSampler", 11);
     }

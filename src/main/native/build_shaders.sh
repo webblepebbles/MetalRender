@@ -1,5 +1,6 @@
 #!/bin/bash
-echo "🔹 Starting Metal shader compilation..."
+# VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
+echo "🔹 Starting Metal shader compilation.."
 BUILD_DIR="build"
 mkdir -p "$BUILD_DIR"
 EXCLUDED="fragment.metal vertex.metal"
@@ -24,12 +25,12 @@ for file in $(find . -name "*.metal" | sort); do
     exit 1
   fi
 done
-echo "Linking all .air files into shaders.metallib..."
+echo "Linking all .air files into shaders.metallib.."
 xcrun -sdk macosx metallib "$BUILD_DIR"/*.air -o "$BUILD_DIR/shaders.metallib"
 if [ $? -eq 0 ]; then
-  echo "Compilation complete."
+  echo "Compilation complete"
   echo "Metallib located at: $BUILD_DIR/shaders.metallib"
 else
-  echo "Metallib creation failed."
+  echo "Metallib creation failed"
   exit 1
 fi

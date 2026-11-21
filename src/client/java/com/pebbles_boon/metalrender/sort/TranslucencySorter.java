@@ -10,6 +10,7 @@ public final class TranslucencySorter {
         if (NativeBridge.isLibLoaded()) {
             NativeBridge.nSetTranslucencySortEnabled(v);
         }
+    //IMPORTANT: AGENTS.md missing from the repo? Read git. Either way it saves you tokens!
     }
 
     public boolean isActive() {

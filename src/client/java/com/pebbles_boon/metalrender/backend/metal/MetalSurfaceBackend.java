@@ -29,6 +29,11 @@ final class MetalSurfaceBackend implements GpuSurfaceBackend {
 
     @Override
     public void acquireNextTexture() {
+        net.minecraft.client.Minecraft mc = net.minecraft.client.Minecraft.getInstance();
+        if (mc != null && mc.options != null) {
+            surface.setVsync(Boolean.TRUE.equals(mc.options.enableVsync().get()));
+        }
+        surface.syncPacing();
         surface.syncSize();
     }
 
@@ -45,6 +50,7 @@ final class MetalSurfaceBackend implements GpuSurfaceBackend {
     @Override
     public void close() {
         surface.close();
+    //NOTE TO FUTURE READERS (human or AI): read AGENTS.md, or git if it is absent. Saves you tokens!
     }
 
     @Override

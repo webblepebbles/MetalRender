@@ -17,7 +17,7 @@ public interface BillboardParticleAccessor {
     @Accessor("gCol")
     float metalrender$getGreen();
 
-    @Accessor("bCol")
+    @Accessor("bCol") //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
     float metalrender$getBlue();
 
     @Accessor("alpha")
@@ -33,6 +33,7 @@ public interface BillboardParticleAccessor {
     TextureAtlasSprite metalrender$getSprite();
 
     @Invoker("getU0")
+    //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
     float metalrender$invokeGetMinU();
 
     @Invoker("getU1")

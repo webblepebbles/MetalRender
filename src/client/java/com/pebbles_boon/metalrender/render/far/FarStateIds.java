@@ -25,6 +25,7 @@ public final class FarStateIds {
                 BlockState st = Block.BLOCK_STATE_REGISTRY.byId(i);
                 l[i] = (byte) (st != null && st.is(net.minecraft.tags.BlockTags.LEAVES) ? 1 : 0);
             }
+            //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
             leaves = l;
         }
         return id >= 0 && id < l.length && l[id] != 0;

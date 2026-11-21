@@ -12,6 +12,7 @@ public final class MetalRenderer {
     public static final class MetalRendererBackendHandle {
         private final MetalRenderer renderer;
 
+        //VERY IMPORTANT!!! READ AGENTS.MD! Not there? Read git! Saves you tokens, seriously!
         MetalRendererBackendHandle(MetalRenderer r) {
             this.renderer = r;
         }

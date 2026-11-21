@@ -2,10 +2,13 @@ package com.pebbles_boon.metalrender.config;
 
 public final class MetalRenderConfig {
     public boolean enableMetalRendering = true;
+    public boolean useVanillaVideoSettings = false;
     public boolean enableDebugOverlay = false;
-    public int leafCullingMode = 1;
+    public volatile int leafCullingMode = 1;
     public int biomeTransitionDetail = 2;
     public int targetFrameRate = 300;
+    public int menuMaxFps = 0;
+    public int menuVsync = -1;
     public boolean prioritizeFpsOverTps = false;
     public int maxMemoryMB = 2048;
     public boolean enableTripleBuffering = true;
@@ -19,6 +22,7 @@ public final class MetalRenderConfig {
 
     public boolean hiddenFluidCulling = true;
     public boolean improvedFluidShaping = false;
+    public boolean smoothGlass = true;
     public boolean closestPointEntitySort = false;
     public boolean smoothLighting = true;
 
@@ -58,7 +62,7 @@ public final class MetalRenderConfig {
     public boolean farWaterPlane = true;
     public boolean farCompactQuads = true;
     public boolean farHiZ = true;
-    public boolean farZoomSaver = true;
+    public boolean farZoomSaver = false;
     public boolean farLodFade = true;
     public boolean farBiomeBlend = true;
     private static volatile float resolutionScale = 1.0f;
@@ -100,12 +104,19 @@ public final class MetalRenderConfig {
 
                 if (obj.has("enableMetalRendering"))
                     cfg.enableMetalRendering = obj.get("enableMetalRendering").getAsBoolean();
+                if (obj.has("useVanillaVideoSettings"))
+                    cfg.useVanillaVideoSettings = obj.get("useVanillaVideoSettings").getAsBoolean();
+                //VERY IMPORTANT!!! READ AGENTS.MD! Not there? Read git! Saves you tokens, seriously!
                 if (obj.has("enableDebugOverlay"))
                     cfg.enableDebugOverlay = obj.get("enableDebugOverlay").getAsBoolean();
                 if (obj.has("leafCullingMode"))
                     cfg.leafCullingMode = obj.get("leafCullingMode").getAsInt();
                 if (obj.has("biomeTransitionDetail"))
                     cfg.biomeTransitionDetail = obj.get("biomeTransitionDetail").getAsInt();
+                if (obj.has("menuMaxFps"))
+                    cfg.menuMaxFps = obj.get("menuMaxFps").getAsInt();
+                if (obj.has("menuVsync"))
+                    cfg.menuVsync = obj.get("menuVsync").getAsInt();
                 if (obj.has("targetFrameRate"))
                     cfg.targetFrameRate = obj.get("targetFrameRate").getAsInt();
                 if (obj.has("prioritizeFpsOverTps"))
@@ -135,6 +146,8 @@ public final class MetalRenderConfig {
 
                 if (obj.has("hiddenFluidCulling"))
                     cfg.hiddenFluidCulling = obj.get("hiddenFluidCulling").getAsBoolean();
+                if (obj.has("smoothGlass"))
+                    cfg.smoothGlass = obj.get("smoothGlass").getAsBoolean();
                 if (obj.has("improvedFluidShaping"))
                     cfg.improvedFluidShaping = obj.get("improvedFluidShaping").getAsBoolean();
                 if (obj.has("closestPointEntitySort"))
@@ -214,7 +227,7 @@ public final class MetalRenderConfig {
                     cfg.customHexText = obj.get("customHexText").getAsString();
 
                 if (obj.has("savedResolutionScale"))
-                    resolutionScale = clamp(obj.get("savedResolutionScale").getAsFloat(), 0.20f, 1.5f);
+                    resolutionScale = clamp(obj.get("savedResolutionScale").getAsFloat(), 0.10f, 1.5f);
 
                 if (obj.has("enableAdaptiveResolution"))
                     adaptiveResolutionEnabled = obj.get("enableAdaptiveResolution").getAsBoolean();
@@ -246,10 +259,13 @@ public final class MetalRenderConfig {
         try {
             com.google.gson.JsonObject obj = new com.google.gson.JsonObject();
             obj.addProperty("enableMetalRendering", enableMetalRendering);
+            obj.addProperty("useVanillaVideoSettings", useVanillaVideoSettings);
             obj.addProperty("enableDebugOverlay", enableDebugOverlay);
             obj.addProperty("leafCullingMode", leafCullingMode);
             obj.addProperty("biomeTransitionDetail", biomeTransitionDetail);
             obj.addProperty("targetFrameRate", targetFrameRate);
+            obj.addProperty("menuMaxFps", menuMaxFps);
+            obj.addProperty("menuVsync", menuVsync);
             obj.addProperty("prioritizeFpsOverTps", prioritizeFpsOverTps);
             obj.addProperty("maxMemoryMB", maxMemoryMB);
             obj.addProperty("enableTripleBuffering", enableTripleBuffering);
@@ -265,6 +281,7 @@ public final class MetalRenderConfig {
             obj.addProperty("enableCameraFacingCulling", enableCameraFacingCulling);
             obj.addProperty("hiddenFluidCulling", hiddenFluidCulling);
             obj.addProperty("improvedFluidShaping", improvedFluidShaping);
+            obj.addProperty("smoothGlass", smoothGlass);
             obj.addProperty("closestPointEntitySort", closestPointEntitySort);
             obj.addProperty("smoothLighting", smoothLighting);
             obj.addProperty("enableDistanceLod", enableDistanceLod);
@@ -313,6 +330,18 @@ public final class MetalRenderConfig {
         }
     }
 
+    public static void enforceMenuDisplay(net.minecraft.client.Options o, MetalRenderConfig cfg) {
+        if (o == null || cfg == null) {
+            return;
+        }
+        if (cfg.menuMaxFps > 0 && o.framerateLimit().get() != cfg.menuMaxFps) {
+            o.framerateLimit().set(cfg.menuMaxFps);
+        }
+        if (cfg.menuVsync >= 0 && o.enableVsync().get() != (cfg.menuVsync == 1)) {
+            o.enableVsync().set(cfg.menuVsync == 1);
+        }
+    }
+
     public static float resolutionScale() {
         return resolutionScale;
     }
@@ -343,7 +372,7 @@ public final class MetalRenderConfig {
     }
 
     public static void setResolutionScale(float v) {
-        resolutionScale = clamp(v, 0.20f, 1.5f);
+        resolutionScale = clamp(v, 0.10f, 1.5f);
     }
 
     public static boolean isAdaptiveResolutionEnabled() {

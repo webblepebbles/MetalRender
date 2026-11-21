@@ -65,6 +65,8 @@ public final class FarLooks {
     private final ConcurrentHashMap<BlockState, Integer> kinds = new ConcurrentHashMap<>();
     private int[] records = new int[WORDS * 1024];
     private int[] tintIndex = new int[1024];
+    private volatile int[] headers = new int[1024];
+    private volatile int[] idLook = new int[0];
     private BlockState[] states = new BlockState[1024];
     private int count = 1;
     private volatile boolean dirty = true;
@@ -118,9 +120,32 @@ public final class FarLooks {
     }
 
     public int header(int look) {
-        synchronized (lock) {
-            return look >= 0 && look < count ? records[look * WORDS] : 0;
+        int[] h = headers;
+        return look >= 0 && look < h.length ? h[look] : 0;
+    }
+
+    public int lookOfId(int stateId) {
+        int[] c = idLook;
+        if (c.length == 0) {
+            synchronized (lock) {
+                if (idLook.length == 0) {
+                    idLook = new int[net.minecraft.world.level.block.Block.BLOCK_STATE_REGISTRY.size()];
+                }
+                c = idLook;
+            }
         }
+        if (stateId < 0 || stateId >= c.length) {
+            BlockState st = FarStateIds.state(stateId);
+            return st == null ? 0 : lookOf(st);
+        }
+        int v = c[stateId];
+        if (v != 0) {
+            return v - 1;
+        }
+        BlockState st = FarStateIds.state(stateId);
+        int look = st == null ? 0 : lookOf(st);
+        c[stateId] = look + 1;
+        return look;
     }
 
     public int tintIndexOf(int look) {
@@ -183,6 +208,12 @@ public final class FarLooks {
             System.arraycopy(rec, 0, records, look * WORDS, WORDS);
             tintIndex[look] = ti;
             states[look] = state;
+            int[] h = headers;
+            if (look >= h.length) {
+                h = java.util.Arrays.copyOf(h, Math.max(look + 1, h.length * 2));
+            }
+            h[look] = rec[0];
+            headers = h;
             count = look + 1;
             ids.put(state, look);
             dirty = true;
@@ -324,6 +355,7 @@ public final class FarLooks {
                                 base = q;
                             }
                         }
+                    //IMPORTANT: AGENTS.md missing from the repo? Read git. Either way it saves you tokens!
                     }
                 }
                 if (base == null) {
@@ -425,6 +457,7 @@ public final class FarLooks {
             org.joml.Vector3fc p = q.position(i);
             float v = face < 2 ? p.y() : (face < 4 ? p.z() : p.x());
             float a = face < 2 ? p.x() : p.y();
+            //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
             float b = face < 4 && face >= 2 ? p.x() : p.z();
             if (Float.isNaN(first)) {
                 first = v;

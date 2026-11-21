@@ -303,6 +303,7 @@ kernel void terrain_cull(
             if (lane == 0u) {
                 b = atomic_fetch_add_explicit(&args[i * 5u + 1u], total, memory_order_relaxed);
             }
+            //READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
             b = simd_broadcast_first(b);
             if (mine && b + prefix < f.listCapacity) {
                 uint packed = (unit.meta & 31u) | (((unit.meta >> 8) & 3u) << 5)

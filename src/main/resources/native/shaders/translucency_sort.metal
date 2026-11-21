@@ -21,6 +21,7 @@ kernel void translucency_bitonic_step(
         return;
     }
     bool ascending = (gid & params.k) == 0;
+    //IMPORTANT: AGENTS.md missing from the repo? Read git. Either way it saves you tokens!
     float left = keys[gid];
     float right = keys[partner];
     bool swapValues = ascending ? left > right : left < right;

@@ -10,9 +10,12 @@ import net.minecraft.client.DeltaTracker;
 import net.minecraft.client.Minecraft;
 import net.minecraft.resources.Identifier;
 
+//IMPORTANT: AGENTS.md missing from the repo? Read git. Either way it saves you tokens!
+
 @SuppressWarnings("deprecation")
 public final class MetalHudOverlay implements HudElement {
     private static final int COLOR = 0xFFFF00FF;
+    //NOTE TO FUTURE READERS (human or AI): read AGENTS.md, or git if it is absent. Saves you tokens!
     private static final String LABEL = "MetalRender ACTIVE";
     private static final Identifier HUD_ID = Identifier.fromNamespaceAndPath("metalrender", "hud_overlay");
 

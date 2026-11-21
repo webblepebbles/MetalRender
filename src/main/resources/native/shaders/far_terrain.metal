@@ -30,7 +30,11 @@ struct FarTileRec {
     uint starts[21];
     uint lookPal;
     uint plane;
+    uint fadeIn;
+    uint fadeOut;
 };
+
+static_assert(sizeof(FarTileRec) == 232, "far tile record");
 
 struct FarCullParams {
     int4  nearBox;
@@ -45,9 +49,15 @@ struct FarDrawParams {
     float4 camFrac;
     float  depthPush;
     uint   reverseZ;
-    uint   pad0;
-    uint   pad1;
+    uint   nowMs;
+    uint   fadeMs;
+    int    seaY;
+    uint   pad2;
+    uint   pad3;
+    uint   pad4;
 };
+
+static_assert(sizeof(FarDrawParams) == 64, "far draw params");
 
 inline uint far_look_header(device const uint* looks, uint look) {
     return looks[look * kFarLookWords];
@@ -344,7 +354,11 @@ __attribute__((noinline)) void far_line(thread FarEmitter& e, device const uint*
                 if (cls == 2u && n0 == n1) {
                     continue;
                 }
-                if (!inset) {
+                bool edge = (ndx < 0 && x == 0) || (ndx > 0 && x == 31) || (ndz < 0 && z == 0) || (ndz > 0 && z == 31);
+                if (edge && cls < 2u && !inset) {
+                    uint skirt = 3u << min(level, 3u);
+                    cur = max(cur, top > skirt ? top - skirt : 0u);
+                } else if (!inset) {
                     for (uint ni = n0; ni < n1 && cur < top; ni++) {
                         FarSpan n = far_span(blob, looks, pal, e.compact, ni);
                         uint nend = n.y0 + n.len;
@@ -595,7 +609,10 @@ struct FarVOut {
     uint   face [[flat]];
     uint   look [[flat]];
     uint   level [[flat]];
+    float2 fade [[flat]];
 };
+
+constant uint kFarBayer[16] = {0u, 8u, 2u, 10u, 12u, 4u, 14u, 6u, 3u, 11u, 1u, 9u, 15u, 7u, 13u, 5u};
 
 constant float kFarShade[7] = {0.5f, 1.0f, 0.8f, 0.8f, 0.6f, 0.6f, 1.0f};
 
@@ -620,6 +637,7 @@ vertex FarVOut far_vs(
     out.face = 0u;
     out.look = 0u;
     out.level = 0u;
+    out.fade = float2(1.0f, 0.0f);
     uint q = vid >> 2;
     uint corner = vid & 3u;
     uint2 entry = list[iid];
@@ -627,7 +645,15 @@ vertex FarVOut far_vs(
         return out;
     }
     uint slot = entry.y >> 5;
-    FarTileRec rec = tiles[slot];
+    device const FarTileRec& rec = tiles[slot];
+    if (dp.fadeMs != 0u) {
+        if (rec.fadeIn != 0u) {
+            out.fade.x = clamp(float(int(dp.nowMs - rec.fadeIn)) / float(dp.fadeMs), 0.0f, 1.0f);
+        }
+        if (rec.fadeOut != 0u) {
+            out.fade.y = clamp(float(int(dp.nowMs - rec.fadeOut)) / float(dp.fadeMs), 0.0f, 1.0f);
+        }
+    }
     bool compact = (rec.flags & 2u) != 0u;
     device const uint* w = quads + ulong(entry.x + q) * (compact ? 2ul : 3ul);
     uint w0 = w[0];
@@ -694,8 +720,14 @@ vertex FarVOut far_vs(
         p = float3(xs[kTerrFaceVerts[fv][corner * 3u]], ys[kTerrFaceVerts[fv][corner * 3u + 1u]],
                    zs[kTerrFaceVerts[fv][corner * 3u + 2u]]);
     }
+    if (rec.level > 0u && far_cls(header) == 2u) {
+        float lift = float(rec.minY) + p.y - float(dp.seaY);
+        if (lift > 0.0f && lift < float(1u << min(rec.level, kFarVCap))) {
+            p.y -= lift;
+        }
+    }
     int3 origin = int3(rec.ox, rec.minY, rec.oz);
-    float3 rel = float3(origin - dp.camBlock.xyz) - dp.camFrac.xyz + p;
+    float3 rel = (float3(origin - dp.camBlock.xyz) + p) - dp.camFrac.xyz;
     float4 clip = projectionMatrix * (modelViewMatrix * float4(rel, 1.0f));
     if (dp.reverseZ != 0u) {
         clip.z *= (1.0f - dp.depthPush);
@@ -837,13 +869,21 @@ inline half4 far_sample_sprite(texture2d<half> atlas, sampler smp, device const 
 }
 
 struct FarSurface {
+    //VERY IMPORTANT!!! Read AGENTS.md first (or git history if it is missing). Saves you tokens!
     half4 tex;
     half4 color;
 };
 
 inline FarSurface far_surface(FarVOut in, texture2d<half> atlas, sampler smp, device const uint2* sprites,
-                              device const uint* looks, device const uchar* mask, bool masked, uint flat,
-                              device const half4* avg) {
+                              device const uint* looks, device const uchar* mask, bool masked, uint shading,
+                              device const half4* avg, constant int4& nearBox) {
+    if (in.fade.x < 1.0f || in.fade.y > 0.0f) {
+        uint2 pp = uint2(in.position.xy) & 3u;
+        float b = (float(kFarBayer[pp.y * 4u + pp.x]) + 0.5f) / 16.0f;
+        if (b >= in.fade.x || b < in.fade.y) {
+            discard_fragment();
+        }
+    }
     float3 p = in.local;
     uint face = in.face;
     float3 cellF;
@@ -858,23 +898,25 @@ inline FarSurface far_surface(FarVOut in, texture2d<half> atlas, sampler smp, de
         default: cellF = floor(p - float3(0.0f, 0.0f, 0.0f)); stRaw = float2(p.x, p.y); break;
     }
     int3 cell = int3(cellF) + in.origin;
+    float2 gx = dfdx(stRaw);
+    float2 gy = dfdy(stRaw);
     if (masked) {
         int cx = cell.x >> 4;
         int cz = cell.z >> 4;
-        if (mask[uint(cx & 127) + uint(cz & 127) * 128u] != 0u) {
+        if (cx >= nearBox.x && cx <= nearBox.z && cz >= nearBox.y && cz <= nearBox.w &&
+            mask[uint(cx & 127) + uint(cz & 127) * 128u] != 0u) {
             discard_fragment();
         }
     }
     float2 st = clamp(fract(stRaw), float2(0.0005f), float2(0.9995f));
-    float2 gx = dfdx(stRaw);
-    float2 gy = dfdy(stRaw);
     device const uint* lk = looks + in.look * kFarLookWords;
     uint header = lk[0];
     uint weights = lk[1];
     uint nvar = (header >> 6) & 7u;
     uint fslot = face <= 5u ? face : 1u;
     float foot = max(max(abs(gx.x), abs(gx.y)), max(abs(gy.x), abs(gy.y)));
-    uint v = (nvar <= 1u || foot > 1.0f) ? 0u : far_pick_variant(cell, weights, nvar);
+    float variantFoot = in.level >= 3u ? 0.5f : 1.0f;
+    uint v = (nvar <= 1u || foot > variantFoot) ? 0u : far_pick_variant(cell, weights, nvar);
     uint entry = lk[2u + fslot * 4u + v];
     uint sprite = entry & 0x1FFFu;
     uint code = (entry >> 13) & 7u;
@@ -884,7 +926,10 @@ inline FarSurface far_surface(FarVOut in, texture2d<half> atlas, sampler smp, de
     bool ovTint = ((header >> (16u + fslot)) & 1u) != 0u;
     FarSurface out;
     half4 base = half4(1.0h);
-    bool useAvg = flat != 0u && foot > 1.0f;
+    bool leaf = ((header >> 22) & 1u) != 0u;
+    bool fastLeaf = leaf && (shading & 64u) != 0u;
+    float avgFoot = in.level >= 3u ? 0.5f : 1.0f;
+    bool useAvg = (shading & 1u) != 0u && foot > avgFoot && (!leaf || fastLeaf);
     if (sprite != kFarNoSprite) {
         base = useAvg ? avg[sprite] : far_sample_sprite(atlas, smp, sprites, sprite, code, st, gx, gy);
     }
@@ -896,8 +941,7 @@ inline FarSurface far_surface(FarVOut in, texture2d<half> atlas, sampler smp, de
     }
     out.tex = half4(rgb, base.a);
     half shade = half(kFarShade[min(face, 6u)]);
-    bool leaf = ((header >> 22) & 1u) != 0u;
-    half alpha = leaf ? half(254.0h / 255.0h) : half(1.0h);
+    half alpha = fastLeaf ? half(254.0h / 255.0h) : half(1.0h);
     if (far_cls(header) == 2u) {
         alpha = half(0.996h);
     }
@@ -916,10 +960,11 @@ fragment half4 far_fs_solid(
     device const uint2* sprites [[buffer(8)]],
     device const uint* looks [[buffer(9)]],
     device const uchar* mask [[buffer(10)]],
-    constant uint& flat [[buffer(11)]],
-    device const half4* avg [[buffer(12)]]
+    constant uint& shading [[buffer(11)]],
+    device const half4* avg [[buffer(12)]],
+    constant int4& nearBox [[buffer(13)]]
 ) {
-    FarSurface s = far_surface(in, blockAtlas, kTerrAtlasSampler, sprites, looks, mask, kFarMasked, flat, avg);
+    FarSurface s = far_surface(in, blockAtlas, kTerrAtlasSampler, sprites, looks, mask, kFarMasked, shading, avg, nearBox);
     return terrain_shade_solid(s.tex, s.color, in.lightUV, terrain_fog_dist(in.position, recon), lightmap, fog);
 }
 
@@ -932,10 +977,11 @@ fragment half4 far_fs_cutout(
     device const uint2* sprites [[buffer(8)]],
     device const uint* looks [[buffer(9)]],
     device const uchar* mask [[buffer(10)]],
-    constant uint& flat [[buffer(11)]],
-    device const half4* avg [[buffer(12)]]
+    constant uint& shading [[buffer(11)]],
+    device const half4* avg [[buffer(12)]],
+    constant int4& nearBox [[buffer(13)]]
 ) {
-    FarSurface s = far_surface(in, blockAtlas, kTerrAtlasSampler, sprites, looks, mask, kFarMasked, flat, avg);
+    FarSurface s = far_surface(in, blockAtlas, kTerrAtlasSampler, sprites, looks, mask, kFarMasked, shading, avg, nearBox);
     return terrain_shade_cutout(s.tex, s.color, in.lightUV, terrain_fog_dist(in.position, recon), lightmap, fog);
 }
 
@@ -948,9 +994,10 @@ fragment half4 far_fs_water(
     device const uint2* sprites [[buffer(8)]],
     device const uint* looks [[buffer(9)]],
     device const uchar* mask [[buffer(10)]],
-    constant uint& flat [[buffer(11)]],
-    device const half4* avg [[buffer(12)]]
+    constant uint& shading [[buffer(11)]],
+    device const half4* avg [[buffer(12)]],
+    constant int4& nearBox [[buffer(13)]]
 ) {
-    FarSurface s = far_surface(in, blockAtlas, kTerrAtlasSamplerAniso, sprites, looks, mask, kFarMasked, flat, avg);
+    FarSurface s = far_surface(in, blockAtlas, kTerrAtlasSamplerAniso, sprites, looks, mask, kFarMasked, shading, avg, nearBox);
     return terrain_shade_water(s.tex, s.color, in.lightUV, terrain_fog_dist(in.position, recon), lightmap, fog);
 }

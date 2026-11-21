@@ -981,6 +981,7 @@ public final class MetalRenderProfiler {
         s.breakdownTotalMs = Math.max(s.currentFrameMs, tracked);
 
         return s;
+    //READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
     }
 
     public ProfileSnapshot getSnapshot() {

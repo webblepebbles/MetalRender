@@ -45,6 +45,7 @@ Please Note, All of these devices have to be on AT LEAST macOS 27
 - Memory optimization and other culling features
 - Fully client side
 - Mostly in your control with somewhat automation(its only adaptive resolution)
+- Mod Menu support!
 - AI slop free :> v2+ (all human contributed)
   
 ---
@@ -109,11 +110,11 @@ The following mods are known not to work with MetalRender:
 
 You can configure the settings via the /metalrender command (guide coming right up) or you can go into video settings and configure it from there
 
-There are custom themes if you are using Metalrender V2 if you go into video settings, there are presets such as Glass. 
+There are custom themes if you are using Metalrender V2 if you go into video settings, there are presets such as Glass. These features are not avaliable in the Mod Menu config.
 
 # MetalRender Commands
 
-MetalRender commands allow you to configure MetalRender settings, check status and much more, all without opening the Config menu (avaliable in v0.1.6 with ModMenu!).
+MetalRender commands allow you to configure MetalRender settings, check status and much more, all without opening the Config menu (avaliable in v0.1.6 and v2.1+ with ModMenu!).
 
 ## start here
 

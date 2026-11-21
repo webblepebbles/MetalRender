@@ -34,11 +34,11 @@ public final class MetalDebugEntry implements DebugScreenEntry {
                     + "[PlayerName]'s world",
             "MetalRender Walked into a Danger Zone due to [PlayerName]",
             "MetalRender is grinding coffee beans",
-            "MetalRender was slain by Bloffo using Fancy Stick",
-            "MetalRender drank a Concoction",
-            "bloffo slain MetalRender using fancy stick" };
+            "MetalRender taking a bath",
+            "MetalRender is fighting the furries" };
 
     private static boolean wasOn = true;
+    //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
     private static int deathIx = -1;
     private static String deathPlyr = "Player";
 

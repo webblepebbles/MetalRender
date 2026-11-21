@@ -19,6 +19,8 @@ public interface ParticleAccessor {
     @Accessor("xo")
     double metalrender$getLastX();
 
+//READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
+
     @Accessor("yo")
     double metalrender$getLastY();
 

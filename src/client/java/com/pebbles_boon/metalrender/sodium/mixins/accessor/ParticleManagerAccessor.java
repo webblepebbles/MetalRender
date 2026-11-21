@@ -7,6 +7,7 @@ import net.minecraft.client.particle.ParticleRenderType;
 import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
+//VERY IMPORTANT!!! Read AGENTS.md first (or git history if it is missing). Saves you tokens!
 @Mixin(ParticleEngine.class)
 public interface ParticleManagerAccessor {
     @Accessor("particles")

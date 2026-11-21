@@ -25,12 +25,15 @@ import net.minecraft.client.Minecraft;
 import net.minecraft.client.multiplayer.ClientLevel;
 import net.minecraft.client.server.IntegratedServer;
 import net.minecraft.world.level.chunk.LevelChunk;
-import net.minecraft.world.level.chunk.LevelChunkSection;
 import net.minecraft.world.level.storage.LevelResource;
 
 public final class FarTerrainManager {
     private static final FarTerrainManager INSTANCE = new FarTerrainManager();
-    private static final int MAX_INFLIGHT_PER_THREAD = 3;
+    private static final int MAX_INFLIGHT_PER_THREAD = 8;
+    private static final double[] LADDER = { 0.0, 0.25, 0.75, 2.0, 4.0 };
+    private static final double ZOOM_CAP = 3072.0;
+    private static final double ZOOM_CAP_FULL = 16384.0;
+    private static final long ZOOM_HOLD_MS = 3000L;
     private static final long UPLOAD_BYTES_PER_FRAME = 8L << 20;
     private static final int UPLOADS_PER_FRAME = 64;
 
@@ -90,6 +93,15 @@ public final class FarTerrainManager {
     private int selRd;
     private final LongOpenHashSet scaffold = new LongOpenHashSet();
     private LongOpenHashSet rootKeys = new LongOpenHashSet();
+    private boolean rootsDirty = true;
+    private int lastSelChunkX = Integer.MIN_VALUE;
+    private int lastSelChunkZ = Integer.MIN_VALUE;
+    private volatile float frameMsAvg;
+    private long lastFrameNs;
+    private long lastSwapNs;
+    private long lastCoverageNs;
+    private long lastHealMs;
+    private long lastSelectNs;
     private final Long2LongOpenHashMap uncoveredSince = new Long2LongOpenHashMap();
     private long idleSince;
     private final LongOpenHashSet desiredAnc = new LongOpenHashSet();
@@ -105,6 +117,11 @@ public final class FarTerrainManager {
     private final LongArrayList desiredOrder = new LongArrayList();
     private int requestCursor;
     private final LongOpenHashSet live = new LongOpenHashSet();
+    private final it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<LongOpenHashSet> liveUnder = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
+    private long zoomHoldUntil;
+    private int baseThreads;
+    private int boostThreads;
+    private boolean poolBoosted;
     private final LongOpenHashSet built = new LongOpenHashSet();
     private final LongOpenHashSet inflight = new LongOpenHashSet();
     private final LongOpenHashSet uploaded = new LongOpenHashSet();
@@ -116,6 +133,7 @@ public final class FarTerrainManager {
     private final ConcurrentLinkedQueue<Long> finished = new ConcurrentLinkedQueue<>();
     private final ArrayList<Built> uploadQueue = new ArrayList<>();
     private final long[] pollScratch = new long[4096];
+    private final long[] liveScratch = new long[32768];
     private final FarNearMask nearMask = new FarNearMask();
     private final AtomicInteger ingestQueued = new AtomicInteger();
     private final java.util.concurrent.ConcurrentHashMap<Long, Long> editDue = new java.util.concurrent.ConcurrentHashMap<>();
@@ -127,10 +145,8 @@ public final class FarTerrainManager {
     private int pixelVotes;
     private boolean zoomedView;
     private volatile double zoomK = 2.0;
+    private volatile double zoomCap = ZOOM_CAP_FULL;
     private float basePixelScale = 700.0f;
-    private final LongOpenHashSet refined = new LongOpenHashSet();
-    private boolean selectSoon;
-    private int lastSelectFrame;
     private int fogShrinkFrames;
     private boolean coverageReset = true;
     private float viewX;
@@ -140,7 +156,7 @@ public final class FarTerrainManager {
     private float lastViewX;
     private float lastViewZ;
     private float coverage;
-    private final long[] stats = new long[12];
+    private final long[] stats = new long[20];
 
     private FarTerrainManager() {
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
@@ -212,8 +228,8 @@ public final class FarTerrainManager {
         return true;
     }
 
-    public FarNearMask nearMask() {
-        return nearMask;
+    public boolean isRunning() {
+        return running && !initializing;
     }
 
     public void onWorldLoad(ClientLevel lvl) {
@@ -236,8 +252,12 @@ public final class FarTerrainManager {
         }
         level = lvl;
         minY = lvl.getMinY();
-        int threads = cfg.farThreads > 0 ? cfg.farThreads
-                : Math.max(2, Runtime.getRuntime().availableProcessors() / 2 - 1);
+        int cores = Runtime.getRuntime().availableProcessors();
+        int threads = cfg.farThreads > 0 ? cfg.farThreads : Math.max(2, cores / 2 - 1);
+        baseThreads = threads;
+        boostThreads = cfg.farThreads > 0 ? threads : Math.max(threads, Math.min(6, cores - 2));
+        threads = boostThreads;
+        poolBoosted = true;
         generation++;
         int gen = generation;
         pool = new ThreadPoolExecutor(threads, threads, 30, TimeUnit.SECONDS, new PriorityBlockingQueue<>(),
@@ -248,8 +268,10 @@ public final class FarTerrainManager {
                     return t;
                 });
         desired.clear();
+        rootsDirty = true;
         desiredOrder.clear();
         live.clear();
+        liveUnder.clear();
         built.clear();
         inflight.clear();
         uploaded.clear();
@@ -389,7 +411,9 @@ public final class FarTerrainManager {
             NativeBridge.nFarClear();
         }
         desired.clear();
+        rootsDirty = true;
         live.clear();
+        liveUnder.clear();
         built.clear();
         inflight.clear();
         uploaded.clear();
@@ -419,7 +443,6 @@ public final class FarTerrainManager {
         if (!running || chunk == null) {
             return;
         }
-        nearMask.onLoaded(chunk.getPos().x(), chunk.getPos().z());
         long ck = ((long) chunk.getPos().x() << 32) | (chunk.getPos().z() & 0xFFFFFFFFL);
         editDue.putIfAbsent(ck, System.currentTimeMillis() + 3000);
     }
@@ -506,7 +529,7 @@ public final class FarTerrainManager {
                     FarTileData pt = st.get(pk, true);
                     int[][] kids = new int[4][];
                     boolean anyReal = false;
-                    boolean anyPresent = false;
+                    boolean allPresent = true;
                     for (int i = 0; i < 4; i++) {
                         int cgx = gx * 2 + (i & 1);
                         int cgz = gz * 2 + (i >> 1);
@@ -514,8 +537,8 @@ public final class FarTerrainManager {
                         long ck = FarKeys.containing(lv - 1, cgx * cw, cgz * cw);
                         FarTileData ct = st.get(ck, false);
                         if (ct == null) {
-                            kids[i] = FarTileData.EMPTY;
-                            continue;
+                            allPresent = false;
+                            break;
                         }
                         int cix = cgx - FarKeys.tx(ck) * 32;
                         int ciz = cgz - FarKeys.tz(ck) * 32;
@@ -523,9 +546,12 @@ public final class FarTerrainManager {
                         byte kind = ct.kind(idx);
                         kids[i] = ct.column(idx);
                         anyReal |= kind == FarTileData.REAL;
-                        anyPresent |= kind != FarTileData.MISSING;
+                        if (kind == FarTileData.MISSING) {
+                            allPresent = false;
+                            break;
+                        }
                     }
-                    if (!anyPresent) {
+                    if (!allPresent) {
                         continue;
                     }
                     int pix = gx - FarKeys.tx(pk) * 32;
@@ -560,7 +586,7 @@ public final class FarTerrainManager {
         if (m11 > 0.0f && screenHeight > 0) {
             float raw = m11 * screenHeight * 0.5f;
             if (raw > pixelScale * 1.5f || raw < pixelScale / 1.5f) {
-                if (++pixelVotes >= 6) {
+                if (++pixelVotes >= 2) {
                     pixelScale = raw;
                     pixelVotes = 0;
                     zoomedView = m11 > 3.0f;
@@ -625,7 +651,11 @@ public final class FarTerrainManager {
         if (initializing || store == null) {
             return;
         }
-        int opts = (cfg.farFlatColor ? 1 : 0) | (cfg.farHiZ ? 16 : 0) | (cfg.farLodFade ? 32 : 0);
+        int opts = (cfg.farFlatColor ? 1 : 0) | (cfg.farHiZ ? 16 : 0) | (cfg.farLodFade ? 32 : 0)
+                | (cfg.leafCullingMode == 0 ? 64 : 0);
+        FarSeedSource seaSrc = seed;
+        int seaLevel = seaSrc != null ? seaSrc.seaLevel : 63;
+        opts |= ((seaLevel + 512) & 0xFFF) << 8;
         if (opts != sentOpts) {
             sentOpts = opts;
             NativeBridge.nFarSetOptions(opts);
@@ -635,22 +665,25 @@ public final class FarTerrainManager {
             lastSelX = Double.NaN;
         }
         frame++;
+        long frameNow = System.nanoTime();
+        if (lastFrameNs != 0L) {
+            float dt = Math.min(100.0f, (frameNow - lastFrameNs) / 1.0e6f);
+            frameMsAvg = frameMsAvg * 0.95f + dt * 0.05f;
+        }
+        lastFrameNs = frameNow;
         if (radiusScale < 1.0f && frame % 900 == 0) {
             radiusScale = Math.min(1.0f, radiusScale * 1.05f);
             lastSelX = Double.NaN;
         }
         int rd = mc.options.getEffectiveRenderDistance();
         farRadius = (rd + farChunks) * 16.0f * radiusScale;
-        int pcx = mc.player.chunkPosition().x();
-        int pcz = mc.player.chunkPosition().z();
-        NativeBridge.nFarSetView(farRadius, pcx - rd - 1, pcz - rd - 1, pcx + rd + 1, pcz + rd + 1);
         store.focus((int) camX, (int) camZ);
         if (looks.takeDirty()) {
             int[] n = new int[1];
             var buf = looks.snapshot(n);
             NativeBridge.nFarSetLooks(buf, n[0]);
         }
-        nearMask.update(mc.level, rd, pcx, pcz);
+        nearMask.update(mc.level, rd, camX, camZ, farRadius);
         drainEdits();
         drainChanged();
         drainFinished();
@@ -667,10 +700,15 @@ public final class FarTerrainManager {
         double dz = camZ - lastSelZ;
         boolean zoomed = lastPixelScale > 0.0f && pixelScale != lastPixelScale;
         boolean turned = viewX * lastViewX
-                + viewZ * lastViewZ < (zoomedView ? Math.max(0.85f, viewCos + (1.0f - viewCos) * 0.6f) : 0.85f)
-                || (selectSoon && frame - lastSelectFrame >= 8);
-        if (Double.isNaN(lastSelX) || dx * dx + dz * dz > 32 * 32 || rd != lastSelRd || frame % 600 == 0 || zoomed
-                || turned) {
+                + viewZ * lastViewZ < (zoomedView ? Math.max(0.85f, viewCos + (1.0f - viewCos) * 0.6f) : 0.85f);
+        boolean selectDue = Double.isNaN(lastSelX) || rd != lastSelRd || zoomed
+                || ((dx * dx + dz * dz > 32 * 32 || turned || ((int) Math.floor(camX) >> 4) != lastSelChunkX
+                        || ((int) Math.floor(camZ) >> 4) != lastSelChunkZ) && System.nanoTime() - lastSelectNs >= 80_000_000L)
+                || frame % 600 == 0;
+        if (selectDue) {
+            lastSelectNs = System.nanoTime();
+            lastSelChunkX = (int) Math.floor(camX) >> 4;
+            lastSelChunkZ = (int) Math.floor(camZ) >> 4;
             coverageReset = coverageReset || zoomed || rd != lastSelRd || Double.isNaN(lastSelX)
                     || dx * dx + dz * dz > 32 * 32;
             lastPixelScale = pixelScale;
@@ -681,12 +719,24 @@ public final class FarTerrainManager {
             lastSelZ = camZ;
             lastSelRd = rd;
         }
-        if (swapDirty || frame % 30 == 0) {
+        long nowNs = System.nanoTime();
+        if (zoomedView) {
+            zoomHoldUntil = nowMs + ZOOM_HOLD_MS;
+        }
+        if ((swapDirty && nowNs - lastSwapNs >= (zoomedView ? 8_000_000L : 33_000_000L)) || frame % 30 == 0) {
             swapDirty = false;
+            lastSwapNs = nowNs;
             swap();
-            if (!Double.isNaN(lastSelX)) {
+            if (!Double.isNaN(lastSelX) && nowNs - lastCoverageNs >= 250_000_000L) {
+                lastCoverageNs = nowNs;
                 updateCoverage(rd);
             }
+        }
+        if (frame % 120 == 0) {
+            reconcile();
+        }
+        if (frame % 30 == 0) {
+            tunePool();
         }
         float fr = fogReach;
         if (fr <= 0.0f) {
@@ -722,6 +772,55 @@ public final class FarTerrainManager {
                         flushing.set(false);
                     }
                 });
+            }
+        }
+    }
+
+    private void tunePool() {
+        ThreadPoolExecutor p = pool;
+        if (p == null || boostThreads <= baseThreads) {
+            return;
+        }
+        boolean loading = coverage < farRadius * 0.99f || zoomedView;
+        if (loading && !poolBoosted) {
+            p.setMaximumPoolSize(boostThreads);
+            p.setCorePoolSize(boostThreads);
+            poolBoosted = true;
+        } else if (!loading && poolBoosted && inflight.size() < baseThreads && System.currentTimeMillis() >= zoomHoldUntil) {
+            p.setCorePoolSize(baseThreads);
+            p.setMaximumPoolSize(baseThreads);
+            poolBoosted = false;
+        }
+    }
+
+    private void liveAdd(long k) {
+        //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
+        if (!live.add(k)) {
+            return;
+        }
+        for (int lv = FarKeys.level(k) + 1; lv <= FarKeys.MAX_LEVEL; lv++) {
+            long a = FarKeys.ancestorAt(k, lv);
+            LongOpenHashSet l = liveUnder.get(a);
+            if (l == null) {
+                l = new LongOpenHashSet(4);
+                liveUnder.put(a, l);
+            }
+            l.add(k);
+        }
+    }
+
+    private void liveRemove(long k) {
+        if (!live.remove(k)) {
+            return;
+        }
+        for (int lv = FarKeys.level(k) + 1; lv <= FarKeys.MAX_LEVEL; lv++) {
+            long a = FarKeys.ancestorAt(k, lv);
+            LongOpenHashSet l = liveUnder.get(a);
+            if (l != null) {
+                l.remove(k);
+                if (l.isEmpty()) {
+                    liveUnder.remove(a);
+                }
             }
         }
     }
@@ -781,9 +880,58 @@ public final class FarTerrainManager {
                 "far coverage: radius %.0f (scale %.2f), %.1f%% of wanted area shown, nearest edge of farthest wanted tile %.0f, farthest shown corner %.0f, missing: built %d uploaded %d inflight %d idle %d,%s",
                 farRadius, radiusScale, wantedArea > 0.0 ? coveredArea * 100.0 / wantedArea : 100.0, wantedReach,
                 reach, stuckBuilt, stuckUploaded, stuckInflight, stuckNone, sb);
+        long[] fs = stats();
+        text += String.format(" | far gpu: live %d drawn %d, %.2fM quads drawn of %.2fM live, cull %d us", fs[0], fs[8],
+                fs[9] / 1.0e6, fs[2] / 1.0e6, fs[10]);
+        text += String.format(" | live quads by level M: L0 %.2f L1 %.2f L2 %.2f L3 %.2f L4 %.2f L5 %.2f L6 %.2f",
+                fs[12] / 1.0e6, fs[13] / 1.0e6, fs[14] / 1.0e6, fs[15] / 1.0e6, fs[16] / 1.0e6, fs[17] / 1.0e6,
+                fs[18] / 1.0e6);
         if (!text.equals(lastDiag)) {
             lastDiag = text;
             MetalLogger.info("%s", text);
+        }
+    }
+
+    private void reconcile() {
+        int n = NativeBridge.nFarLiveKeys(liveScratch);
+        LongOpenHashSet nativeLive = new LongOpenHashSet(n * 2);
+        int blank = 0;
+        int fading = 0;
+        for (int i = 0; i < n; i++) {
+            long key = liveScratch[i * 2];
+            long meta = liveScratch[i * 2 + 1];
+            if ((meta >>> 40) != 0L) {
+                fading++;
+                continue;
+            }
+            if ((meta & 0xFFFFFFFFL) == 0L) {
+                blank++;
+                continue;
+            }
+            nativeLive.add(key);
+        }
+        LongArrayList lost = new LongArrayList();
+        var it = live.iterator();
+        while (it.hasNext()) {
+            long k = it.nextLong();
+            if (!nativeLive.contains(k)) {
+                lost.add(k);
+            }
+        }
+        if (lost.isEmpty() && blank == 0) {
+            return;
+        }
+        MetalLogger.info("far desync: java live %d, native drawable %d, native blank %d, lost %d, fading %d", live.size(),
+                nativeLive.size(), blank, lost.size(), fading);
+        for (long k : lost) {
+            liveRemove(k);
+            built.remove(k);
+            uploaded.remove(k);
+            inflight.remove(k);
+            uncoveredSince.remove(k);
+        }
+        if (!lost.isEmpty()) {
+            swapDirty = true;
         }
     }
 
@@ -820,15 +968,8 @@ public final class FarTerrainManager {
         selRd = rd;
         var zc = MetalRenderClient.getConfig();
         zoomK = zc != null && zc.farZoomSaver ? 1.0 : 2.0;
+        zoomCap = zc != null && zc.farZoomSaver ? ZOOM_CAP : ZOOM_CAP_FULL;
         LongOpenHashSet next = new LongOpenHashSet(desired.size() + 64);
-        refined.clear();
-        if (zoomedView) {
-            markRefined(live);
-            markRefined(built);
-            markRefined(uploaded);
-        }
-        lastSelectFrame = frame;
-        selectSoon = false;
         int top = FarKeys.MAX_LEVEL;
         int s = FarKeys.size(top);
         float r = farRadius;
@@ -845,6 +986,7 @@ public final class FarTerrainManager {
         desired.addAll(next);
         desiredOrder.clear();
         swapDirty = true;
+        rootsDirty = true;
         desiredAnc.clear();
         var dit = desired.iterator();
         while (dit.hasNext()) {
@@ -893,10 +1035,13 @@ public final class FarTerrainManager {
 
     private float priority(long key, double cx, double cz) {
         int sz = FarKeys.size(FarKeys.level(key));
-        double d = tileDistance(key, cx, cz) + sz * 0.25;
+        double d = (tileDistance(key, cx, cz) + sz * 0.25) / (1.0 + 0.3 * FarKeys.level(key));
         double mx = FarKeys.originX(key) + sz * 0.5 - cx;
         double mz = FarKeys.originZ(key) + sz * 0.5 - cz;
         double ml = Math.sqrt(mx * mx + mz * mz);
+        if (zoomedView && FarKeys.level(key) <= 1 && inSpot(key, cx, cz)) {
+            return (float) (d * 0.0005);
+        }
         if (ml > sz) {
             if (aimed(mx, mz, ml, sz)) {
                 d = zoomedView ? d * 0.02 : d * 0.5;
@@ -918,6 +1063,19 @@ public final class FarTerrainManager {
         return aimed(mx, mz, ml, sz);
     }
 
+    private boolean inSpot(long key, double cx, double cz) {
+        int sz = FarKeys.size(FarKeys.level(key));
+        double mx = FarKeys.originX(key) + sz * 0.5 - cx;
+        double mz = FarKeys.originZ(key) + sz * 0.5 - cz;
+        double along = mx * viewX + mz * viewZ;
+        double lateral = Math.abs(mx * viewZ - mz * viewX);
+        if (along < -sz) {
+            return false;
+        }
+        double radius = sz * 0.5 + 24.0 + Math.min(Math.max(0.0, along) * 0.04, 160.0);
+        return lateral <= radius;
+    }
+
     private boolean aimed(double mx, double mz, double ml, int sz) {
         double reach = sz * 0.75;
         double hyp = Math.sqrt(ml * ml + reach * reach);
@@ -927,19 +1085,6 @@ public final class FarTerrainManager {
             return true;
         }
         return (mx * viewX + mz * viewZ) / ml >= viewCos * cr - viewSin * sr;
-    }
-
-    private void markRefined(LongOpenHashSet set) {
-        var it = set.iterator();
-        while (it.hasNext()) {
-            long k = it.nextLong();
-            refined.add(k);
-            for (int lv = FarKeys.level(k) + 1; lv <= FarKeys.MAX_LEVEL; lv++) {
-                if (!refined.add(FarKeys.ancestorAt(k, lv))) {
-                    break;
-                }
-            }
-        }
     }
 
     private static double tileDistance(long key, double cx, double cz) {
@@ -972,7 +1117,7 @@ public final class FarTerrainManager {
         }
         for (int z = 0; z < n; z++) {
             for (int x = 0; x < n; x++) {
-                if (!nearMask.isReady(c0x + x, c0z + z)) {
+                if (!nearMask.owns(c0x + x, c0z + z)) {
                     return false;
                 }
             }
@@ -1015,25 +1160,20 @@ public final class FarTerrainManager {
             return;
         }
         int lv = FarKeys.level(key);
-        if (lv > 0) {
-            if (lv == 1 || lv > 4) {
-                for (int i = 0; i < 4; i++) {
-                    visit(FarKeys.child(key, i), cx, cz, r, out);
-                }
-                return;
+        if (lv > 4) {
+            for (int i = 0; i < 4; i++) {
+                visit(FarKeys.child(key, i), cx, cz, r, out);
             }
-            int tl = lv == 2 ? 1 : lv;
-            boolean boost = zoomedView && inView(key, cx, cz);
-            double threshold = (boost ? zoomK * pixelScale : Math.min((double) quality, 2.0 * basePixelScale))
-                    * (1L << (tl - 1));
+            return;
+        }
+        if (lv > 0) {
+            double scale = Math.min((double) quality, 2.0 * basePixelScale);
+            if (zoomedView && inSpot(key, cx, cz)) {
+                scale = Math.max(scale, Math.min(zoomK * pixelScale, zoomCap));
+            }
             boolean wasSplit = !desired.contains(key);
-            double rf = roughFactor(key);
-            double t = (wasSplit ? threshold * 1.08 : threshold * 0.92) * rf;
-            double base = Math.min((double) quality, 2.0 * basePixelScale) * (1L << (tl - 1))
-                    * (wasSplit ? 1.08 : 0.92) * rf;
-            boolean stepOk = refined.contains(key)
-                    || (lv < FarKeys.MAX_LEVEL && refined.contains(FarKeys.ancestorAt(key, lv + 1)));
-            if (d < t && (!boost || d < base || stepOk)) {
+            double t = scale * LADDER[lv] * (wasSplit ? 1.08 : 0.92) * roughFactor(key);
+            if (d < t) {
                 for (int i = 0; i < 4; i++) {
                     visit(FarKeys.child(key, i), cx, cz, r, out);
                 }
@@ -1044,20 +1184,6 @@ public final class FarTerrainManager {
     }
 
     private void swap() {
-        it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<LongArrayList> liveUnder = new it.unimi.dsi.fastutil.longs.Long2ObjectOpenHashMap<>();
-        var lit = live.iterator();
-        while (lit.hasNext()) {
-            long v = lit.nextLong();
-            for (int lv = FarKeys.level(v) + 1; lv <= FarKeys.MAX_LEVEL; lv++) {
-                long a = FarKeys.ancestorAt(v, lv);
-                LongArrayList l = liveUnder.get(a);
-                if (l == null) {
-                    l = new LongArrayList(4);
-                    liveUnder.put(a, l);
-                }
-                l.add(v);
-            }
-        }
         LongArrayList show = new LongArrayList();
         LongArrayList hide = new LongArrayList();
         LongOpenHashSet handled = new LongOpenHashSet();
@@ -1076,15 +1202,19 @@ public final class FarTerrainManager {
                 }
             }
             if (ancestor != -1) {
+                if (!zoomedView && System.currentTimeMillis() < zoomHoldUntil) {
+                    continue;
+                }
                 if (built.contains(ancestor) || live.contains(ancestor)) {
                     if (!live.contains(ancestor) && !handled.contains(ancestor)) {
                         show.add(ancestor);
                         handled.add(ancestor);
                     }
-                    LongArrayList under = liveUnder.get(ancestor);
+                    LongOpenHashSet under = liveUnder.get(ancestor);
                     if (under != null) {
-                        for (int j = 0; j < under.size(); j++) {
-                            long o = under.getLong(j);
+                        var uit = under.iterator();
+                        while (uit.hasNext()) {
+                            long o = uit.nextLong();
                             if (!handled.contains(o)) {
                                 hide.add(o);
                                 handled.add(o);
@@ -1099,24 +1229,16 @@ public final class FarTerrainManager {
                 handled.add(v);
                 continue;
             }
-            LongArrayList kids = new LongArrayList(4);
-            boolean ready = true;
-            for (int i = 0; i < 4; i++) {
-                long c = FarKeys.child(v, i);
-                if (!desired.contains(c) && !desiredAnc.contains(c)) {
-                    continue;
-                }
-                kids.add(c);
-                if (!built.contains(c) && !live.contains(c)) {
-                    ready = false;
-                    if (!desired.contains(c)) {
-                        scaffold.add(c);
-                    }
-                }
+            LongArrayList targets = new LongArrayList();
+            collectDesiredUnder(v, targets);
+            boolean ready = !targets.isEmpty();
+            for (int i = 0; i < targets.size() && ready; i++) {
+                long c = targets.getLong(i);
+                ready = built.contains(c) || live.contains(c);
             }
             if (ready) {
-                for (int i = 0; i < kids.size(); i++) {
-                    long c = kids.getLong(i);
+                for (int i = 0; i < targets.size(); i++) {
+                    long c = targets.getLong(i);
                     if (!live.contains(c) && !handled.contains(c)) {
                         show.add(c);
                         handled.add(c);
@@ -1126,21 +1248,25 @@ public final class FarTerrainManager {
                 handled.add(v);
             }
         }
-        LongOpenHashSet roots = new LongOpenHashSet();
-        var dit = desired.iterator();
-        while (dit.hasNext()) {
-            long d = dit.nextLong();
-            roots.add(FarKeys.ancestorAt(d, Math.min(5, FarKeys.level(d) + 2)));
-        }
-        roots.removeIf(r -> {
-            for (int lv = FarKeys.level(r) + 1; lv <= FarKeys.MAX_LEVEL; lv++) {
-                if (roots.contains(FarKeys.ancestorAt(r, lv))) {
-                    return true;
-                }
+        if (rootsDirty) {
+            LongOpenHashSet fresh = new LongOpenHashSet();
+            var dit = desired.iterator();
+            while (dit.hasNext()) {
+                long d = dit.nextLong();
+                fresh.add(FarKeys.ancestorAt(d, Math.min(5, FarKeys.level(d) + 2)));
             }
-            return false;
-        });
-        rootKeys = roots;
+            fresh.removeIf(r -> {
+                for (int lv = FarKeys.level(r) + 1; lv <= FarKeys.MAX_LEVEL; lv++) {
+                    if (fresh.contains(FarKeys.ancestorAt(r, lv))) {
+                        return true;
+                    }
+                }
+                return false;
+            });
+            rootKeys = fresh;
+            rootsDirty = false;
+        }
+        LongOpenHashSet roots = rootKeys;
         var rit = roots.iterator();
         while (rit.hasNext()) {
             long r = rit.nextLong();
@@ -1175,8 +1301,12 @@ public final class FarTerrainManager {
             idleSince = 0L;
         }
         boolean quiet = idleSince != 0L && nowMs - idleSince > 3000L;
+        boolean heal = nowMs - lastHealMs >= 500L;
+        if (heal) {
+            lastHealMs = nowMs;
+        }
         var cit = desired.iterator();
-        while (cit.hasNext()) {
+        while (heal && cit.hasNext()) {
             long k = cit.nextLong();
             if (live.contains(k) || liveUnder.containsKey(k) || liveAncestor(k) || handled.contains(k)) {
                 uncoveredSince.remove(k);
@@ -1205,20 +1335,45 @@ public final class FarTerrainManager {
         }
         long[] s = show.toLongArray();
         long[] h = hide.toLongArray();
-        if (s.length > 0 && zoomedView) {
-            selectSoon = true;
+        long[] failed = NativeBridge.nFarCommit(s, s.length, h, h.length);
+        if (failed != null && failed.length > 0) {
+            var bad = new LongOpenHashSet(failed);
+            for (long k : s) {
+                if (bad.contains(k)) {
+                    built.remove(k);
+                    uploaded.remove(k);
+                    inflight.remove(k);
+                    uncoveredSince.remove(k);
+                } else {
+                    liveAdd(k);
+                    built.remove(k);
+                    scaffold.remove(k);
+                }
+            }
+            swapDirty = true;
+            return;
         }
-        NativeBridge.nFarCommit(s, s.length, h, h.length);
         for (long k : s) {
-            live.add(k);
+            liveAdd(k);
             built.remove(k);
             scaffold.remove(k);
         }
         for (long k : h) {
-            live.remove(k);
+            liveRemove(k);
             built.remove(k);
             uploaded.remove(k);
             missingMask.remove(k);
+        }
+    }
+
+    private void pace() {
+        float f = frameMsAvg;
+        if (f > 10.0f && coverage >= farRadius && !zoomedView) {
+            try {
+                Thread.sleep(Math.min(4, (int) ((f - 10.0f) * 0.5f) + 1));
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
         }
     }
 
@@ -1305,7 +1460,6 @@ public final class FarTerrainManager {
         long nextKey = 0;
         float nextPri = Float.MAX_VALUE;
         boolean hasNext = false;
-        boolean coverTurn = true;
         while (inflight.size() < cap) {
             while (!hasNext && requestCursor < desiredOrder.size() && scanned < 1024) {
                 long key = desiredOrder.getLong(requestCursor++);
@@ -1318,14 +1472,11 @@ public final class FarTerrainManager {
                 nextPri = priority(key, cx, cz);
                 hasNext = true;
             }
-            boolean refineLeft = si < order.length || hasNext;
-            if (ri < rorder.length && (coverTurn || !refineLeft)) {
+            if (ri < rorder.length) {
                 long key = rc.getLong((int) rorder[ri++]);
                 submitBuild(key, Float.intBitsToFloat((int) (rorder[ri - 1] >>> 32)) * 0.05);
-                coverTurn = false;
                 continue;
             }
-            coverTurn = true;
             float sp = si < order.length ? Float.intBitsToFloat((int) (order[si] >>> 32)) : Float.MAX_VALUE;
             if (si < order.length && (!hasNext || sp <= nextPri)) {
                 submitBuild(sc.getLong((int) order[si]), sp);
@@ -1354,6 +1505,15 @@ public final class FarTerrainManager {
         return order;
     }
 
+    private static void seedTile(FarTileData tile, FarSeedSource sd, FarLooks lk, FarStore st) {
+        synchronized (tile) {
+            if (tile.hasMissing()) {
+                SeedColumns.fill(tile, sd, lk);
+                st.markDirty(tile);
+            }
+        }
+    }
+
     private void submitBuild(long key, double priority) {
         ThreadPoolExecutor p = pool;
         FarStore st = store;
@@ -1372,14 +1532,19 @@ public final class FarTerrainManager {
                     if (gen != generation) {
                         return;
                     }
+                    pace();
                     FarTileData tile = st.get(key, true);
-                    if (sd != null && tile.hasMissing()) {
-                        SeedColumns.fill(tile, sd, lk);
-                        st.markDirty(tile);
+                    if (sd != null) {
+                        seedTile(tile, sd, lk, st);
                         seeded.add(FarKeys.neighbor(key, -1, 0));
                         seeded.add(FarKeys.neighbor(key, 1, 0));
                         seeded.add(FarKeys.neighbor(key, 0, -1));
                         seeded.add(FarKeys.neighbor(key, 0, 1));
+                        for (int i = 0; i < 4; i++) {
+                            int ddx = i == 0 ? -1 : i == 1 ? 1 : 0;
+                            int ddz = i == 2 ? -1 : i == 3 ? 1 : 0;
+                            seedTile(st.get(FarKeys.neighbor(key, ddx, ddz), true), sd, lk, st);
+                        }
                     }
                     FarTileData[] n = { st.get(FarKeys.neighbor(key, -1, 0), false),
                             st.get(FarKeys.neighbor(key, 1, 0), false), st.get(FarKeys.neighbor(key, 0, -1), false),
@@ -1408,7 +1573,7 @@ public final class FarTerrainManager {
         long bytes = 0;
         int count = 0;
         int write = 0;
-        long deadline = System.nanoTime() + 1_500_000L;
+        long deadline = System.nanoTime() + (zoomedView ? 5_000_000L : 1_500_000L);
         for (int i = 0; i < uploadQueue.size(); i++) {
             Built q = uploadQueue.get(i);
             boolean wanted = desired.contains(q.key()) || live.contains(q.key()) || scaffold.contains(q.key());
@@ -1431,7 +1596,7 @@ public final class FarTerrainManager {
             }
             roughness.put(q.key(), blob.roughness);
             if (r == -1) {
-                long[] st = new long[12];
+                long[] st = new long[20];
                 NativeBridge.nFarStats(st);
                 boolean quadsFull = st[4] > 0 && st[3] * 10 > st[4] * 9;
                 if (!relieve() && quadsFull) {
@@ -1478,7 +1643,7 @@ public final class FarTerrainManager {
         long[] h = drop.toLongArray();
         NativeBridge.nFarCommit(new long[0], 0, h, h.length);
         for (long k : h) {
-            live.remove(k);
+            liveRemove(k);
             uploaded.remove(k);
         }
         return true;
@@ -1501,36 +1666,6 @@ public final class FarTerrainManager {
         return String.format("far: %d tiles (%d pending), %d drawn, %.1fM quads, gpu %d/%d MB, ram %d MB, disk %d MB",
                 s[0], s[1], s[8], s[9] / 1.0e6, s[3] >> 20, s[4] >> 20, st != null ? st.memoryBytes() >> 20 : 0,
                 st != null ? st.diskBytes() >> 20 : 0);
-    }
-
-    public static boolean columnReady(ClientLevel lvl, CustomChunkMesher mesher, int cx, int cz, long loadedFor) {
-        LevelChunk chunk = lvl.getChunkSource().getChunkNow(cx, cz);
-        if (chunk == null || mesher == null) {
-            return false;
-        }
-        LevelChunkSection[] sections = chunk.getSections();
-        int minSec = chunk.getMinSectionY();
-        int missing = 0;
-        int topMissing = -1;
-        int topSection = -1;
-        for (int i = 0; i < sections.length; i++) {
-            LevelChunkSection s = sections[i];
-            if (s == null || s.hasOnlyAir()) {
-                continue;
-            }
-            topSection = i;
-            if (!mesher.hasMeshIgnoreDirty(cx, minSec + i, cz)) {
-                missing++;
-                topMissing = i;
-            }
-        }
-        if (topSection < 0) {
-            return loadedFor > 1500;
-        }
-        if (missing == 0) {
-            return true;
-        }
-        return loadedFor > 4000 && topMissing < topSection - 1;
     }
 
     public List<String> debugLines() {

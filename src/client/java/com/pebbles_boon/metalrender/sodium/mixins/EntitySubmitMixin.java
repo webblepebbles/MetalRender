@@ -15,6 +15,7 @@ import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 public class EntitySubmitMixin {
     @Inject(method = "submitEntities", at = @At("HEAD"), cancellable = true, require = 0)
     private void metalrender$suppressVanillaEntities(PoseStack matrices,
+            //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
             LevelRenderState renderStates,
             SubmitNodeCollector queue,
             CallbackInfo ci) {

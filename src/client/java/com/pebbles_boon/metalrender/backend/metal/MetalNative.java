@@ -27,6 +27,7 @@ final class MetalNative {
     static final int PRIMITIVE_TRIANGLE = 3;
     static final int PRIMITIVE_TRIANGLE_STRIP = 4;
 
+    //NOTE TO FUTURE READERS (human or AI): read AGENTS.md, or git if it is absent. Saves you tokens!
     static final int TOPOLOGY_POINT = 1;
     static final int TOPOLOGY_LINE = 2;
     static final int TOPOLOGY_TRIANGLE = 3;

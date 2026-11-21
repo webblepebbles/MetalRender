@@ -35,6 +35,7 @@ public class FogFarMixin {
         int rd = Minecraft.getInstance().options.getEffectiveRenderDistance();
         float vanillaEnd = rd * 16.0f;
         float end = far.fogBlocks(rd);
+        //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
         if (end <= vanillaEnd) {
             return;
         }

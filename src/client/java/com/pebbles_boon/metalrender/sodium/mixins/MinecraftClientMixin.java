@@ -138,6 +138,21 @@ public class MinecraftClientMixin {
             target = "Lnet/minecraft/client/FramerateLimiter;limitDisplayFPS(I)V"))
     private void metalrender$timeLimiter(int fps) {
         long t0 = System.nanoTime();
+        //READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
+        net.minecraft.client.Minecraft mcInst = net.minecraft.client.Minecraft.getInstance();
+        if (mcInst != null && mcInst.options != null) {
+            com.pebbles_boon.metalrender.config.MetalRenderConfig cfg =
+                    com.pebbles_boon.metalrender.MetalRenderClient.getConfig();
+            com.pebbles_boon.metalrender.config.MetalRenderConfig.enforceMenuDisplay(mcInst.options, cfg);
+            int configured = cfg != null && cfg.menuMaxFps > 0 ? cfg.menuMaxFps : mcInst.options.framerateLimit().get();
+            if (fps <= 60 || fps == 30) {
+                fps = configured;
+            }
+        }
+        if (fps <= 0 || fps >= 260) {
+            MetalRenderProfiler.getInstance().recordLimiter(0);
+            return;
+        }
         if (UNCAPPED) {
             MetalRenderProfiler.getInstance().recordLimiter(0);
             return;

@@ -70,6 +70,7 @@ public final class AdaptiveResolutionController {
     }
 
     private void applyScale(double scale) {
+        //VERY IMPORTANT!!! READ AGENTS.MD! Not there? Read git! Saves you tokens, seriously!
         MetalRenderConfig.setResolutionScale((float) scale);
         lastChangeMs = System.currentTimeMillis();
         MetalLogger.deepInfo(

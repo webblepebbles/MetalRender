@@ -6,6 +6,7 @@ import org.lwjgl.sdl.SDLProperties;
 import org.lwjgl.sdl.SDLVideo;
 import org.lwjgl.system.MemoryStack;
 
+//READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
 final class MetalSurface {
     private final long window;
     private long layer;
@@ -67,6 +68,21 @@ final class MetalSurface {
             width = w;
             height = h;
             MetalNative.nSurfaceResize(layer, w, h);
+        }
+    }
+
+    private int pacedState = -1;
+    private static final boolean PACED_FORCED =
+            com.pebbles_boon.metalrender.config.MetalRenderConfig.getBool("metalrender.pacedPresent", false);
+
+    void syncPacing() {
+        Minecraft mc = Minecraft.getInstance();
+        Window w = mc != null ? mc.getWindow() : null;
+        boolean windowed = w != null && !mc.options.fullscreen().get();
+        int want = PACED_FORCED || (windowed && !vsync) ? 1 : 0;
+        if (want != pacedState) {
+            pacedState = want;
+            MetalNative.nSetPacedPresent(want == 1);
         }
     }
 

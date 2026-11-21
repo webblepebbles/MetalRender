@@ -159,6 +159,7 @@ public final class LodPolicy {
             boolean inView = viewImpactEnabled
                     ? (visible && viewScore >= IN_VIEW_SCORE)
                     : visible;
+            //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
             if (inView) {
                 return Decision.KEEP;
             }

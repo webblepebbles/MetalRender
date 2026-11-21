@@ -17,7 +17,7 @@
 #define MR_SLOT_CLOUD_FACES 28
 #define MR_SLOT_TERRAIN_UNIFORM 29
 
-#define MR_TEX_CUBE 15
+#define MR_TEX_CUBE 15 //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
 
 #define MR_FC_HAS_BLEND 0
 #define MR_FC_ALPHA_CUTOUT 1

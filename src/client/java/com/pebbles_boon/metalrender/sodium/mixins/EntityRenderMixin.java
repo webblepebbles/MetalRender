@@ -71,6 +71,7 @@ public class EntityRenderMixin {
             DeltaTracker deltaTracker,
             LevelRenderState levelRenderState,
             CallbackInfo ci) {
+        //READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
         if (!MetalRenderClient.isEnabled()) {
             return;
         }

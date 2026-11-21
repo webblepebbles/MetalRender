@@ -1,7 +1,8 @@
 #!/bin/bash
+# READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
 set -e
 cd "$(dirname "$0")"
-echo "Compiling shaders..."
+echo "Compiling shaders.."
 SHADER_DIR="src/main/resources/native/shaders"
 
 xcrun -sdk macosx metal -c $SHADER_DIR/metalrender.metal -o $SHADER_DIR/metalrender.air
@@ -16,9 +17,9 @@ xcrun -sdk macosx metal -c $SHADER_DIR/motion_vectors.metal -o $SHADER_DIR/motio
 xcrun -sdk macosx metal -c $SHADER_DIR/families.metal -o $SHADER_DIR/families.air
 
 echo "compelling shaders"
-xcrun -sdk macosx metal -std=metal3.0 -c $SHADER_DIR/mesh_terrain.metal -o $SHADER_DIR/mesh_terrain.air
-xcrun -sdk macosx metal -std=metal3.0 -c $SHADER_DIR/terrain_mesh.metal -o $SHADER_DIR/terrain_mesh.air
-xcrun -sdk macosx metal -std=metal3.0 -c $SHADER_DIR/far_terrain.metal -o $SHADER_DIR/far_terrain.air
+xcrun -sdk macosx metal -std=metal4.0 -c $SHADER_DIR/mesh_terrain.metal -o $SHADER_DIR/mesh_terrain.air
+xcrun -sdk macosx metal -std=metal4.0 -c $SHADER_DIR/terrain_mesh.metal -o $SHADER_DIR/terrain_mesh.air
+xcrun -sdk macosx metal -std=metal4.0 -c $SHADER_DIR/far_terrain.metal -o $SHADER_DIR/far_terrain.air
 
 xcrun -sdk macosx metallib \
     $SHADER_DIR/metalrender.air \

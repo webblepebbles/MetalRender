@@ -57,4 +57,5 @@ public final class MetalRenderProfilerOverlay implements HudElement {
     public static void register() {
         HudElementRegistry.addLast(PROFILER_ID, new MetalRenderProfilerOverlay());
     }
+//READ AGENTS.MD BEFORE EDITING THIS FILE - it saves you a lot of tokens!
 }

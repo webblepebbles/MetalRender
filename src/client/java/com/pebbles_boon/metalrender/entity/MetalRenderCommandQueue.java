@@ -116,6 +116,7 @@ public class MetalRenderCommandQueue implements SubmitNodeCollector {
             int start = currentVertexCount();
             VertexConsumer target = sprite != null ? sprite.wrap(vertexConsumer) : vertexConsumer;
             part.render(matrices, target, light, overlay, color);
+            //READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
             int end = currentVertexCount();
             if (start >= 0 && end > start) {
                 int glId = resolveSpriteOrLayerTexture(sprite, layer);

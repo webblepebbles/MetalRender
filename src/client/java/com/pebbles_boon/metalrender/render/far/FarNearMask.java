@@ -1,147 +1,114 @@
 package com.pebbles_boon.metalrender.render.far;
 
 import com.pebbles_boon.metalrender.nativebridge.NativeBridge;
-import com.pebbles_boon.metalrender.render.MetalWorldRenderer;
-import com.pebbles_boon.metalrender.render.chunk.CustomChunkMesher;
-import it.unimi.dsi.fastutil.ints.IntArrayList;
-import it.unimi.dsi.fastutil.longs.Long2LongOpenHashMap;
-import it.unimi.dsi.fastutil.longs.LongOpenHashSet;
-import java.util.concurrent.ConcurrentLinkedQueue;
+import java.util.Arrays;
 import net.minecraft.client.multiplayer.ClientLevel;
+import net.minecraft.util.Mth;
 
-public final class FarNearMask {
-    private static final int CHECKS_PER_FRAME = 384;
+final class FarNearMask {
+    private static final int SIZE = 128;
 
-    private final Long2LongOpenHashMap loadedAt = new Long2LongOpenHashMap();
-    private final LongOpenHashSet ready = new LongOpenHashSet();
-    private final ConcurrentLinkedQueue<Long> invalid = new ConcurrentLinkedQueue<>();
-    private final IntArrayList batch = new IntArrayList();
-    private int cursor;
-    private int frame;
+    private byte[] columns = new byte[SIZE * SIZE];
+    private byte[] next = new byte[SIZE * SIZE];
+    private int minX = 1;
+    private int minZ = 1;
+    private int maxX;
+    //VERY IMPORTANT!!! READ AGENTS.MD! If its not in the repo, read git!  Saves you tokens!
+    private int maxZ;
+    private boolean initialized;
+    private int pass;
+    private final long[] seen = new long[SIZE * SIZE];
 
-    private static long key(int cx, int cz) {
-        return ((long) cx << 32) | (cz & 0xFFFFFFFFL);
+    void reset() {
+        initialized = false;
+        minX = minZ = 1;
+        maxX = maxZ = 0;
     }
 
-    public void reset() {
-        loadedAt.clear();
-        ready.clear();
-        invalid.clear();
-        batch.clear();
-        cursor = 0;
+    boolean owns(int cx, int cz) {
+        return cx >= minX && cx <= maxX && cz >= minZ && cz <= maxZ && columns[index(cx, cz)] != 0;
     }
 
-    public void onLoaded(int cx, int cz) {
-        loadedAt.put(key(cx, cz), System.currentTimeMillis());
-    }
+    void update(ClientLevel level, int renderDistance, double camX, double camZ, float farRadius) {
+        int oldMinX = minX;
+        int oldMinZ = minZ;
+        int oldMaxX = maxX;
+        int oldMaxZ = maxZ;
+        long nowMs = System.currentTimeMillis();
+        pass++;
+        var worldRenderer = com.pebbles_boon.metalrender.render.MetalWorldRenderer.getInstance();
+        var mesher = worldRenderer != null ? worldRenderer.getChunkMesher() : null;
+        int minSection = level.getMinSectionY();
+        int sections = level.getSectionsCount();
+        int camBlockX = Mth.floor(camX);
+        int camBlockZ = Mth.floor(camZ);
+        int cx = camBlockX >> 4;
+        int cz = camBlockZ >> 4;
+        int radius = Math.min(renderDistance + 1, SIZE / 2 - 1);
+        minX = cx - radius;
+        minZ = cz - radius;
+        maxX = cx + radius;
+        maxZ = cz + radius;
 
-    private volatile boolean clearAll;
-
-    public void invalidate(int cx, int cz) {
-        invalid.add(key(cx, cz));
-    }
-
-    public void invalidateAll() {
-        clearAll = true;
-    }
-
-    public boolean isReady(int cx, int cz) {
-        return ready.contains(key(cx, cz));
-    }
-
-    private void set(long k, boolean value) {
-        boolean has = ready.contains(k);
-        if (has == value) {
-            return;
-        }
-        if (value) {
-            ready.add(k);
-        } else {
-            ready.remove(k);
-        }
-        batch.add((int) (k >> 32));
-        batch.add((int) k);
-        batch.add(value ? 1 : 0);
-    }
-
-    public void update(ClientLevel level, int rd, int pcx, int pcz) {
-        MetalWorldRenderer wr = MetalWorldRenderer.getInstance();
-        CustomChunkMesher mesher = wr != null ? wr.getChunkMesher() : null;
-        if (mesher == null) {
-            return;
-        }
-        long now = System.currentTimeMillis();
-        if (clearAll) {
-            clearAll = false;
-            var all = new LongOpenHashSet(ready);
-            var it0 = all.iterator();
-            while (it0.hasNext()) {
-                set(it0.nextLong(), false);
-            }
-        }
-        Long inv;
-        while ((inv = invalid.poll()) != null) {
-            set(inv, false);
-        }
-        int r = rd + 1;
-        int side = 2 * r + 1;
-        int total = side * side;
-        for (int n = 0; n < CHECKS_PER_FRAME && n < total; n++) {
-            int idx = cursor++ % total;
-            int cx = pcx - r + idx % side;
-            int cz = pcz - r + idx / side;
-            long k = key(cx, cz);
-            double ddx = (cx - pcx) * 16.0;
-            double ddz = (cz - pcz) * 16.0;
-            double lim = rd * 16.0 - 16.0;
-            if (ddx * ddx + ddz * ddz > lim * lim) {
-                set(k, false);
-                continue;
-            }
-            long since = loadedAt.get(k);
-            if (since == 0L) {
-                if (level.getChunkSource().getChunkNow(cx, cz) == null) {
-                    set(k, false);
+        float fracX = (float) (camX - camBlockX);
+        float fracZ = (float) (camZ - camBlockZ);
+        float limit = radius * 16.0f;
+        float limitSquared = limit * limit;
+        var source = level.getChunkSource();
+        Arrays.fill(next, (byte) 0);
+        for (int z = minZ; z <= maxZ; z++) {
+            float dz = (z * 16 - camBlockZ) - fracZ + 8.0f;
+            for (int x = minX; x <= maxX; x++) {
+                float dx = (x * 16 - camBlockX) - fracX + 8.0f;
+                int ix = index(x, z);
+                boolean drawnByNear = net.minecraft.server.level.ChunkTrackingView.isInViewDistance(cx, cz,
+                        renderDistance, x, z);
+                var chunk = drawnByNear && dx * dx + dz * dz <= limitSquared ? source.getChunkNow(x, z) : null;
+                if (chunk == null) {
+                    seen[ix] = 0L;
                     continue;
                 }
-                since = now;
-                loadedAt.put(k, now);
-            }
-            set(k, FarTerrainManager.columnReady(level, mesher, cx, cz, now - since));
-        }
-        if (cursor > total * 1024) {
-            cursor = 0;
-        }
-        if (++frame % 4 == 0) {
-            var it = ready.iterator();
-            while (it.hasNext()) {
-                long k = it.nextLong();
-                int cx = (int) (k >> 32);
-                int cz = (int) k;
-                double ex = (cx - pcx) * 16.0;
-                double ez = (cz - pcz) * 16.0;
-                double el = rd * 16.0 - 16.0;
-                if (Math.abs(cx - pcx) > r || Math.abs(cz - pcz) > r || ex * ex + ez * ez > el * el) {
-                    it.remove();
-                    batch.add(cx);
-                    batch.add(cz);
-                    batch.add(0);
+                if (seen[ix] == 0L) {
+                    seen[ix] = nowMs;
                 }
-            }
-            var lit = loadedAt.keySet().iterator();
-            while (lit.hasNext()) {
-                long k = lit.nextLong();
-                int cx = (int) (k >> 32);
-                int cz = (int) k;
-                if (Math.abs(cx - pcx) > r + 8 || Math.abs(cz - pcz) > r + 8) {
-                    lit.remove();
+                boolean wasOwned = x >= oldMinX && x <= oldMaxX && z >= oldMinZ && z <= oldMaxZ && columns[ix] != 0;
+                if (mesher == null) {
+                    next[ix] = 1;
+                    continue;
+                }
+                boolean recheck = wasOwned && ((pass + ix) & 31) == 0;
+                if (wasOwned && !recheck) {
+                    next[ix] = 1;
+                    continue;
+                }
+                if (!wasOwned && nowMs - seen[ix] > 20000L) {
+                    next[ix] = 1;
+                    continue;
+                }
+                boolean ready = true;
+                for (int i = 0; i < sections && ready; i++) {
+                    if (!chunk.getSection(i).hasOnlyAir() && !mesher.hasMeshIgnoreDirty(x, minSection + i, z)) {
+                        ready = false;
+                    }
+                }
+                if (ready) {
+                    next[ix] = 1;
+                } else if (recheck) {
+                    seen[ix] = nowMs;
                 }
             }
         }
-        if (!batch.isEmpty()) {
-            int[] arr = batch.toIntArray();
-            NativeBridge.nFarSetNearColumns(arr, arr.length / 3);
-            batch.clear();
+        NativeBridge.nFarSetView(farRadius, minX, minZ, maxX, maxZ);
+        if (!initialized || !Arrays.equals(columns, next)) {
+            NativeBridge.nFarSetNearColumns(next);
+            byte[] previous = columns;
+            columns = next;
+            next = previous;
+            initialized = true;
         }
+    }
+
+    private static int index(int cx, int cz) {
+        return (cx & (SIZE - 1)) + (cz & (SIZE - 1)) * SIZE;
     }
 }

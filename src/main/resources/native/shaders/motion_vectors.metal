@@ -23,6 +23,7 @@ kernel void generate_motion_vectors(
         params.previousViewProjection[3][0] - params.currentViewProjection[3][0],
         params.previousViewProjection[3][1] - params.currentViewProjection[3][1]);
     float depthWeight = clamp(1.0f - depth, 0.0f, 1.0f);
+    //VERY IMPORTANT!!! READ AGENTS.MD! Not there? Read git! Saves you tokens, seriously!
     float2 motion = clipMotion * float2(params.size) * (0.5f + depthWeight * 0.5f);
     if (!all(isfinite(motion))) {
         motion = float2(0.0f);

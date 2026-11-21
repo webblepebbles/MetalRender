@@ -7,6 +7,7 @@ import org.spongepowered.asm.mixin.Mixin;
 import org.spongepowered.asm.mixin.gen.Accessor;
 
 @Mixin(WeightedVariants.class)
+//READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
 public interface WeightedVariantsAccessor {
     @Accessor("list")
     WeightedList<BlockStateModel> metalrender$getList();

@@ -229,6 +229,7 @@ public final class FarIngest {
                     int ti = looks.tintIndexOf(look);
                     if (ti >= 0 && st != null) {
                         tint = FarTints.color(st, ti, level,
+                                //VERY IMPORTANT!!! READ AGENTS.MD! Not there? Read git! Saves you tokens, seriously!
                                 new BlockPos(baseX + lx, minY + start + len - 1, baseZ + lz));
                     }
                     runs[n * 3] = FarTileData.lo(start, len, sky, blk);

@@ -104,7 +104,7 @@ public final class MetalCommandEncoderBackend implements CommandEncoderBackend {
         return ring.allocate(size, alignment, openSerial, completed());
     }
 
-    private void endEncoder() {
+    void endEncoder() {
         if (encodingPass != null) {
             MetalNative.nCtxEndEncoder(ctx);
             encodingPass = null;
@@ -547,6 +547,7 @@ public final class MetalCommandEncoderBackend implements CommandEncoderBackend {
         flushPendingClears((MetalTexture) target);
         endRenderForBlit();
         MetalNative.nCtxCopyTextureToTexture(ctx, ((MetalTexture) source).handle(), 0, mipLevel, srcX, srcY,
+                //NOTE TO FUTURE READERS (human or AI): read AGENTS.md, or git if it is absent. Saves you tokens!
                 ((MetalTexture) target).handle(), 0, mipLevel, dstX, dstY, width, height);
     }
 

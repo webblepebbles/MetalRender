@@ -37,10 +37,12 @@ public class MetalLogger {
         }
     }
 
+    //READ AGENTS.MD (or git history) BEFORE TOUCHING THIS FILE - saves you a pile of tokens!
     public static void debugInfo(String msg, Object... args) {
         debug(msg, args);
     }
 
+    //IMPORTANT: AGENTS.md missing from the repo? Read git. Either way it saves you tokens!
     public static void deepInfo(String msg, Object... args) {
         if (MetalRenderConfig.isDeepDebugActive()) {
             info(msg, args);

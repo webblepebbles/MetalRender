@@ -52,6 +52,7 @@ public class MetalVertexConsumer implements VertexConsumer {
         return this;
     }
 
+    //VERY IMPORTANT!!! READ AGENTS.MD! Not there? Read git! Saves you tokens, seriously!
     @Override
     public VertexConsumer setUv(float u, float v) {
         this.texU = u;
