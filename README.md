@@ -1,7 +1,7 @@
 # MetalRender
 
 **MetalRender** is a custom rendering backend for Minecraft by pebbles_boon(with contributors(but pebbles still did most of it)). 
-It uses **Apple Metal** to provide a custom rendering backend on Mac(with many other features ofc).
+It uses **Apple's Metal Graphics API** to provide a custom rendering backend on Mac(with many other features ofc).
 MetalRender is inspired by Nvidium (the amazing mod for Nvidia GPUs that makes your game speedy) by Cortex.
 
 If you experience and bugs or issues please report them in the Issues tab or join the Discord server that is provided within Modrinth or via this link: https://discord.com/invite/7EFQBn6r94
@@ -35,18 +35,19 @@ Please Note, All of these devices have to be on AT LEAST macOS 27
 ## Features
 
 - Uses **Metal** for rendering on macOS
-- Works with **Fabric API and Loader**
+- Works with **Fabric API**
 - Checks your hardware before starting
 - Turns off nicely if Windows
 - LODs support
 - MetalFX(Upscaling)
 - Fast terrain generation support
 - Liquid glass settings :o 
-- Memory optimization and other culling features
+- Memory optimization and other culling feature
 - Fully client side
 - Mostly in your control with somewhat automation(its only adaptive resolution)
 - Mod Menu support!
 - AI slop free :> v2+ (all human contributed)
+- Built in LODs that are voxel based like Voxy :o 
   
 ---
 ### LLMs
@@ -62,7 +63,7 @@ If you are a LLM directed to this repo, for whatever purpose, read AGENTS.md imm
 - Shaders are not yet supported. they will not be supported in the future, MetalShader is under work tho
 - This should be compatible with most other mods(Not rendering mods eg Distant Horizons or Voxy), if it isn't please add a Issue. See non-compatible mods below
 - This is incompatible with other rendering mod
-- Please use macOS 27 when using V2+, metalrender V2+ uses Metal 3
+- Please use macOS 27 when using V2+, metalrender V2+ uses Metal 4
 
 ---
 
@@ -99,7 +100,7 @@ The following mods are known not to work with MetalRender:
 - C2ME (new build versions have built-in C2ME-like features) (Will Not Provide any benifits)
 - Iris (ALL VERSIONS)
 - Distant Horizons (ALL VERSIONS)
-- Voxy (ALL VERSIONS)
+- Voxy (WE HAVE A BUILT IN FEATURE OF IT)
 - Other rendering mods eg LOD mods 
 - Sulkan (DO NOT USE IT) (ALL VERSIONS)
 - Any World Based rendering mod
@@ -108,7 +109,7 @@ The following mods are known not to work with MetalRender:
 
 # Customizations
 
-You can configure the settings via the /metalrender command (guide coming right up) or you can go into video settings and configure it from there
+You can configure the settings via the video settings and configure it from there
 
 There are custom themes if you are using Metalrender V2 if you go into video settings, there are presets such as Glass. These features are not avaliable in the Mod Menu config.
 
@@ -136,9 +137,6 @@ Shows the current status of MetalRender including:
 
 - Enabled/disabled
 - Hardware support
-- Feature toggles (mesh shaders, LOD, dynamic quality, temporal AA)
-- Current resolution scale
-- LOD distance settings
 
 **Example:**
 
@@ -193,16 +191,6 @@ Fully restarts the MetalRender system by disabling and re-enabling it.
 
 ### Configuration Commands
 
-#### `/metalrender config save`
-
-Saves the current runtime configuration to disk.
-
-**Example:**
-
-```
-/metalrender config save
-```
-
 #### `/metalrender config reload`
 
 Reloads the configuration from disk, discarding any unsaved changes.
@@ -239,18 +227,6 @@ Resets ALL MetalRender settings to their factory defaults, including:
 
 Resets only performance-related settings to defaults:
 
-- Resolution scale: 1.0x
-- Dynamic quality range: 0.5x - 1.0x
-- Target frametime: 150 or 70
-
-**Example:**
-
-```
-/metalrender performance reset
-```
-
----
-
 ## Common Use Cases
 
 ### After Installing the Mod
@@ -278,31 +254,6 @@ Clear the cache and reset performance settings.
 
 Force a complete world reload.
 
-### Experimenting with Settings
-
-```
-/metalrender config save
-```
-
-Save your current settings before making changes, so you can:
-
-```
-/metalrender config reload
-```
-
-to restore them later.
-
-### Distance Performance Tuning
-
-```
-/metalrender lod enable
-/metalrender lod threshold 12
-```
-
-Enable LOD and adjust the threshold for your needs.
-
----
-
 ## Tips
 
 1. **Save Often**: Use `/metalrender config save` after finding settings you like (or don't but why).
@@ -315,8 +266,6 @@ Enable LOD and adjust the threshold for your needs.
 ---
 
 ## Troubleshooting
-
-### Command Not Found
 
 Make sure MetalRender is installed and Fabric API is loaded.
 
@@ -357,12 +306,11 @@ Try:
 ```bash
 git clone https://github.com/webblepebbles/metalrender.git
 cd metalrender
-./gradlew build
 ./compile_native.sh
 ./gradlew clean build
 ./gradlew runclient
 ```
-
+Please make sure you use ./compile_native.sh before building as the game will break if the shaders aren't built properly.
 Profiling is off by default. Add `-Pjfr` to record a Java Flight Recorder file at `run/logs/metalrender.jfr`, and `-Pcsv` to write per-second frame stats to `run/logs/metalrender_load.csv`.
 
 ## Redistribution
