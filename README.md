@@ -17,7 +17,7 @@ If you experience and bugs or issues please report them in the Issues tab or joi
 | Fabric        | Necessary                      | [Fabric's official page](https://fabricmc.net/use/installer/)           |
 | Fabric API    | Necessary                      | [Modrinth](https://modrinth.com/mod/fabric-api)                         |
 | シュクリム      | Necessary for survival         | Find it yourself and have a good time                                                        |
-| Java JVM 25   | Necessary                      | [Oracle](https://www.oracle.com/au/java/technologies/downloads/#java25) |
+| Java JVM 25   | Necessary           | [Oracle](https://www.oracle.com/au/java/technologies/downloads/#java25) [Azul Zulu](https://www.azul.com/downloads/?os=macos&architecture=arm-64-bit&package=jdk#zulu)|
 | ModMenu       | Necessary for versions v0.1.6 + | [Modrinth](https://modrinth.com/mod/modmenu)                            |
 | macOS 27        | REQUIRED FOR V2+ | System Settings                       |
 | macOS 26        | REQUIRED FOR V0.1.6| System Settings                       |
