@@ -31,18 +31,18 @@ Please Note, All of these devices have to be on AT LEAST macOS 27
 - Mac Studio March 2022 or Later
 - Mac Mini 2020 or later
 - MacBook Neo 2026 or later
-  
+- MacBook PROLED XDR 2026 or later
+
 ## Features
 
-- Uses **Metal** for rendering on macOS
+- Uses **Metal** for rendering on macOS (faster sped!!!)
 - Works with **Fabric API**
 - Checks your hardware before starting
 - Turns off nicely if Windows
-- LODs support
 - MetalFX(Upscaling)
 - Fast terrain generation support
 - Liquid glass settings :o 
-- Memory optimization and other culling feature
+- Memory optimization and other culling features
 - Fully client side
 - Mostly in your control with somewhat automation(its only adaptive resolution)
 - Mod Menu support!
@@ -115,7 +115,7 @@ There are custom themes if you are using Metalrender V2 if you go into video set
 
 # MetalRender Commands
 
-MetalRender commands allow you to configure MetalRender settings, check status and much more, all without opening the Config menu (avaliable in v0.1.6 and v2.1+ with ModMenu!).
+MetalRender commands allow you to configure MetalRender settings, check status and much more, all without opening the Config menu (avaliable in v0.1.6 and v2+ with ModMenu!).
 
 ## start here
 
