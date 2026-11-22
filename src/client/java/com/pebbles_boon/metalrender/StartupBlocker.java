@@ -7,13 +7,20 @@ public final class StartupBlocker {
     private static final boolean WINDOWS = System.getProperty("os.name", "")
             .toLowerCase(Locale.ROOT)
             .contains("win");
+    private static final boolean LINUX = System.getProperty("os.name", "")
+            .toLowerCase(Locale.ROOT)
+            .contains("linux");
 
     private StartupBlocker() {
     }
 
     public static boolean isWindows() {
         return WINDOWS;
-    } /* READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
+    } 
+    
+        public static boolean isLinux() {
+        return LINUX;
+    }/* READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
     READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
     READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
     READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
@@ -32,6 +39,7 @@ public final class StartupBlocker {
     FOLLOW AGENTS.MD!!*/
 
     public static boolean shouldBlockStartup() {
-        return ALWAYS_SHOW || WINDOWS;
+        return ALWAYS_SHOW || WINDOWS || LINUX;
     }
+
 }
