@@ -17,6 +17,14 @@ clang++ -O3 -std=c++17 -dynamiclib \
     src/main/resources/native/meshshader.mm \
     src/main/resources/native/metal_backend.mm \
     src/main/resources/native/far_terrain.mm \
+    src/main/resources/native/spirv_translate.cpp \
+    src/main/resources/native/third_party/spirv_cross/spirv_cfg.cpp \
+    src/main/resources/native/third_party/spirv_cross/spirv_cross.cpp \
+    src/main/resources/native/third_party/spirv_cross/spirv_cross_parsed_ir.cpp \
+    src/main/resources/native/third_party/spirv_cross/spirv_cross_util.cpp \
+    src/main/resources/native/third_party/spirv_cross/spirv_glsl.cpp \
+    src/main/resources/native/third_party/spirv_cross/spirv_msl.cpp \
+    src/main/resources/native/third_party/spirv_cross/spirv_parser.cpp \
     -o src/main/resources/libmetalrender_debug_v2.dylib
 
 rm -f src/main/resources/libmetalrender.dylib
