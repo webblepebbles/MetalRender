@@ -70,6 +70,7 @@ public final class MetalCompiledPipeline implements BackendRenderPipeline {
     private final boolean depthWrite;
     private final Map<Long, Long> states = new HashMap<>();
     private boolean failed;
+    private final SpirvTranslation translation;
 
     MetalCompiledPipeline(MetalDeviceBackend device, BackendRenderPipeline.CreateInfo create,
             RenderPipeline info) {
@@ -80,7 +81,9 @@ public final class MetalCompiledPipeline implements BackendRenderPipeline {
         this.drawable = info != null && FamilyTable.drawable(info, family);
         List<VertexFormat> bindings = info != null ? info.getVertexFormatBindings() : List.of();
         VertexFormat format = !bindings.isEmpty() ? bindings.get(0) : null;
-        this.vertexLayout = buildVertexLayout(create, format);
+        this.translation = info != null && drawable ? null : SpirvTranslation.create(device, create);
+        this.vertexLayout = translation != null ? translation.vertexLayout()
+                : buildVertexLayout(create, format);
         List<String> uniformList = new ArrayList<>();
         List<String> samplerList = new ArrayList<>();
         for (BindGroupLayout.UniformDescription u : create.uniforms()) {
@@ -156,6 +159,9 @@ public final class MetalCompiledPipeline implements BackendRenderPipeline {
     public void close() {
         closed = true;
         release();
+        if (translation != null) {
+            translation.release();
+        }
     }
 
     List<String> uniformNames() {
@@ -180,6 +186,18 @@ public final class MetalCompiledPipeline implements BackendRenderPipeline {
 
     boolean drawsNothing() {
         return (drawable && !family.implemented()) || name.contains("oit_");
+    }
+
+    int bufferSlot(String name) {
+        return translation != null ? translation.bufferSlot(name) : MetalBindings.bufferSlot(name);
+    }
+
+    int textureSlot(String name, int position) {
+        if (translation != null) {
+            int slot = translation.textureSlot(name);
+            return slot >= 0 ? slot : position;
+        }
+        return MetalBindings.textureSlot(name, position);
     }
 
     int primitive() {
@@ -222,6 +240,18 @@ public final class MetalCompiledPipeline implements BackendRenderPipeline {
         }
         if (failed) {
             return 0;
+        }
+        if (translation != null) {
+            long translated = MetalNative.nRenderPipelineCreateTranslated(device.deviceHandle(),
+                    translation.vertexLibrary(), translation.fragmentLibrary(), vertexLayout, colorFormat,
+                    depthFormat, blend, writeMask, topology);
+            if (translated == 0) {
+                failed = true;
+                MetalLogger.error("translated pipeline %s failed: %s", name, MetalNative.nLastError());
+                return 0;
+            }
+            states.put(key, translated);
+            return translated;
         }
         String vertexFunction;
         String fragmentFunction;
@@ -340,7 +370,10 @@ public final class MetalCompiledPipeline implements BackendRenderPipeline {
     }
 
     static int vertexFormat(VertexFormatElement element) {
-        GpuFormat format = element.format();
+        return vertexFormat(element.format());
+    }
+
+    static int vertexFormat(GpuFormat format) {
         int count = format.componentCount();
         boolean n;
         int kind;
