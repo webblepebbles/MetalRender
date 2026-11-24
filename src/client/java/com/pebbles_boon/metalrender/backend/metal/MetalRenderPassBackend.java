@@ -268,7 +268,7 @@ public final class MetalRenderPassBackend implements RenderPassBackend {
             GpuBufferSlice slice = entry.getValue();
             int texelSlot = MetalBindings.texelBufferSlot(name);
             boolean texel = texelSlot >= 0;
-            int slot = texel ? texelSlot : MetalBindings.bufferSlot(name);
+            int slot = texel ? texelSlot : compiled.bufferSlot(name);
             if (slice == null || slot < 0) {
                 continue;
             }
@@ -290,7 +290,7 @@ public final class MetalRenderPassBackend implements RenderPassBackend {
                 continue;
             }
             int slot = binding.view().texture().isCube() ? MetalBindings.CUBE_TEXTURE_SLOT
-                    : MetalBindings.textureSlot(samplerNames.get(i), i);
+                    : compiled.textureSlot(samplerNames.get(i), i);
             if (encoder.bindTexture(slot, binding.view().handle(), binding.sampler().handle())) {
                 MetalNative.nCtxSetTexture(ctx, binding.view().handle(), binding.sampler().handle(), slot);
             }

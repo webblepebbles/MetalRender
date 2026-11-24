@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "shaders/families_layout.h"
+#include "spirv_translate.h"
 
 extern id<MTLDevice> g_device;
 
@@ -717,6 +718,60 @@ extern "C" JNIEXPORT jlong JNICALL MR_JNI(nDepthStencilCreate)(JNIEnv *, jclass,
   }
 }
 
+static jlong mr_build_pipeline(JNIEnv *env, id<MTLDevice> d, id<MTLFunction> vf, id<MTLFunction> ff,
+                                jintArray vertexLayout, jint colorFormat, jint depthFormat, jintArray blend,
+                                jint writeMask, jint topologyClass, const std::string &label) {
+  @autoreleasepool {
+    NSError *error = nil;
+    MTLRenderPipelineDescriptor *desc = [[[MTLRenderPipelineDescriptor alloc] init] autorelease];
+    desc.vertexFunction = vf;
+    desc.fragmentFunction = ff;
+    if (vertexLayout) {
+      jsize n = env->GetArrayLength(vertexLayout);
+      jint *v = env->GetIntArrayElements(vertexLayout, nullptr);
+      if (n >= 1 && v[0] > 0) {
+        MTLVertexDescriptor *vd = [MTLVertexDescriptor vertexDescriptor];
+        vd.layouts[MR_SLOT_VERTEX].stride = (NSUInteger)v[0];
+        vd.layouts[MR_SLOT_VERTEX].stepFunction = MTLVertexStepFunctionPerVertex;
+        vd.layouts[MR_SLOT_VERTEX].stepRate = 1;
+        for (jsize i = 1; i + 2 < n; i += 3) {
+          NSUInteger attr = (NSUInteger)v[i];
+          vd.attributes[attr].format = (MTLVertexFormat)v[i + 1];
+          vd.attributes[attr].offset = (NSUInteger)v[i + 2];
+          vd.attributes[attr].bufferIndex = MR_SLOT_VERTEX;
+        }
+        desc.vertexDescriptor = vd;
+      }
+      env->ReleaseIntArrayElements(vertexLayout, v, JNI_ABORT);
+    }
+    desc.colorAttachments[0].pixelFormat = (MTLPixelFormat)colorFormat;
+    desc.depthAttachmentPixelFormat = (MTLPixelFormat)depthFormat;
+    desc.inputPrimitiveTopology = (MTLPrimitiveTopologyClass)topologyClass;
+    if (colorFormat != (jint)MTLPixelFormatInvalid) {
+      desc.colorAttachments[0].writeMask = (MTLColorWriteMask)writeMask;
+      if (blend) {
+        jint *b = env->GetIntArrayElements(blend, nullptr);
+        if (b[0]) {
+          desc.colorAttachments[0].blendingEnabled = YES;
+          desc.colorAttachments[0].sourceRGBBlendFactor = (MTLBlendFactor)b[1];
+          desc.colorAttachments[0].destinationRGBBlendFactor = (MTLBlendFactor)b[2];
+          desc.colorAttachments[0].sourceAlphaBlendFactor = (MTLBlendFactor)b[3];
+          desc.colorAttachments[0].destinationAlphaBlendFactor = (MTLBlendFactor)b[4];
+          desc.colorAttachments[0].rgbBlendOperation = MTLBlendOperationAdd;
+          desc.colorAttachments[0].alphaBlendOperation = MTLBlendOperationAdd;
+        }
+        env->ReleaseIntArrayElements(blend, b, JNI_ABORT);
+      }
+    }
+    id<MTLRenderPipelineState> pso = [d newRenderPipelineStateWithDescriptor:desc error:&error];
+    if (!pso) {
+      mr_set_error(error, ("pipeline " + label).c_str());
+      return 0;
+    }
+    return (jlong)(uintptr_t)pso;
+  }
+}
+
 extern "C" JNIEXPORT jlong JNICALL MR_JNI(nRenderPipelineCreate)(JNIEnv *env, jclass, jlong device,
                                                                  jlong library, jstring vertexName,
                                                                  jstring fragmentName, jintArray constants,
@@ -765,52 +820,72 @@ extern "C" JNIEXPORT jlong JNICALL MR_JNI(nRenderPipelineCreate)(JNIEnv *env, jc
       mr_set_error(error, ("fragment function " + fn).c_str());
       return 0;
     }
-    MTLRenderPipelineDescriptor *desc = [[[MTLRenderPipelineDescriptor alloc] init] autorelease];
-    desc.vertexFunction = vf;
-    desc.fragmentFunction = ff;
-    if (vertexLayout) {
-      jsize n = env->GetArrayLength(vertexLayout);
-      jint *v = env->GetIntArrayElements(vertexLayout, nullptr);
-      if (n >= 1 && v[0] > 0) {
-        MTLVertexDescriptor *vd = [MTLVertexDescriptor vertexDescriptor];
-        vd.layouts[MR_SLOT_VERTEX].stride = (NSUInteger)v[0];
-        vd.layouts[MR_SLOT_VERTEX].stepFunction = MTLVertexStepFunctionPerVertex;
-        vd.layouts[MR_SLOT_VERTEX].stepRate = 1;
-        for (jsize i = 1; i + 2 < n; i += 3) {
-          NSUInteger attr = (NSUInteger)v[i];
-          vd.attributes[attr].format = (MTLVertexFormat)v[i + 1];
-          vd.attributes[attr].offset = (NSUInteger)v[i + 2];
-          vd.attributes[attr].bufferIndex = MR_SLOT_VERTEX;
-        }
-        desc.vertexDescriptor = vd;
-      }
-      env->ReleaseIntArrayElements(vertexLayout, v, JNI_ABORT);
-    }
-    desc.colorAttachments[0].pixelFormat = (MTLPixelFormat)colorFormat;
-    desc.depthAttachmentPixelFormat = (MTLPixelFormat)depthFormat;
-    desc.inputPrimitiveTopology = (MTLPrimitiveTopologyClass)topologyClass;
-    if (colorFormat != (jint)MTLPixelFormatInvalid) {
-      desc.colorAttachments[0].writeMask = (MTLColorWriteMask)writeMask;
-      if (blend) {
-        jint *b = env->GetIntArrayElements(blend, nullptr);
-        if (b[0]) {
-          desc.colorAttachments[0].blendingEnabled = YES;
-          desc.colorAttachments[0].sourceRGBBlendFactor = (MTLBlendFactor)b[1];
-          desc.colorAttachments[0].destinationRGBBlendFactor = (MTLBlendFactor)b[2];
-          desc.colorAttachments[0].sourceAlphaBlendFactor = (MTLBlendFactor)b[3];
-          desc.colorAttachments[0].destinationAlphaBlendFactor = (MTLBlendFactor)b[4];
-          desc.colorAttachments[0].rgbBlendOperation = MTLBlendOperationAdd;
-          desc.colorAttachments[0].alphaBlendOperation = MTLBlendOperationAdd;
-        }
-        env->ReleaseIntArrayElements(blend, b, JNI_ABORT);
-      }
-    }
-    id<MTLRenderPipelineState> pso = [d newRenderPipelineStateWithDescriptor:desc error:&error];
-    if (!pso) {
-      mr_set_error(error, ("pipeline " + vn + "/" + fn).c_str());
+    return mr_build_pipeline(env, d, vf, ff, vertexLayout, colorFormat, depthFormat, blend, writeMask,
+                             topologyClass, vn + "/" + fn);
+  }
+}
+
+extern "C" JNIEXPORT jlong JNICALL MR_JNI(nSpirvLibraryCreate)(JNIEnv *env, jclass, jlong device, jobject spv,
+                                                               jint length, jboolean vertexStage,
+                                                               jintArray bindings) {
+  @autoreleasepool {
+    id<MTLDevice> d = (id<MTLDevice>)(uintptr_t)device;
+    void *bytes = spv ? env->GetDirectBufferAddress(spv) : nullptr;
+    if (!d || !bytes || length < 20 || (length % 4) != 0) {
+      g_backendLastError = "invalid spirv module";
       return 0;
     }
-    return (jlong)(uintptr_t)pso;
+    std::vector<uint32_t> words((size_t)length / 4);
+    memcpy(words.data(), bytes, (size_t)length);
+    std::vector<int> table;
+    if (bindings) {
+      jsize n = env->GetArrayLength(bindings);
+      table.resize((size_t)n);
+      env->GetIntArrayRegion(bindings, 0, n, table.data());
+    }
+    std::string msl;
+    std::string error;
+    if (!mr_spirv_to_msl(words.data(), words.size(), vertexStage == JNI_TRUE, table.data(), table.size(), msl,
+                         error)) {
+      g_backendLastError = "spirv translation failed: " + error;
+      return 0;
+    }
+    MTLCompileOptions *options = [[[MTLCompileOptions alloc] init] autorelease];
+    options.languageVersion = MTLLanguageVersion2_4;
+    NSError *nsError = nil;
+    id<MTLLibrary> lib = [d newLibraryWithSource:[NSString stringWithUTF8String:msl.c_str()]
+                                         options:options
+                                           error:&nsError];
+    if (!lib) {
+      mr_set_error(nsError, "translated msl failed to compile");
+      return 0;
+    }
+    id<MTLFunction> entry = [lib newFunctionWithName:@MR_SPIRV_ENTRY];
+    if (!entry) {
+      [lib release];
+      g_backendLastError = "translated msl has no entry point";
+      return 0;
+    }
+    [entry release];
+    return (jlong)(uintptr_t)lib;
+  }
+}
+
+extern "C" JNIEXPORT jlong JNICALL MR_JNI(nRenderPipelineCreateTranslated)(
+    JNIEnv *env, jclass, jlong device, jlong vertexLibrary, jlong fragmentLibrary, jintArray vertexLayout,
+    jint colorFormat, jint depthFormat, jintArray blend, jint writeMask, jint topologyClass) {
+  @autoreleasepool {
+    id<MTLDevice> d = (id<MTLDevice>)(uintptr_t)device;
+    id<MTLLibrary> vl = (id<MTLLibrary>)(uintptr_t)vertexLibrary;
+    id<MTLLibrary> fl = (id<MTLLibrary>)(uintptr_t)fragmentLibrary;
+    id<MTLFunction> vf = [[vl newFunctionWithName:@MR_SPIRV_ENTRY] autorelease];
+    id<MTLFunction> ff = [[fl newFunctionWithName:@MR_SPIRV_ENTRY] autorelease];
+    if (!vf || !ff) {
+      g_backendLastError = "translated library has no entry point";
+      return 0;
+    }
+    return mr_build_pipeline(env, d, vf, ff, vertexLayout, colorFormat, depthFormat, blend, writeMask,
+                             topologyClass, "translated");
   }
 }
 

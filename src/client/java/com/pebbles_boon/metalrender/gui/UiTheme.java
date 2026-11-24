@@ -76,6 +76,21 @@ public enum UiTheme {
             0xFF776C90, 0xFFA38BCF, 0xFF69C99D, 0xFF5F586E,
             false, 14, 12),
 
+    BLUEISHIDK(
+            "Blueishidk",
+            0xFF15161F, 0xFF1E202D,
+            0x50000000,
+            0xFF262836, 0x24FFFFFF, 0x20FFFFFF, 0x08AEB6FA,
+            0x0016161B, 0x001E1E26,
+            0xFF1E202D, 0xFF3C4496, 0xFF30334A,
+            0xFF2D3042, 0xFF383B52, 0x18C4C9FA,
+            0x12C4C9FA, 0xFFF0F1FF, 0xFFB0B4D0, 0xFF8E98F7,
+            0xFF69C99D, 0xFFB4B6C8,
+            0xFF5865F2, 0xFF7983F5, 0xFF434659, 0x30FFFFFF,
+            0xFF5865F2, 0xFF7983F5,
+            0xFF70749A, 0xFF5865F2, 0xFF69C99D, 0xFF5A5D70,
+            false, 14, 12),
+
     CUSTOM(
             "Custom",
             0xFF14181E, 0xFF1E242E,
