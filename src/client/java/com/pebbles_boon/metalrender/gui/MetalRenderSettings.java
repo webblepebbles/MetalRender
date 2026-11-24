@@ -229,7 +229,7 @@ final class MetalRenderSettings {
 
     void addFarTerrain(Controls controls) {
         controls.section("Far Terrain");
-        controls.slider("Far Distance (extra chunks)", 0, 512, 8, config.farDistanceChunks,
+        controls.slider("Far Distance (extra chunks)", 0, 1024, 8, config.farDistanceChunks,
                 v -> config.farDistanceChunks = v.intValue());
         controls.slider("Far Full-Detail Range (chunks)", 8, 512, 8, config.farQuality / 16,
                 v -> config.farQuality = v.intValue() * 16);

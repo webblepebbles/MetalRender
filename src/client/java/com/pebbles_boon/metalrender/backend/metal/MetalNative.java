@@ -90,6 +90,13 @@ final class MetalNative {
             String fragmentName, int[] constants, int[] vertexLayout, int colorFormat,
             int depthFormat, int[] blend, int writeMask, int topologyClass);
 
+    static native long nSpirvLibraryCreate(long device, ByteBuffer spv, int length, boolean vertexStage,
+            int[] bindings);
+
+    static native long nRenderPipelineCreateTranslated(long device, long vertexLibrary,
+            long fragmentLibrary, int[] vertexLayout, int colorFormat, int depthFormat, int[] blend,
+            int writeMask, int topologyClass);
+
     static native long nCtxCreate(long device, long queue, long library);
 
     static native void nCtxDestroy(long ctx);
