@@ -407,6 +407,7 @@ public class MetalWorldRenderer {
         if (worldLoaded && renderingActive) {
             return;
         }
+        instance = this;
         lodPolicy.clear();
         lastAtlasApplied = 0;
         lastLightmapApplied = 0;
