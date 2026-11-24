@@ -44,6 +44,8 @@ public final class MetalRenderConfig {
     public boolean enableIndirectCommandBuffers = true;
     public boolean enableCameraFacingCulling = true;
     public String uiTheme = "LIQUID_GLASS";
+    public float glassOpacity = 0.30f;
+    public String glassTint = "NONE";
     public String customHexBg = "0A0E16";
     public String customHexPanel = "1E242E";
     public String customHexAccent = "5AC8FF";
@@ -183,6 +185,10 @@ public final class MetalRenderConfig {
                     cfg.enableGreedyFar = obj.get("enableGreedyFar").getAsBoolean();
                 if (obj.has("uiTheme"))
                     cfg.uiTheme = obj.get("uiTheme").getAsString();
+                if (obj.has("glassTint"))
+                    cfg.glassTint = obj.get("glassTint").getAsString();
+                if (obj.has("glassOpacity"))
+                    cfg.glassOpacity = Math.max(0.0f, Math.min(1.0f, obj.get("glassOpacity").getAsFloat()));
                 if (obj.has("farDistanceChunks"))
                     cfg.farDistanceChunks = Math.max(0, Math.min(512, obj.get("farDistanceChunks").getAsInt()));
                 if (obj.has("farDetail"))
@@ -298,6 +304,8 @@ public final class MetalRenderConfig {
             obj.addProperty("enableGreedyMid", enableGreedyMid);
             obj.addProperty("enableGreedyFar", enableGreedyFar);
             obj.addProperty("uiTheme", uiTheme);
+            obj.addProperty("glassOpacity", glassOpacity);
+            obj.addProperty("glassTint", glassTint);
             obj.addProperty("farDistanceChunks", farDistanceChunks);
             obj.addProperty("farDetail", farQuality);
             obj.addProperty("farThreads", farThreads);

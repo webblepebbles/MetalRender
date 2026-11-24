@@ -202,11 +202,13 @@ fragment float4 gui_fragment(VOut in [[stage_in]],
   }
   float4 color = in.color;
   if (FS_VARIANT == MR_FS_GLASS) {
-    float packed = round(in.color.a * 255.0);
-    bool pane = packed >= 128.0;
-    float scale = max(1.0, packed - (pane ? 128.0 : 0.0));
+    uint packedA = uint(round(in.color.a * 255.0));
+    uint packedB = uint(round(in.color.b * 255.0));
+    bool pane = (packedA & 128u) != 0u;
+    float scale = max(1.0, float(packedA & 15u));
+    float paneAlpha = float((((packedA >> 4) & 7u) << 3) | (packedB >> 5)) / 63.0;
     float2 size = max(float2(1.0), round(in.color.rg * 255.0) * scale);
-    float radius = min(round(in.color.b * 255.0), min(size.x, size.y) * 0.5);
+    float radius = min(float(packedB & 31u), min(size.x, size.y) * 0.5);
     float2 local = (in.uv0 - 0.5) * size;
     float2 q = abs(local) - size * 0.5 + radius;
     float distance = length(max(q, 0.0)) + min(max(q.x, q.y), 0.0) - radius;
@@ -220,19 +222,28 @@ fragment float4 gui_fragment(VOut in [[stage_in]],
     float inner = exp(-abs(distance + 1.8) * 1.5);
     float light = dot(normal, normalize(float2(-0.55, -0.83)));
     float2 texel = 1.0 / float2(tex0.get_width(), tex0.get_height());
-    float2 refractedUv = in.uv1 + normal * texel * rim * 0.8;
+    float depth = max(6.0, min(28.0, min(size.x, size.y) * 0.5));
+    float bend = pow(clamp(1.0 + distance / depth, 0.0, 1.0), 2.0);
+    float2 refractedUv = in.uv1 - normal * texel * bend * 7.0;
     float3 scene = tex0.sample(s0, refractedUv).rgb;
     if (pane) {
       float3 body = mix(scene, float3(0.10, 0.13, 0.17), 0.22);
-      body += rim * (0.12 + 0.25 * max(light, 0.0));
+      body += rim * (0.14 + 0.30 * max(light, 0.0)) + bend * 0.03;
       body -= inner * max(-light, 0.0) * 0.05;
-      return float4(body, coverage);
+      return float4(body, coverage * paneAlpha);
     }
     float highlight = rim * (0.25 + 0.65 * max(light, 0.0));
     float shade = inner * max(-light, 0.0) * 0.17;
     float alpha = (0.035 + highlight + shade) * coverage;
     float3 lens = mix(scene, float3(0.94, 0.98, 1.0), 0.7);
     lens = mix(lens, float3(0.07, 0.10, 0.14), shade * 3.0);
+    float bodyA = paneAlpha * coverage;
+    if (bodyA > 0.0) {
+      float3 bodyCol = mix(scene, float3(0.10, 0.13, 0.17), 0.10)
+          + rim * (0.12 + 0.25 * max(light, 0.0)) + bend * 0.04;
+      lens = mix(bodyCol, lens, alpha / (alpha + bodyA + 1e-4));
+      alpha = alpha + bodyA * (1.0 - alpha);
+    }
     return float4(lens, alpha);
   }
   if (GUI_TEX2D) {

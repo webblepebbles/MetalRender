@@ -125,18 +125,24 @@ public class MetalRenderSettingsScreen extends Screen implements MetalRenderSett
             }
         }
 
-        boolean draw(GuiGraphicsExtractor ctx, int x, int y, int width, int height, int radius) {
-            return drawLens(ctx, x, y, width, height, radius, true);
+        boolean draw(GuiGraphicsExtractor ctx, int x, int y, int width, int height, int radius, float paneAlpha) {
+            return drawLens(ctx, x, y, width, height, radius, true, paneAlpha);
         }
 
         boolean drawLens(GuiGraphicsExtractor ctx, int x, int y, int width, int height, int radius, boolean pane) {
+            return drawLens(ctx, x, y, width, height, radius, pane, 0.0f);
+        }
+
+        boolean drawLens(GuiGraphicsExtractor ctx, int x, int y, int width, int height, int radius, boolean pane,
+                float paneAlpha) {
             if (blurredView == null)
                 return false;
-            int scale = Math.max(1, (Math.max(width, height) + 254) / 255);
-            int metadata = ((scale + (pane ? 128 : 0)) << 24)
+            int scale = Math.min(15, Math.max(1, (Math.max(width, height) + 254) / 255));
+            int op = Math.round(Math.max(0.0f, Math.min(1.0f, paneAlpha)) * 63.0f);
+            int metadata = ((scale | (pane ? 128 : 0) | ((op >> 3) << 4)) << 24)
                     | (Math.min(255, Math.round((float) width / scale)) << 16)
                     | (Math.min(255, Math.round((float) height / scale)) << 8)
-                    | Math.min(255, radius);
+                    | Math.min(31, radius) | ((op & 7) << 5);
             ctx.blit(SURFACE, TEXTURE, x, y, 0.0f, 0.0f, width, height, width, height, metadata);
             return true;
         }
@@ -410,7 +416,18 @@ public class MetalRenderSettingsScreen extends Screen implements MetalRenderSett
         customHexPanel = config.customHexPanel;
         customHexAccent = config.customHexAccent;
         customHexText = config.customHexText;
-        applyTheme(UiTheme.fromString(config.uiTheme));
+        UiTheme savedTheme = UiTheme.fromString(config.uiTheme);
+        if (savedTheme != UiTheme.LIQUID_GLASS) {
+            config.glassTint = savedTheme.name();
+            config.glassOpacity = 0.60f;
+        } else if ("BLURPLE".equalsIgnoreCase(config.glassTint)) {
+            config.glassTint = UiTheme.BLUEISHIDK.name();
+        }
+        if (savedTheme != UiTheme.LIQUID_GLASS) {
+            config.uiTheme = UiTheme.LIQUID_GLASS.name();
+            config.save();
+        }
+        applyTheme(UiTheme.LIQUID_GLASS);
         Options o = Minecraft.getInstance().options;
         pendingRenderDist = o.renderDistance().get();
         pendingSimDist = o.simulationDistance().get();
@@ -563,15 +580,70 @@ public class MetalRenderSettingsScreen extends Screen implements MetalRenderSett
         }
     }
 
+    private static int lerpRgb(int a, int b, float t) {
+        int r = Math.round((a >> 16 & 0xFF) + ((b >> 16 & 0xFF) - (a >> 16 & 0xFF)) * t);
+        int g = Math.round((a >> 8 & 0xFF) + ((b >> 8 & 0xFF) - (a >> 8 & 0xFF)) * t);
+        int bl = Math.round((a & 0xFF) + ((b & 0xFF) - (a & 0xFF)) * t);
+        return r << 16 | g << 8 | bl;
+    }
+
+    private static int softSolidRgb(int rgb) {
+        float r = rgb >> 16 & 0xFF, g = rgb >> 8 & 0xFF, b = rgb & 0xFF;
+        float luma = (0.299f * r + 0.587f * g + 0.114f * b) / 255.0f;
+        float k = luma > 0.25f ? 0.25f / luma : 1.0f;
+        return Math.round(r * k) << 16 | Math.round(g * k) << 8 | Math.round(b * k);
+    }
+
+    private boolean themeSelected(UiTheme th) {
+        String t = config.glassTint == null ? "NONE" : config.glassTint;
+        return th == UiTheme.LIQUID_GLASS ? t.equalsIgnoreCase("NONE") : t.equalsIgnoreCase(th.name());
+    }
+
+    private String glassTintLabel() {
+        String t = config.glassTint == null ? "NONE" : config.glassTint;
+        return t.isEmpty() ? "None" : t.charAt(0) + t.substring(1).toLowerCase(java.util.Locale.ROOT);
+    }
+
+    private int glassTintRgb() {
+        String t = config.glassTint == null ? "NONE" : config.glassTint;
+        if (t.equalsIgnoreCase("NONE"))
+            return 0x0E131C;
+        UiTheme th = UiTheme.fromString(t);
+        int accent = th == UiTheme.CUSTOM ? UiTheme.parseHex(customHexAccent, th.accent) : th.accent;
+        int r = (accent >> 16 & 0xFF) * 3 / 4, g = (accent >> 8 & 0xFF) * 3 / 4, b = (accent & 0xFF) * 3 / 4;
+        return r << 16 | g << 8 | b;
+    }
+
     private void drawPanel(GuiGraphicsExtractor ctx) {
         boolean light = activeTheme.isLight;
         if (activeTheme == UiTheme.LIQUID_GLASS) {
             int pr = 22;
             fillRounded(ctx, px, py + 2, pw, ph, 0x28000000, pr);
-            if (!glassBackdrop.draw(ctx, px, py, pw, ph, pr)) {
+            float op = Math.max(0.0f, Math.min(1.0f, config.glassOpacity));
+            float blur = Math.min(1.0f, op / 0.30f);
+            int tintRgb = glassTintRgb();
+            boolean coloured = !"NONE".equalsIgnoreCase(config.glassTint);
+            if (blur < 1.0f) {
+                int a = 0x08 + Math.round(blur * 0x20);
+                if (coloured)
+                    a = Math.min(255, a + Math.round((1.0f - blur) * 0x18));
+                fillRounded(ctx, px, py, pw, ph, (a << 24) | tintRgb, pr);
+                drawRoundedOutline(ctx, px, py, pw, ph, 0x48FFFFFF, pr);
+            }
+            if (blur > 0.0f && !glassBackdrop.draw(ctx, px, py, pw, ph, pr, blur) && blur >= 1.0f) {
                 fillRounded(ctx, px, py, pw, ph, C_PANEL, pr);
                 drawRoundedOutline(ctx, px, py, pw, ph, 0x48FFFFFF, pr);
             }
+            int tint = Math.round(Math.max(0.0f, op - 0.30f) / 0.70f * 0x98);
+            if (coloured)
+                tint = Math.min(0xB0, tint + Math.round(blur * 0x38));
+            float solid = Math.max(0.0f, Math.min(1.0f, (op - 0.85f) / 0.15f));
+            if (solid > 0.0f) {
+                tint = Math.round(tint + (255 - tint) * solid);
+                tintRgb = lerpRgb(tintRgb, softSolidRgb(tintRgb), solid);
+            }
+            if (tint > 0)
+                fillRounded(ctx, px, py, pw, ph, (tint << 24) | tintRgb, pr);
             return;
         }
         fillRounded(ctx, px - 2, py + 3, pw + 4, ph + 2, light ? 0x1450473D : 0x30000000, 22);
@@ -658,6 +730,7 @@ public class MetalRenderSettingsScreen extends Screen implements MetalRenderSett
         int gap = sidebarButtonGap();
         int radius = activeTheme.isLight ? 12 : 10;
         fillRounded(ctx, sx, sy, sw, sh, C_TAB_PILL_BG, radius);
+        glassOverlay(ctx, sx, sy, sw, sh, radius);
         drawRoundedOutline(ctx, sx, sy, sw, sh, activeTheme.isLight ? 0x14000000 : 0x14FFFFFF, radius);
         ctx.fill(sx + 8, sy + 1, sx + sw - 8, sy + 2, activeTheme.isLight ? 0x40FFFFFF : 0x1AFFFFFF);
 
@@ -670,6 +743,7 @@ public class MetalRenderSettingsScreen extends Screen implements MetalRenderSett
         animSideY += (targetY - animSideY) * (1.0f - (float) Math.exp(-elapsed * 16.0f));
 
         fillRounded(ctx, sx + 4, (int) animSideY, sw - 8, btnH, C_TAB_PILL_ACTIVE, 8);
+        glassOverlay(ctx, sx + 4, (int) animSideY, sw - 8, btnH, 8);
         ctx.fill(sx + 8, (int) animSideY + btnH - 1, sx + sw - 8, (int) animSideY + btnH,
                 activeTheme.isLight ? 0x10000000 : 0x1A000000);
 
@@ -680,7 +754,10 @@ public class MetalRenderSettingsScreen extends Screen implements MetalRenderSett
             boolean sel = i == selectedTab;
             boolean hov = !sel && mx >= bx && mx < bx + bw && my >= by && my < by + btnH;
             if (hov)
-                fillRounded(ctx, bx, by, bw, btnH, C_TAB_PILL_HOVER, 8);
+                {
+                    fillRounded(ctx, bx, by, bw, btnH, C_TAB_PILL_HOVER, 8);
+                    glassOverlay(ctx, bx, by, bw, btnH, 8);
+                }
             String icon = i < TAB_ICONS.length ? TAB_ICONS[i] : "\u25CF";
             int iconCol = sel ? C_TAB_TEXT_ACTIVE : (hov ? C_TEXT_ACCENT : C_TEXT_SEC);
             ctx.text(font, Component.literal(icon), bx + 10, by + (btnH - 14) / 2, iconCol, false);
@@ -710,6 +787,15 @@ public class MetalRenderSettingsScreen extends Screen implements MetalRenderSett
     private int sidebarButtonHeight() {
         int tabCount = TABS.length;
         return Math.max(16, Math.min(36, (sh - 16 - (tabCount - 1) * sidebarButtonGap()) / tabCount));
+    }
+
+    private float glassBody() {
+        return 0.2f + 0.45f * (1.0f - Math.min(1.0f, config.glassOpacity / 0.30f));
+    }
+
+    private void glassOverlay(GuiGraphicsExtractor ctx, int x, int y, int w, int h, int r) {
+        if (activeTheme == UiTheme.LIQUID_GLASS && w > 2 && h > 2)
+            glassBackdrop.drawLens(ctx, x, y, w, h, r, false, glassBody());
     }
 
     private void fillRounded(GuiGraphicsExtractor ctx, int x, int y, int w, int h, int col, int r) {
@@ -818,11 +904,12 @@ public class MetalRenderSettingsScreen extends Screen implements MetalRenderSett
 
         if (r.type == RT.THEME) {
             UiTheme th = r.theme;
-            boolean sel = th == activeTheme;
+            boolean sel = themeSelected(th);
             int thH = r.h();
             int thRadius = th.cardRadius;
             int baseCol = sel ? C_CARD_HOVER : (hovered ? C_CARD_HOVER : C_CARD);
             fillRounded(ctx, x, y, w, thH, baseCol, thRadius);
+            glassOverlay(ctx, x, y, w, thH, thRadius);
             drawRoundedOutline(ctx, x, y, w, thH, sel ? C_ACCENT : C_CARD_STROKE, thRadius);
             ctx.fill(x + thRadius, y + 1, x + w - thRadius, y + 2, th.isLight ? 0x30FFFFFF : 0x18FFFFFF);
             if (sel) {
@@ -878,12 +965,13 @@ public class MetalRenderSettingsScreen extends Screen implements MetalRenderSett
                 maxThemeTextW = 40;
             String themeName = truncateLabel(font, th.displayName, maxThemeTextW);
             String variant = switch (th) {
-                case LIQUID_GLASS -> "Frosted \u00b7 cool highlights";
-                case AMBER -> "Warm graphite \u00b7 gold";
-                case PASTEL -> "Soft ivory \u00b7 sage";
-                case CRIMSON -> "Deep graphite \u00b7 rose";
-                case LAVENDER -> "Muted slate \u00b7 lilac";
-                case CUSTOM -> "Your own colours";
+                case LIQUID_GLASS -> "frosty the snowman \u00b7 cool highlights";
+                case AMBER -> "orange juice \u00b7 gold";
+                case PASTEL -> "Softer colours \u00b7 sage";
+                case CRIMSON -> "bloodish colour? \u00b7 rose";
+                case LAVENDER -> "purpleee\u00b7 lilac";
+                case BLUEISHIDK -> "blue something \u00b7 blueishidk";
+                case CUSTOM -> "your colors";
             };
             String themeSub = truncateLabel(font, variant, maxThemeTextW);
             ctx.text(font, Component.literal(themeName), tx, y + 12, C_TEXT_PRI, false);
@@ -899,6 +987,7 @@ public class MetalRenderSettingsScreen extends Screen implements MetalRenderSett
                 ctx.centeredText(font, Component.literal(state), stateX + stateW / 2, stateY + 4, C_ACCENT_TEXT);
             } else {
                 fillRounded(ctx, stateX, stateY, stateW, 18, th.isLight ? 0x14E8D8C8 : 0x14FFFFFF, 9);
+                glassOverlay(ctx, stateX, stateY, stateW, 18, 9);
                 drawRoundedOutline(ctx, stateX, stateY, stateW, 18, th.isLight ? 0x14000000 : 0x14FFFFFF, 9);
                 ctx.centeredText(font, Component.literal(state), stateX + stateW / 2, stateY + 4,
                         hovered ? C_TEXT_ACCENT : C_TEXT_SEC);
@@ -914,7 +1003,8 @@ public class MetalRenderSettingsScreen extends Screen implements MetalRenderSett
         else if (activeTheme.isLight)
             cardRadius = activeTheme.cardRadius;
         int baseCol = hovered ? C_CARD_HOVER : C_CARD;
-        if (activeTheme == UiTheme.LIQUID_GLASS && glassBackdrop.drawLens(ctx, x, y, w, CARD_H, cardRadius, false)) {
+        if (activeTheme == UiTheme.LIQUID_GLASS && glassBackdrop.drawLens(ctx, x, y, w, CARD_H, cardRadius, false,
+                glassBody())) {
             if (hovered)
                 fillRounded(ctx, x + 1, y + 1, w - 2, CARD_H - 2, 0x08FFFFFF, cardRadius - 1);
         } else {
@@ -963,6 +1053,7 @@ public class MetalRenderSettingsScreen extends Screen implements MetalRenderSett
                 int vw = font.width(r.value) + 24;
                 fillRounded(ctx, rx - vw, y + 10, vw, CARD_H - 20,
                         ARGB.color(activeTheme.isLight ? 24 : 38, C_ACCENT), 7);
+                glassOverlay(ctx, rx - vw, y + 10, vw, CARD_H - 20, 7);
                 drawRoundedOutline(ctx, rx - vw, y + 10, vw, CARD_H - 20,
                         ARGB.color(activeTheme.isLight ? 48 : 64, C_ACCENT), 7);
                 String chev = r.value + "  \u203A";
@@ -1018,6 +1109,7 @@ public class MetalRenderSettingsScreen extends Screen implements MetalRenderSett
                     int bg = activeTheme == UiTheme.LIQUID_GLASS ? 0x28354150
                             : (activeTheme.isLight ? 0xFFEADFD3 : 0xFF1E2430);
                     fillRounded(ctx, rx - sliderW - 10 - sw, y + 12, sw, CARD_H - 24, bg, 6);
+                    glassOverlay(ctx, rx - sliderW - 10 - sw, y + 12, sw, CARD_H - 24, 6);
                     if (activeTheme.isLight)
                         drawRoundedOutline(ctx, rx - sliderW - 10 - sw, y + 12, sw, CARD_H - 24, 0x14C9A090, 6);
                     ctx.text(font, Component.literal(dispSv), rx - sliderW - 10 - sw + 6, y + (CARD_H - 9) / 2,
@@ -1050,6 +1142,9 @@ public class MetalRenderSettingsScreen extends Screen implements MetalRenderSett
         int track = ARGB.srgbLerp(motion.progress, glass ? 0x243B4C60 : C_PILL_OFF,
                 glass ? 0xC23ABB88 : C_PILL_ON);
         fillRounded(ctx, trackX, trackY, trackW, trackH, track, trackH / 2);
+        if (glass)
+            glassBackdrop.drawLens(ctx, trackX, trackY, trackW, trackH, trackH / 2, false,
+                    glassBody() * (1.0f - motion.progress));
         drawRoundedOutline(ctx, trackX, trackY, trackW, trackH,
                 activeTheme.isLight ? 0x1862584E : 0x30FFFFFF, trackH / 2);
         ctx.fill(trackX + 11, trackY + 1, trackX + trackW - 11, trackY + 2, 0x20FFFFFF);
@@ -1317,7 +1412,9 @@ public class MetalRenderSettingsScreen extends Screen implements MetalRenderSett
         customHexAccent = config.customHexAccent;
         customHexText = config.customHexText;
         config.save();
-        applyTheme(UiTheme.CUSTOM);
+        config.glassTint = UiTheme.CUSTOM.name();
+        config.save();
+        applyTheme(UiTheme.LIQUID_GLASS);
         selectedTab = 5;
         rebuild();
     }
@@ -1432,13 +1529,26 @@ public class MetalRenderSettingsScreen extends Screen implements MetalRenderSett
 
     private void buildThemes() {
         section("Colour Themes");
-        infoRow("Active Theme", activeTheme.displayName);
+        infoRow("Active Theme", "NONE".equalsIgnoreCase(config.glassTint) ? "Liquid Glass"
+                : "Liquid Glass \u00b7 " + glassTintLabel());
         themeRow(UiTheme.LIQUID_GLASS);
         themeRow(UiTheme.PASTEL);
         themeRow(UiTheme.AMBER);
         themeRow(UiTheme.CRIMSON);
         themeRow(UiTheme.LAVENDER);
+        themeRow(UiTheme.BLUEISHIDK);
         themeRow(UiTheme.CUSTOM);
+        section("Liquid Glass");
+        choice("Glass Tint", List.of("None", "Pastel", "Amber", "Crimson", "Lavender", "Blueishidk", "Custom"),
+                glassTintLabel(), v -> {
+                    config.glassTint = v.toUpperCase(java.util.Locale.ROOT);
+                    config.save();
+                    rebuild();
+                });
+        sld("Glass Opacity", 0.0f, 1.0f, 0.01f, config.glassOpacity, v -> {
+            config.glassOpacity = v;
+            config.save();
+        }, v -> Component.literal(Math.round(v * 100) + "%"));
         section("Custom Hex");
         infoRow("Custom", "Edit boxes below \u2192 Apply");
         section("Preview");
@@ -1452,12 +1562,14 @@ public class MetalRenderSettingsScreen extends Screen implements MetalRenderSett
     private void themeRow(UiTheme th) {
         Row r = new Row(RT.THEME, th.displayName);
         r.theme = th;
-        r.value = th == activeTheme ? "Active" : "Select";
+        r.value = themeSelected(th) ? "Active" : "Select";
         r.action = () -> {
-            if (th != activeTheme) {
-                applyTheme(th);
-                config.uiTheme = th.name();
+            if (!themeSelected(th)) {
+                config.uiTheme = UiTheme.LIQUID_GLASS.name();
+                config.glassTint = th == UiTheme.LIQUID_GLASS ? "NONE" : th.name();
+                config.glassOpacity = th == UiTheme.LIQUID_GLASS ? 0.30f : 0.60f;
                 config.save();
+                applyTheme(UiTheme.LIQUID_GLASS);
                 rebuild();
             }
         };
