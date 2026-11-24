@@ -190,7 +190,7 @@ public final class MetalRenderConfig {
                 if (obj.has("glassOpacity"))
                     cfg.glassOpacity = Math.max(0.0f, Math.min(1.0f, obj.get("glassOpacity").getAsFloat()));
                 if (obj.has("farDistanceChunks"))
-                    cfg.farDistanceChunks = Math.max(0, Math.min(512, obj.get("farDistanceChunks").getAsInt()));
+                    cfg.farDistanceChunks = Math.max(0, Math.min(1024, obj.get("farDistanceChunks").getAsInt()));
                 if (obj.has("farDetail"))
                     cfg.farQuality = Math.max(128, Math.min(8192, obj.get("farDetail").getAsInt()));
                 if (obj.has("farThreads"))
