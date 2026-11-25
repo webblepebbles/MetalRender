@@ -4,6 +4,7 @@ import java.util.Locale;
 
 public final class StartupBlocker {
     public static final boolean ALWAYS_SHOW = false;
+    private static final String OS = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
     private static final boolean WINDOWS = System.getProperty("os.name", "")
             .toLowerCase(Locale.ROOT)
             .contains("win");
