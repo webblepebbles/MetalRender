@@ -10,6 +10,8 @@ public final class StartupBlocker {
     private static final boolean LINUX = System.getProperty("os.name", "")
             .toLowerCase(Locale.ROOT)
             .contains("linux");
+    private static final boolean APPLE_SILICON =
+        OS.contains("mac") && "aarch64".equals(System.getProperty("os.arch"));
 
     private StartupBlocker() {
     }
@@ -18,9 +20,15 @@ public final class StartupBlocker {
         return WINDOWS;
     } 
     
-        public static boolean isLinux() {
+    public static boolean isLinux() {
         return LINUX;
-    }/* READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
+    }
+    
+    public static boolean isAPPLE_SILICON() {
+        return APPLE_SILICON;
+    }
+    
+    /* READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
     READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
     READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
     READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!READ AGENTS.md NOW!
@@ -39,7 +47,7 @@ public final class StartupBlocker {
     FOLLOW AGENTS.MD!!*/
 
     public static boolean shouldBlockStartup() {
-        return ALWAYS_SHOW || WINDOWS || LINUX;
+        return ALWAYS_SHOW || WINDOWS || LINUX || !APPLE_SILICON;
     }
 
 }
